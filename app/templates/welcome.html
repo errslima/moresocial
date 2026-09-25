@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block title %}Welcome{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1>Remember the people who matter, and make plans with them.</h1>
+  <p>Moresocial keeps a private, source-backed memory of your relationships and helps you organize gatherings and write messages you send yourself.</p>
+  <form method="post" action="{{ url('/api/auth/google/start') }}">
+    <input type="hidden" name="purpose" value="login">
+    <button type="submit" class="primary big">Continue with Google</button>
+  </form>
+  <h2>What you are asked to allow</h2>
+  <ul class="access">
+    <li><strong>Your Google name and email</strong> to sign you in.</li>
+    <li><strong>Read your Gmail</strong> (last 90 days, up to 500 messages) to remember what people told you.</li>
+    <li><strong>Read your primary Google Calendar</strong> (past and next 90 days) to spot conflicts when you plan.</li>
+  </ul>
+  <p class="muted">Read-only: Moresocial never sends email, changes your calendar, or shares your data with other users. You can untick Gmail or Calendar on Google's screen; the rest of Moresocial still works. WhatsApp can be linked later with a QR code.</p>
+</section>
+{% endblock %}

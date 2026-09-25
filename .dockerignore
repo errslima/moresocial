@@ -1,0 +1,19 @@
+# Keep private material and local state out of every build context.
+config/
+secrets/
+data/
+backups/
+.env
+.env.*
+*.pem
+*.key
+.git
+.venv
+**/__pycache__
+.pytest_cache
+node_modules
+connector/node_modules
+test-results
+playwright-report
+tests/
+docs/

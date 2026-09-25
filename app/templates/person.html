@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field, when, provider_name with context %}
+{% from 'claims.html' import claim_list with context %}
+{% block title %}{{ person.display_name }}{% endblock %}
+{% block content %}
+<h1>{{ person.display_name }}</h1>
+<form method="post" action="{{ url('/people/' ~ person.id ~ '/edit') }}" class="row">
+  {{ csrf_field() }}
+  <label for="name">Name</label><input id="name" name="name" value="{{ person.display_name }}" maxlength="200">
+  <label><input type="checkbox" name="pinned" value="yes" {% if person.pinned %}checked{% endif %}> Pin (suggest catching up)</label>
+  <button type="submit">Save</button>
+</form>
+<section aria-labelledby="ids"><h2 id="ids">Identities</h2>
+<ul>{% for i in identifiers %}
+  <li>{{ {'email':'Email','whatsapp':'WhatsApp'}[i.kind] }}: <code>{{ i.value }}</code>{% if i.label %} ({{ i.label }}){% endif %}
+  {% if i.linked_by_user %}<span class="tag">linked by you</span>{% endif %}
+  {% if identifiers|length > 1 %}
+  <form method="post" action="{{ url('/people/' ~ person.id ~ '/unlink') }}" class="inline">{{ csrf_field() }}
+    <input type="hidden" name="identifier" value="{{ i.id }}"><button class="link">Unlink</button></form>{% endif %}</li>
+{% endfor %}</ul>
+<form method="post" action="{{ url('/people/' ~ person.id ~ '/link') }}" class="row">
+  {{ csrf_field() }}
+  <label for="other">Same person as</label>
+  <select id="other" name="other">{% for o in others %}<option value="{{ o.id }}">{{ o.display_name }}</option>{% endfor %}</select>
+  <button type="submit">Link identities</button>
+</form>
+<p class="small muted">Moresocial never merges people automatically because names look alike. Link only people you know are the same.</p>
+</section>
+<section aria-labelledby="mem"><h2 id="mem">Memories</h2>
+{{ claim_list(claims, '/people/' ~ person.id) }}
+<form method="post" action="{{ url('/people/' ~ person.id ~ '/claims') }}" class="row">
+  {{ csrf_field() }}
+  <label for="cat" class="sr">Kind</label>
+  <select id="cat" name="category"><option value="interest">Interest</option><option value="preference">Preference</option><option value="life_update">Life update</option><option value="note">Note</option></select>
+  <label for="val" class="sr">Memory</label><input id="val" name="value" placeholder="Add something you know" maxlength="300" required>
+  <button type="submit">Add</button>
+</form>
+</section>
+<section aria-labelledby="notes"><h2 id="notes">Your notes</h2>
+{% for n in notes %}<div class="note"><span class="tag">{{ n.kind.replace('_',' ') }}</span> {{ n.body }}
+  <form method="post" action="{{ url('/people/' ~ person.id ~ '/notes/' ~ n.id ~ '/delete') }}" class="inline">{{ csrf_field() }}<button class="link">Delete</button></form></div>{% endfor %}
+<form method="post" action="{{ url('/people/' ~ person.id ~ '/notes') }}" class="stack">
+  {{ csrf_field() }}
+  <label for="kind">Kind</label><select id="kind" name="kind"><option value="note">Note</option><option value="preference">Their preference</option><option value="shared_history">Shared history</option></select>
+  <label for="body">Note</label><textarea id="body" name="body" rows="2" required></textarea>
+  <button type="submit">Save note</button>
+</form>
+</section>
+<section aria-labelledby="tl"><h2 id="tl">Evidence timeline</h2>
+{% if timeline %}<ul class="list">{% for s in timeline %}
+  <li><a href="{{ url('/sources/' ~ s.id) }}">{{ provider_name(s.provider) }} · {{ s.title or s.conversation_title or 'Message' }}</a> <span class="muted small">{{ when(s.occurred_at) }}</span></li>
+{% endfor %}</ul>{% else %}<p class="muted">No imported messages or events with this person.</p>{% endif %}
+</section>
+{% endblock %}

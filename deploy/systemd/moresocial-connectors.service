@@ -1,0 +1,21 @@
+[Unit]
+Description=Moresocial WhatsApp connector provisioner
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /srv/moresocial/src/deploy/provisioner.py
+Environment=MORESOCIAL_MANAGEMENT_URL=http://127.0.0.1:8773
+Environment=MORESOCIAL_OPERATOR_KEY_FILE=/srv/moresocial/secrets/operator_key
+Environment=MORESOCIAL_WHATSAPP_DIR=/srv/moresocial/data/whatsapp
+Environment=MORESOCIAL_WEB_CONTAINER=moresocial-web-1
+Restart=always
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import when, provider_name with context %}
+{% block title %}Answer{% endblock %}
+{% block content %}
+<h1>{{ answer.question }}</h1>
+{% if answer.insufficient %}<p class="warn" role="status"><strong>Not enough evidence.</strong></p>{% endif %}
+<div class="answer">{{ answer.answer }}</div>
+{% if cites %}
+<h2>Sources</h2>
+<ul class="cites">{% for c in cites %}{% set s = sources.get(c.source_id) %}
+  <li id="cite-{{ c.label }}"><details><summary><strong>[{{ c.label }}]</strong> {% if s %}{{ provider_name(s.provider) }} · {{ s.author_label or ('you' if s.from_me else s.title) }} · {{ when(s.occurred_at) }}{% endif %}</summary>
+  <blockquote class="excerpt">{{ c.excerpt }}</blockquote>{% if s %}<a href="{{ url('/sources/' ~ s.id) }}">Open source</a>{% endif %}
+  {% if s and s.version != c.source_version %}<p class="small muted">This source changed after the answer was written.</p>{% endif %}</details></li>
+{% endfor %}</ul>
+{% endif %}
+<p><a href="{{ url('/ask') }}">Ask another question</a></p>
+{% endblock %}

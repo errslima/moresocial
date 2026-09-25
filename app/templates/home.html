@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field with context %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<h1>Hi {{ ctx.account.display_name or ctx.account.email }}</h1>
+{% if conn and conn.state != 'active' %}
+<p class="warn">Google access needs attention. <a href="{{ url('/connections') }}">Open Connections</a> to reconnect.</p>
+{% endif %}
+{% if budget.paused %}<p class="warn">Today's AI budget is used up. Memory updates and drafting resume tomorrow.</p>{% endif %}
+<section aria-labelledby="steps">
+  <h2 id="steps">A few optional next steps</h2>
+  {% if steps %}
+  <ul class="cards">
+    {% for s in steps %}
+    <li class="card">
+      <a href="{{ url(s.href) }}">{{ s.text }}</a>
+      <form method="post" action="{{ url('/home/steps') }}" class="inline">
+        {{ csrf_field() }}<input type="hidden" name="key" value="{{ s.key }}">
+        <button name="action" value="snooze" class="link">Later</button>
+        <button name="action" value="dismiss" class="link">Dismiss</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">Nothing needs doing. Suggestions only come from gatherings you plan and people you pin.</p>
+  {% endif %}
+</section>
+<section aria-labelledby="plans">
+  <h2 id="plans">Gatherings you are planning</h2>
+  {% if events %}<ul>{% for e in events %}<li><a href="{{ url('/gatherings/' ~ e.id) }}">{{ e.title }}</a></li>{% endfor %}</ul>
+  {% else %}<p class="muted">No gatherings yet. <a href="{{ url('/gatherings') }}">Plan one</a>, for example a lasergame evening.</p>{% endif %}
+</section>
+<p class="muted">{{ sources }} imported source item(s). <a href="{{ url('/sources') }}">Browse sources</a></p>
+{% endblock %}

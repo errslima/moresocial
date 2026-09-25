@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field with context %}
+{% from 'claims.html' import claim_list with context %}
+{% block title %}About me{% endblock %}
+{% block content %}
+<h1>About me</h1>
+<form method="post" action="{{ url('/me') }}" class="stack">
+  {{ csrf_field() }}
+  <label for="prefs">What I like, and what makes socializing easier for me</label>
+  <textarea id="prefs" name="preferences" rows="4">{{ profile.preferences if profile else '' }}</textarea>
+  <label for="goals">What I want from my social life right now</label>
+  <textarea id="goals" name="goals" rows="4">{{ profile.goals if profile else '' }}</textarea>
+  <button type="submit" class="primary">Save</button>
+</form>
+<h2>Observations from your messages</h2>
+<p class="small muted">These come from things you wrote. They stay unconfirmed until you confirm them, and what you write above always takes priority.</p>
+{{ claim_list(observations, '/people/self') }}
+{% endblock %}

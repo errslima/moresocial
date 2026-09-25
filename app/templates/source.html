@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field, when, provider_name with context %}
+{% block title %}Source{% endblock %}
+{% block content %}
+<h1>{{ source.title or source.conversation_title or 'Message' }}</h1>
+<p class="muted">{{ provider_name(source.provider) }} · {{ when(source.occurred_at) }}{% if source.ends_at %} to {{ when(source.ends_at) }}{% endif %}
+ · {% if source.from_me %}sent by you{% else %}{{ source.author_label or source.author or 'unknown sender' }}{% endif %}</p>
+{% if source.provider == 'calendar' %}<p class="small muted">Scheduled event{% if source.meta.status == 'cancelled' %} (cancelled){% endif %}. A calendar entry is not proof that anyone attended.</p>{% endif %}
+{% if source.conversation_title and source.provider == 'whatsapp' %}<p class="small">Chat: {{ source.conversation_title }}{% if source.meta.is_group %} (group){% endif %}</p>{% endif %}
+<pre class="source-text">{{ source.body }}</pre>
+{% if source.body_truncated %}<p class="small muted">Long text was cut at 32 KiB.</p>{% endif %}
+{% if source.meta.attachments %}<p class="small muted">{{ source.meta.attachments }} attachment(s) not imported.</p>{% endif %}
+<h2>Participants</h2>
+<ul>{% for p in participants %}<li>{{ p.role }}: {% if p.person_id and people.get(p.person_id) %}<a href="{{ url('/people/' ~ p.person_id) }}">{{ people[p.person_id].display_name }}</a>{% else %}{{ p.identifier }}{% endif %}</li>{% endfor %}</ul>
+<h2>Remove from Moresocial</h2>
+<p class="small">Removing deletes this text, its search index and memories that depend only on it, and stops later syncs from importing it again.</p>
+<form method="post" action="{{ url('/sources/' ~ source.id ~ '/exclude') }}" class="row">
+  {{ csrf_field() }}
+  <button name="scope" value="object" class="danger">Remove this item</button>
+  {% if source.conversation_id %}<button name="scope" value="conversation" class="danger">Remove the whole {{ 'chat' if source.provider == 'whatsapp' else ('thread' if source.provider == 'gmail' else 'event series') }}</button>{% endif %}
+</form>
+{% endblock %}

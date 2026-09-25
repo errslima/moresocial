@@ -1,0 +1,20 @@
+{% extends 'base.html' %}
+{% block title %}People{% endblock %}
+{% block content %}
+<h1>People</h1>
+<form method="get" action="{{ url('/people') }}" class="row" role="search">
+  <label for="q" class="sr">Search people</label>
+  <input id="q" name="q" value="{{ q }}" placeholder="Name, email or number">
+  <button type="submit">Search</button>
+</form>
+{% if people %}
+<ul class="list">
+  {% for p in people %}
+  <li><a href="{{ url('/people/' ~ p.id) }}">{{ p.display_name }}</a>{% if p.pinned %} <span class="tag">pinned</span>{% endif %}
+    <span class="muted small">{% for i in idents.get(p.id, [])[:3] %}{{ i.value }}{% if not loop.last %}, {% endif %}{% endfor %}</span></li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">{% if q %}No one matches “{{ q }}”.{% else %}People appear here once Gmail, Calendar or WhatsApp is synced.{% endif %}</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,8 @@
+{% extends 'base.html' %}
+{% block title %}Problem{% endblock %}
+{% block content %}
+<h1>Sorry</h1>
+<p>{{ message }}</p>
+{% if reference %}<p class="muted">Reference: <code>{{ reference }}</code> (share this with the operator if the problem continues).</p>{% endif %}
+<p><a href="{{ url('/') }}">Back to Moresocial</a></p>
+{% endblock %}

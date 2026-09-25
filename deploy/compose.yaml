@@ -1,0 +1,95 @@
+# Moresocial production stack (Compose project "moresocial", source at /srv/moresocial/src).
+# Start: docker compose -p moresocial -f deploy/compose.yaml --env-file /srv/moresocial/release.env up -d
+# Secrets live in /srv/moresocial/secrets (never in images or Git). Only loopback ports are published.
+name: moresocial
+
+x-app: &app
+  image: moresocial-web:${MORESOCIAL_REVISION:?set MORESOCIAL_REVISION to the release git sha}
+  env_file: /srv/moresocial/runtime.env
+  environment: &app-env
+    MORESOCIAL_MODE: production
+    PUBLIC_ORIGIN: https://1f517.com
+    BASE_PATH: /moresocial
+    DATABASE_HOST: db
+    DATABASE_USER: moresocial
+    DATABASE_NAME: moresocial
+    DATABASE_PASSWORD_FILE: /run/secrets/db_password
+    GOOGLE_CLIENT_FILE: /run/secrets/google_auth.json
+    ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
+    OPERATOR_KEY_FILE: /run/secrets/operator_key
+    ANTHROPIC_API_KEY_FILE: /run/secrets/anthropic_api_key
+    VOYAGE_API_KEY_FILE: /run/secrets/voyage_api_key
+    CONNECTOR_IMAGE: moresocial-connector:${MORESOCIAL_REVISION}
+    TRUSTED_PROXY_IPS: 172.31.77.1
+  secrets: [db_password, google_auth.json, encryption_key, operator_key, anthropic_api_key, voyage_api_key]
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
+  depends_on:
+    db: {condition: service_healthy}
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg17-bookworm
+    environment:
+      POSTGRES_USER: moresocial_admin
+      POSTGRES_DB: moresocial
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_admin_password
+    secrets: [db_admin_password, db_password]
+    volumes:
+      - /srv/moresocial/data/postgres:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moresocial_admin -d moresocial"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    shm_size: 256m
+    mem_limit: 1g
+    restart: unless-stopped
+    logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
+    networks: [internal]
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    profiles: [migrate]
+    networks: [internal]
+
+  web:
+    <<: *app
+    ports:
+      - "127.0.0.1:8772:8000"   # public app, proxied by Caddy at /moresocial/
+      - "127.0.0.1:8773:8001"   # private management API for the host provisioner only
+    mem_limit: 768m
+    pids_limit: 200
+    networks: [internal]
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "worker.main"]
+    healthcheck: {disable: true}
+    mem_limit: 768m
+    pids_limit: 200
+    networks: [internal]
+
+networks:
+  internal:
+    name: moresocial-internal
+    ipam:
+      config:
+        - subnet: 172.31.77.0/24   # verify free before first deployment; gateway is the Caddy peer
+          gateway: 172.31.77.1
+
+secrets:
+  db_admin_password: {file: /srv/moresocial/secrets/db_admin_password}
+  db_password: {file: /srv/moresocial/secrets/db_password}
+  google_auth.json: {file: /srv/moresocial/secrets/google_auth.json}
+  encryption_key: {file: /srv/moresocial/secrets/encryption_key}
+  operator_key: {file: /srv/moresocial/secrets/operator_key}
+  anthropic_api_key: {file: /srv/moresocial/secrets/anthropic_api_key}
+  voyage_api_key: {file: /srv/moresocial/secrets/voyage_api_key}

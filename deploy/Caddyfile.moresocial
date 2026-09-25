@@ -1,0 +1,11 @@
+# Additive fragment for the existing 1f517.com site block. Paste these lines inside its
+# `route { ... }`, next to the other `redir` lines and before the final catch-all `handle`.
+# Do not replace the live Caddyfile; see docs/operator-setup.md "Proxy".
+
+		redir /moresocial /moresocial/ 308
+
+		# Moresocial (Docker Compose, source in /srv/moresocial). The app sets its own CSP,
+		# cache headers and cookies (Path=/moresocial/). Only the public port is proxied.
+		handle_path /moresocial/* {
+			reverse_proxy 127.0.0.1:8772
+		}

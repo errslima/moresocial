@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Moresocial backup
+
+[Timer]
+OnCalendar=*-*-* 03:40:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

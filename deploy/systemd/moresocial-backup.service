@@ -1,0 +1,8 @@
+[Unit]
+Description=Moresocial backup (database, private configuration, WhatsApp sessions)
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/srv/moresocial/src/deploy/backup.sh
+UMask=0077

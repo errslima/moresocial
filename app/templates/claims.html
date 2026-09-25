@@ -1,0 +1,38 @@
+{% from 'macros.html' import csrf_field, when, provider_name with context %}
+{% macro claim_list(items, base) %}
+{% if items %}
+<ul class="claims">
+{% for item in items %}{% set c = item.claim %}
+  <li class="claim status-{{ c.status }}">
+    <div><span class="tag">{{ item.label }}{% if c.attribute %} · {{ c.attribute }}{% endif %}</span>
+      <strong>{{ c.value }}</strong>
+      <span class="small muted">{{ {'explicit':'stated','observed':'observed','inferred':'inferred (uncertain)','user':'added or confirmed by you'}[c.basis] }}
+        · {{ {'active':'unconfirmed','confirmed':'confirmed','rejected':'rejected','superseded':'no longer current','conflicting':'conflicts with a confirmed memory'}[c.status] }}
+        {% if c.valid_from %}· from {{ c.valid_from.strftime('%d %b %Y') }}{% endif %}{% if c.valid_to %} until {{ c.valid_to.strftime('%d %b %Y') }}{% endif %}</span>
+    </div>
+    {% if item.sources %}
+    <details><summary>Evidence ({{ item.sources|length }})</summary>
+      <ul>{% for s in item.sources %}<li><a href="{{ url('/sources/' ~ s.id) }}">{{ provider_name(s.provider) }}, {{ when(s.occurred_at) }}</a>
+        <blockquote class="excerpt">{{ s.body[:400] }}</blockquote></li>{% endfor %}</ul>
+    </details>
+    {% endif %}
+    {% if c.status != 'rejected' %}
+    <form method="post" action="{{ url(base ~ '/claims/' ~ c.id) }}" class="inline">
+      {{ csrf_field() }}
+      {% if c.status != 'confirmed' %}<button name="action" value="confirm" class="link">Confirm</button>{% endif %}
+      <button name="action" value="reject" class="link">Reject</button>
+    </form>
+    <details class="inline"><summary>Edit</summary>
+      <form method="post" action="{{ url(base ~ '/claims/' ~ c.id) }}" class="row">
+        {{ csrf_field() }}<input type="hidden" name="action" value="edit">
+        <label class="sr" for="edit-{{ c.id }}">Corrected memory</label>
+        <input id="edit-{{ c.id }}" name="value" value="{{ c.value }}" maxlength="300">
+        <button type="submit">Save correction</button>
+      </form>
+    </details>
+    {% endif %}
+  </li>
+{% endfor %}
+</ul>
+{% else %}<p class="muted">No memories yet.</p>{% endif %}
+{% endmacro %}

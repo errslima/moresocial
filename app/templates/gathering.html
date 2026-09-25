@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field, when, provider_name with context %}
+{% block title %}{{ event.title }}{% endblock %}
+{% block content %}
+<h1>{{ event.title }}</h1>
+{% if error %}<p class="warn" role="alert">{{ error }}</p>{% endif %}
+<details><summary>Edit details</summary>
+<form method="post" action="{{ url('/gatherings/' ~ event.id ~ '/edit') }}" class="stack">
+  {{ csrf_field() }}
+  <label for="t">Name</label><input id="t" name="title" value="{{ event.title }}" required>
+  <label for="a">Activity</label><input id="a" name="activity" value="{{ event.activity or '' }}">
+  <label for="n">Notes</label><textarea id="n" name="notes" rows="2">{{ event.notes }}</textarea>
+  <label for="st">Status</label><select id="st" name="status">{% for s in ['planning','done','cancelled'] %}<option {% if event.status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+  <button type="submit">Save</button>
+</form></details>
+{% if event.notes %}<p>{{ event.notes }}</p>{% endif %}
+
+<section aria-labelledby="dates"><h2 id="dates">Possible dates</h2>
+<ul class="list">{% for c, conflict in candidates %}
+  <li><strong>{{ c.starts_at.astimezone(tz).strftime('%a %d %b, %H:%M') }}–{{ c.ends_at.astimezone(tz).strftime('%H:%M') }}</strong>
+  <div class="small">
+  {% if conflict.coverage == 'none' %}Your calendar is not imported, so conflicts are unknown.
+  {% elif conflict.coverage == 'outside' %}Outside the imported calendar range (past/next 90 days).
+  {% elif conflict.events %}In your imported calendar: {% for s in conflict.events %}<a href="{{ url('/sources/' ~ s.id) }}">{{ s.title }}</a> ({{ s.occurred_at.astimezone(tz).strftime('%H:%M') }}){% if not loop.last %}, {% endif %}{% endfor %}.
+  {% else %}No conflicting events in your imported primary calendar{% if conflict.coverage == 'truncated' %} (import was incomplete){% endif %}.{% endif %}
+  <span class="muted">This says nothing about invitees' availability.</span></div>
+  <form method="post" action="{{ url('/gatherings/' ~ event.id ~ '/candidates/' ~ c.id ~ '/delete') }}" class="inline">{{ csrf_field() }}<button class="link">Remove</button></form></li>
+{% endfor %}</ul>
+<form method="post" action="{{ url('/gatherings/' ~ event.id ~ '/candidates') }}" class="row">
+  {{ csrf_field() }}
+  <label for="start">Start</label><input id="start" type="datetime-local" name="start" required>
+  <label for="hours">Hours</label><input id="hours" type="number" name="hours" value="2" min="0.25" max="24" step="0.25">
+  <button type="submit">Add date</button>
+</form>
+</section>
+
+<section aria-labelledby="inv"><h2 id="inv">Invitees</h2>
+<form method="post" action="{{ url('/gatherings/' ~ event.id ~ '/people') }}" class="row">
+  {{ csrf_field() }}
+  <label for="person">Add</label>
+  <select id="person" name="person">{% for p in all_people %}<option value="{{ p.id }}">{{ p.display_name }}</option>{% endfor %}</select>
+  <button type="submit">Add invitee</button>
+</form>
+{% if invitees %}
+<form method="post" action="{{ url('/gatherings/' ~ event.id ~ '/check-replies') }}">{{ csrf_field() }}
+  <button type="submit">Look for replies</button> <span class="small muted">Suggests a status only from an explicit reply; you confirm it.</span></form>
+{% endif %}
+{% for i in invitees %}{% set p = people[i.person_id] %}{% set d = drafts.get(i.person_id) %}
+<article class="card invitee" id="inv-{{ i.id }}">
+  <h3><a href="{{ url('/people/' ~ p.id) }}">{{ p.display_name }}</a> <span class="tag status-{{ i.status }}">{{ statuses[i.status] }}</span></h3>
+  <form method="post" action="{{ url('/gatherings/' ~ event.id ~ '/people/' ~ i.id ~ '/status') }}" class="row">
+    {{ csrf_field() }}
+    <label for="s-{{ i.id }}">Status</label>
+    <select id="s-{{ i.id }}" name="status">{% for k, v in statuses.items() %}<option value="{{ k }}" {% if k == i.status %}selected{% endif %}>{{ v }}</option>{% endfor %}<option value="remove">Remove from gathering</option></select>
+    <button type="submit">Update</button>
+  </form>
+  {% if i.suggested_status %}{% set s = suggestions.get(i.id) %}
+  <div class="suggest" role="status">Possible reply: <strong>{{ statuses[i.suggested_status] }}</strong>
+    {% if s %}based on <a href="{{ url('/sources/' ~ s.id) }}">“{{ s.body[:120] }}”</a>{% endif %}
+    <form method="post" action="{{ url('/gatherings/' ~ event.id ~ '/people/' ~ i.id ~ '/suggestion') }}" class="inline">{{ csrf_field() }}
+      <button name="action" value="accept">Confirm</button><button name="action" value="dismiss" class="link">Ignore</button></form></div>
+  {% endif %}
+  {% set rs = replies.get(i.id) %}
+  {% if rs %}<details><summary>Recent messages from {{ p.display_name }} ({{ rs|length }})</summary><ul>
+    {% for r in rs %}<li><a href="{{ url('/sources/' ~ r.id) }}">{{ provider_name(r.provider) }}, {{ when(r.occurred_at) }}</a>: {{ r.body[:160] }}</li>{% endfor %}</ul></details>{% endif %}
+  <h4>Invitation draft</h4>
+  {% if d %}
+    {% if d.stale %}<p class="warn small">Evidence behind this draft was removed. Review it before using.</p>{% endif %}
+    <form method="post" action="{{ url('/drafts/' ~ d.id) }}" class="stack">
+      {{ csrf_field() }}
+      <label for="d-{{ d.id }}">Text that Copy will copy</label>
+      <textarea id="d-{{ d.id }}" name="text" rows="4" data-copy-source>{{ d.text }}</textarea>
+      <div class="row">
+        <button type="button" data-copy="d-{{ d.id }}">Copy</button>
+        <button name="action" value="save">Save edits</button>
+        <button name="action" value="shorter">Shorter</button>
+        <button name="action" value="casual">More casual</button>
+      </div>
+      <p class="small muted" data-copy-status="d-{{ d.id }}" aria-live="polite">Copying does not send anything or change the status. Send it yourself, then set the status to “Awaiting reply”.</p>
+    </form>
+    {% set cs = draft_cites.get(d.id) %}{% if cs %}<details><summary>Why this draft mentions what it does</summary><ul>{% for c in cs %}<li>[{{ c.label }}] {{ c.excerpt[:200] }}</li>{% endfor %}</ul></details>{% endif %}
+  {% endif %}
+  <div class="row">
+    <form method="post" action="{{ url('/gatherings/' ~ event.id ~ '/people/' ~ i.id ~ '/draft') }}" class="inline" data-busy="Writing…">{{ csrf_field() }}
+      <button type="submit">{{ 'Write a new draft' if d else 'Draft an invitation' }}</button></form>
+  </div>
+  {% if not d %}<details><summary>Or write it yourself</summary>
+  <form method="post" action="{{ url('/gatherings/' ~ event.id ~ '/people/' ~ i.id ~ '/manual-draft') }}" class="stack">{{ csrf_field() }}
+    <label for="m-{{ i.id }}">Message</label><textarea id="m-{{ i.id }}" name="text" rows="3" required></textarea><button type="submit">Save draft</button></form></details>{% endif %}
+</article>
+{% endfor %}
+</section>
+{% endblock %}

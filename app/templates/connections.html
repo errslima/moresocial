@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field, when, provider_name with context %}
+{% block title %}Connections{% endblock %}
+{% block content %}
+<h1>Connections and settings</h1>
+
+<section aria-labelledby="g" class="card"><h2 id="g">Google</h2>
+{% if not conn %}
+  <p>Google is not connected.</p>
+{% else %}
+  <p>Signed in as <strong>{{ conn.email }}</strong>.
+  {% if conn.state == 'active' %}<span class="tag ok">connected</span>
+  {% elif conn.state == 'reconnect_required' %}<span class="tag warn">needs reconnecting</span>
+  {% else %}<span class="tag">disconnected</span>{% endif %}</p>
+  {% if conn.state == 'reconnect_required' %}<p class="warn">{% if conn.detail == 'offline_access_missing' %}Google did not give Moresocial ongoing read access. Reconnect and allow access to keep your sources up to date.{% else %}Google access expired or was removed. Reconnect to resume syncing; your imported data is kept.{% endif %}</p>{% endif %}
+  <table class="sync"><caption class="sr">Sync status</caption>
+  <thead><tr><th scope="col">Data</th><th scope="col">Status</th><th scope="col">Imported</th><th scope="col">Last success</th></tr></thead><tbody>
+  {% for key, label, limit in [('gmail','Gmail','Last ' ~ limits.gmail_days ~ ' days, up to ' ~ limits.gmail_max_messages ~ ' messages, excluding Spam and Trash'),('calendar','Primary calendar','Past ' ~ limits.calendar_past_days ~ ' and next ' ~ limits.calendar_future_days ~ ' days, up to ' ~ limits.calendar_max_events ~ ' events')] %}
+  {% set st = streams.get(key) %}
+  <tr><th scope="row">{{ label }}<div class="small muted">{{ limit }}</div></th>
+    <td>{% if scopes[key] not in conn.scopes %}<span class="tag warn">not allowed</span> <span class="small">You did not grant this permission. Other features still work.</span>
+      {% elif not st %}—{% elif st.status == 'never_synced' %}Waiting for first sync
+      {% elif st.status == 'syncing' %}Syncing…{% elif st.status == 'ok' %}Up to date{% if st.truncated %} <span class="tag">limit reached: older items not imported</span>{% endif %}
+      {% elif st.status == 'error' %}<span class="tag warn">retrying</span> <span class="small">{{ st.last_error }}</span>
+      {% elif st.status == 'paused' %}Paused{% else %}{{ st.status }}{% endif %}</td>
+    <td>{{ counts.get(key, 0) }}{% if st and st.last_success_at and counts.get(key, 0) == 0 %} <span class="small muted">(synced: nothing in range)</span>{% elif st and not st.last_success_at %} <span class="small muted">(not synced yet)</span>{% endif %}</td>
+    <td>{% if st and st.last_success_at %}{{ when(st.last_success_at) }}{% if st.status == 'error' %} <span class="small muted">(may be stale)</span>{% endif %}{% else %}never{% endif %}</td></tr>
+  {% endfor %}
+  </tbody></table>
+{% endif %}
+<div class="row">
+  <form method="post" action="{{ url('/api/auth/google/start') }}">{{ csrf_field() }}<input type="hidden" name="purpose" value="grant">
+    <button type="submit" class="primary">{% if conn and conn.state == 'active' and scopes.gmail in conn.scopes and scopes.calendar in conn.scopes %}Review Google access{% elif conn and conn.state == 'active' %}Retry: allow Gmail and Calendar{% else %}Reconnect Google{% endif %}</button></form>
+  {% if conn and conn.state == 'active' %}
+  <form method="post" action="{{ url('/connections/google/sync') }}">{{ csrf_field() }}<button type="submit">Sync now</button></form>
+  <form method="post" action="{{ url('/connections/google/disconnect') }}">{{ csrf_field() }}<button type="submit">Disconnect Google</button></form>
+  {% endif %}
+  <form method="post" action="{{ url('/connections/google/delete-data') }}">{{ csrf_field() }}<button type="submit" class="danger">Delete imported Gmail and Calendar data</button></form>
+</div>
+<p class="small muted">Disconnecting stops syncing and revokes Moresocial's Google access; imported data stays until you delete it.</p>
+</section>
+
+<section aria-labelledby="w" class="card"><h2 id="w">WhatsApp</h2>
+<p class="small">Link WhatsApp Web by scanning a QR code with your phone (WhatsApp › Linked devices). This is an unofficial integration: WhatsApp may change and could restrict accounts that use linked-device automation. Moresocial only reads; it has no way to send.</p>
+<div id="wa" data-status-url="{{ url('/api/whatsapp/status.json') }}" data-active="{{ 'yes' if wa and wa.desired == 'running' else 'no' }}">
+  <p data-wa-state role="status" aria-live="polite">{% if wa and wa.desired == 'running' %}Checking status…{% elif wa and wa.observed == 'capacity' %}{{ wa.detail }}{% else %}Not linked.{% endif %}</p>
+  <img data-wa-qr alt="WhatsApp pairing QR code" width="240" height="240" hidden>
+  <p data-wa-history class="small muted"></p>
+</div>
+<div class="row">
+  {% if not wa or wa.desired != 'running' %}
+  <form method="post" action="{{ url('/connections/whatsapp/connect') }}">{{ csrf_field() }}<button type="submit" class="primary">Link WhatsApp</button></form>
+  {% else %}
+  <form method="post" action="{{ url('/connections/whatsapp/disconnect') }}">{{ csrf_field() }}<button type="submit">Unlink</button></form>
+  <form method="post" action="{{ url('/connections/whatsapp/disconnect') }}">{{ csrf_field() }}<input type="hidden" name="remove" value="yes"><button type="submit">Unlink and delete session</button></form>
+  {% endif %}
+  <form method="post" action="{{ url('/connections/whatsapp/delete-data') }}">{{ csrf_field() }}<button type="submit" class="danger">Delete imported WhatsApp data</button></form>
+</div>
+<p class="small muted">History: up to 50 recent chats, 200 messages each, from the last 90 days, as far as WhatsApp Web makes them available. Imported WhatsApp items: {{ counts.get('whatsapp', 0) }}.</p>
+</section>
+
+<section aria-labelledby="m" class="card"><h2 id="m">Memory processing</h2>
+{% if not ai_configured %}<p>The assistant is not configured on this server yet; sources are imported and searchable by text only.</p>
+{% elif budget.paused or ai_paused %}<p class="warn">Paused: today's AI budget is used up. Processing resumes tomorrow.</p>
+{% elif pending %}<p>Processing {{ pending }} item(s)…</p>{% else %}<p>Up to date.</p>{% endif %}
+</section>
+
+<section aria-labelledby="x" class="card"><h2 id="x">Removed items</h2>
+{% if exclusions %}<ul class="list">{% for e in exclusions %}
+  <li>{{ provider_name(e.provider) }} {{ 'conversation' if e.scope == 'conversation' else 'item' }}: {{ e.label or e.key }}
+  <form method="post" action="{{ url('/exclusions/' ~ e.id ~ '/remove') }}" class="inline">{{ csrf_field() }}<button class="link">Allow again</button></form></li>{% endfor %}</ul>
+{% else %}<p class="muted">Nothing removed. Remove items from any source page; removed items are not imported again.</p>{% endif %}
+</section>
+
+<section aria-labelledby="d" class="card danger-zone"><h2 id="d">Delete account</h2>
+<p>This signs you out everywhere, revokes Google access, unlinks WhatsApp and deletes all your data. Server backups keep deleted data for up to {{ limits.backup_retention_days }} days before it expires; it cannot be restored into your account.</p>
+<form method="post" action="{{ url('/account/delete') }}" class="row">{{ csrf_field() }}
+  <label for="confirm">Type DELETE to confirm</label><input id="confirm" name="confirm" autocomplete="off" required>
+  <button type="submit" class="danger">Delete my account</button></form>
+</section>
+{% endblock %}

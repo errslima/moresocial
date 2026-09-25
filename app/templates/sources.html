@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import when, provider_name with context %}
+{% block title %}Sources{% endblock %}
+{% block content %}
+<h1>Imported sources</h1>
+<form method="get" action="{{ url('/sources') }}" class="row" role="search">
+  <label for="provider">Source</label>
+  <select id="provider" name="provider"><option value="">All</option>
+  {% for p in ['gmail','calendar','whatsapp'] %}<option value="{{ p }}" {% if provider == p %}selected{% endif %}>{{ provider_name(p) }}</option>{% endfor %}</select>
+  <label for="q" class="sr">Search</label><input id="q" name="q" value="{{ q }}" placeholder="Search text">
+  <button type="submit">Filter</button>
+</form>
+{% if sources %}
+<ul class="list">{% for s in sources %}
+  <li><a href="{{ url('/sources/' ~ s.id) }}">{{ provider_name(s.provider) }} · {{ s.title or s.conversation_title or 'Message' }}</a>
+  <span class="muted small">{{ s.author_label or ('you' if s.from_me else '') }} · {{ when(s.occurred_at) }}</span></li>
+{% endfor %}</ul>
+{% else %}<p class="muted">Nothing imported yet, or nothing matches.</p>{% endif %}
+{% endblock %}

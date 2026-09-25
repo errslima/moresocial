@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Moresocial{% endblock %} · Moresocial</title>
+<link rel="stylesheet" href="{{ url('/static/app.css') }}">
+<link rel="icon" href="{{ url('/static/icon.svg') }}" type="image/svg+xml">
+<script type="module" src="{{ url('/static/app.js') }}"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="{{ url('/home' if ctx else '/') }}">Moresocial</a>
+  {% if ctx %}
+  <nav aria-label="Main">
+    <ul>
+      {% set here = request.url.path %}
+      {% for path, label in [('/home','Home'),('/people','People'),('/ask','Ask'),('/gatherings','Gatherings'),('/me','About me'),('/connections','Connections')] %}
+      <li><a href="{{ url(path) }}" {% if here.endswith(path) or (path != '/home' and (path ~ '/') in here) %}aria-current="page"{% endif %}>{{ label }}</a></li>
+      {% endfor %}
+    </ul>
+  </nav>
+  <form method="post" action="{{ url('/api/auth/logout') }}" class="logout">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="link">Sign out</button>
+  </form>
+  {% endif %}
+</header>
+<main id="main" tabindex="-1">
+{% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
+{% block content %}{% endblock %}
+</main>
+<footer class="foot"><p>Moresocial reads your sources; it never sends messages or changes your Gmail or Calendar.</p></footer>
+</body>
+</html>

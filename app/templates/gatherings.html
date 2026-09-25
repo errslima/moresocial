@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field with context %}
+{% block title %}Gatherings{% endblock %}
+{% block content %}
+<h1>Gatherings</h1>
+<form method="post" action="{{ url('/gatherings') }}" class="stack card">
+  {{ csrf_field() }}
+  <h2>Plan a new gathering</h2>
+  <label for="title">Name</label><input id="title" name="title" required maxlength="200" placeholder="Lasergame evening">
+  <label for="activity">Activity</label><input id="activity" name="activity" maxlength="100" placeholder="lasergame">
+  <label for="tz">Time zone</label><input id="tz" name="timezone" value="Europe/Amsterdam" maxlength="64">
+  <label for="notes">Notes</label><textarea id="notes" name="notes" rows="2" placeholder="Budget, place ideas…"></textarea>
+  <button type="submit" class="primary">Create</button>
+</form>
+{% if events %}<h2>Your gatherings</h2>
+<ul class="list">{% for e in events %}<li><a href="{{ url('/gatherings/' ~ e.id) }}">{{ e.title }}</a> <span class="tag">{{ e.status }}</span></li>{% endfor %}</ul>
+{% else %}<p class="muted">No gatherings yet.</p>{% endif %}
+{% endblock %}

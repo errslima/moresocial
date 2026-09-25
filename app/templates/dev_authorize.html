@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% block title %}Synthetic Google{% endblock %}
+{% block content %}
+<h1>Synthetic Google consent</h1>
+<p class="notice">Development mode: no real Google account is used.</p>
+<form method="post" action="{{ url('/dev/google/authorize') }}" class="stack">
+  <input type="hidden" name="state" value="{{ state }}">
+  <input type="hidden" name="nonce" value="{{ nonce }}">
+  <fieldset><legend>Account</legend>
+  {% for key, u in users.items() %}
+  <label><input type="radio" name="user" value="{{ key }}" {% if loop.first %}checked{% endif %}> {{ u.name }} ({{ u.email }})</label>
+  {% endfor %}
+  </fieldset>
+  <fieldset><legend>Permissions</legend>
+  <label><input type="checkbox" name="gmail" value="1" checked> Read Gmail</label>
+  <label><input type="checkbox" name="calendar" value="1" checked> Read Calendar events</label>
+  <label><input type="checkbox" name="offline" value="yes" checked> Offline access (refresh token)</label>
+  </fieldset>
+  <div class="row"><button type="submit" name="action" value="allow" class="primary">Allow</button>
+  <button type="submit" name="action" value="cancel">Cancel</button></div>
+</form>
+{% endblock %}
