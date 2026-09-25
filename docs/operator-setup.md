@@ -51,7 +51,7 @@ drafts work; memory extraction, semantic search, cited answers and AI drafts are
 
 ```
 BETA_ALLOWLIST=errslima@gmail.com
-AI_PROVIDER=anthropic
+AI_PROVIDER=none
 WHATSAPP_CONNECTOR_CAP=2
 ```
 
@@ -83,7 +83,7 @@ Keep these settings exactly:
 On a workstation: `git push` the release commit; on the server:
 
 ```bash
-ssh ubuntu@54.37.204.161          # verify the current host/SSH config first
+ssh -i ~/.ssh/qoc_vps_ed25519 ubuntu@54.37.204.161  # current workstation key
 free -m; df -h /srv; docker version; docker compose version
 ss -ltnp | grep -E ':877[23]\b' || echo "ports free"
 sudo cp /etc/caddy/Caddyfile /srv/moresocial-caddy-backup-$(date +%F).Caddyfile  # back up live config
@@ -92,6 +92,7 @@ git checkout <sha>
 # secrets and runtime.env as in section 2, then:
 sudo deploy/release.sh <sha>       # builds images, migrates once, starts db/web/worker, checks /ready
 sudo install -m 0644 deploy/systemd/moresocial-*.service deploy/systemd/moresocial-backup.timer /etc/systemd/system/
+# When installing from root-only /srv paths, expand wildcards inside sudo sh -c.
 sudo systemctl daemon-reload
 sudo systemctl enable --now moresocial-connectors.service moresocial-backup.timer
 curl -fsS http://127.0.0.1:8772/health && curl -fsS http://127.0.0.1:8772/ready

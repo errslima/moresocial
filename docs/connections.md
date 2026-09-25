@@ -1,6 +1,7 @@
-# Connections — proposed implementation and setup
+# Connections — implementation and setup
 
-Status: inspected EnzoSocial on 2026-09-25; Moresocial integration not yet implemented.
+Status: implemented and deployed on 2026-09-25. OAuth initiation is verified; real user
+consent/sync and WhatsApp pairing are pending. See [implementation status](implementation-status.md).
 
 ## Reference implementation
 
@@ -34,11 +35,12 @@ If a user declines a data permission, preserve successful sign-in, clearly show
 which feature is unavailable, and offer a simple authorization retry. Revoked or
 expired access gets a Reconnect Google action, never developer setup instructions.
 
-Proposed unified callback path (not registered or implemented):
+Registered and implemented unified callback path:
 
 - `https://1f517.com/moresocial/api/auth/google/callback`
 
-Production APP_BASE_URL is `https://1f517.com/moresocial`. Register the exact
+Production configuration uses `PUBLIC_ORIGIN=https://1f517.com` and
+`BASE_PATH=/moresocial`. Register the exact
 production callback above; choose development URLs separately. Later permission upgrades and
 reconnection can use this callback with a server-validated flow purpose and state.
 
@@ -79,7 +81,9 @@ and is Git-ignored and untracked. Its contents must remain private. Load the nes
 mounted read-only as `/run/secrets/google_auth.json` via `GOOGLE_CLIENT_FILE`.
 
 The following list remains the setup reference; project/client creation is already
-done. API enablement, consent scopes/audience, and live login still need verification.
+done. API enablement and consent configuration were reported complete by the operator.
+The deployed authorization request includes both read scopes; actual consent and sync
+still need interactive verification.
 
 1. Create a dedicated Moresocial Google Cloud project.
 2. Enable Gmail API and Google Calendar API.

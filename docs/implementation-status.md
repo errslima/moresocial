@@ -8,7 +8,8 @@ release is **deployed** at https://1f517.com/moresocial/. Interactive provider c
 ## Production deployment — 2026-09-25
 
 - Active application revision: `c921458b7ece3329e41ef7390dd4bf171ef062f5`.
-  Source transferred from a local Git bundle; this commit has not been pushed to GitHub.
+  Source was deployed from a local Git bundle. The application and documentation are
+  maintained in `https://github.com/errslima/moresocial`.
 - Server: `ubuntu@54.37.204.161`, using `~/.ssh/qoc_vps_ed25519`.
   Isolated release/state under `/srv/moresocial`; migration `0002` applied.
 - Both Docker images built successfully. Database and web healthy; worker running;
@@ -25,8 +26,8 @@ release is **deployed** at https://1f517.com/moresocial/. Interactive provider c
   an isolated container, migration head `0002`, zero workspaces/sources (fresh installation).
   Disposable restore container, volume and decrypted files removed afterward.
 - Live Caddy configuration backed up at `/srv/moresocial/Caddyfile.before-20260925T133638Z`.
-  Shared local `../deploy/Caddyfile` includes the new route; that shared-repository change
-  still needs committing/publishing before future shared deployments.
+  Shared `../deploy/Caddyfile` includes the new route in the separate
+  `https://github.com/errslima/1f517` repository for future shared deployments.
 - Secrets stay outside Git. Recovery secrets and backups currently remain on this host;
   an independent private recovery-vault copy has not been configured.
 

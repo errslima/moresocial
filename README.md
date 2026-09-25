@@ -5,10 +5,12 @@ Private relationship memory and assistance with planning gatherings and conversa
 Deployment target: **https://1f517.com/moresocial/** on the existing 1f517 server,
 with independent application files and state under `/srv/moresocial`.
 
-The first release (milestones M0–M6) is implemented and tested with synthetic providers;
-it has **not** been deployed, and live Google consent, WhatsApp pairing and AI quality are
-still unverified. See [implementation status](docs/implementation-status.md).
+The first release (milestones M0–M6) is deployed at the URL above. Database, web, worker,
+OAuth initiation, and encrypted backup restoration have passed deployment checks.
+Interactive Google consent/sync and WhatsApp pairing remain unverified. AI features are
+disabled until provider keys are configured. See [implementation status](docs/implementation-status.md).
 
+- [Current architecture and feature map](docs/architecture.md)
 - [Implementation status and pending live checks](docs/implementation-status.md)
 - [Operator setup, deployment and runbook](docs/operator-setup.md)
 - [Implementation execution plan](EXECUTION-PLAN.md)

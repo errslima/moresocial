@@ -1,6 +1,8 @@
 # Moresocial — working product definition
 
-Status: design discussion; no application implemented yet.
+Status: original product direction, followed by an implemented and deployed first release.
+The proposals below include future ideas, not a list of completed features. See the
+[current feature map](architecture.md) and [deployment status](implementation-status.md).
 
 ## Confirmed requirements
 
