@@ -72,10 +72,24 @@ Verification after fixes (2026-09-25):
 `docs/review-probes.py` now forwards to the permanent regressions rather than retaining
 obsolete failing probes. The fix verification itself used no live credentials; the subsequent deployment is recorded above.
 
-## User AI API keys — implemented 2026-09-25, not deployed
+## Production deployment — AI keys and admin page, 2026-09-25
 
-Implements [the API-key execution plan](api-keys-execution-plan.md) milestones K0–K4; K5
-code/docs are done, the rollout and live checks are pending.
+- Active revision `a66135449b826d2a43a0f07721c974a6cebae07a` (previous `c921458`), deployed
+  from a local Git bundle with `release.sh`; migration head `0003`. Web healthy, worker
+  running, no errors in logs after start.
+- `runtime.env` additions (backup at `/srv/moresocial/runtime.env.before-a661354`):
+  `USER_AI_KEYS=anthropic,openai`, `ANTHROPIC_MODEL=claude-sonnet-5`,
+  `OPENAI_MODEL=gpt-5.6-terra`, `ADMIN_EMAILS=errslima@gmail.com`. `AI_PROVIDER=none` is
+  unchanged: no global provider or key is set yet, so `/ready` reports
+  `ai_generation: false, ai_embeddings: false` until the admin page is used.
+- Public checks: `/` 200, `/enzosocial/` 303, `/quorum-of-clones/` 200 (unchanged),
+  `/moresocial/` 200, `/moresocial/health` 200, `/moresocial/admin` 303 when signed out.
+- Pending: sign in as the admin, set the global provider and keys; real-key live checks.
+
+## User AI API keys — implemented 2026-09-25
+
+Implements [the API-key execution plan](api-keys-execution-plan.md) milestones K0–K5
+(deployed above); live checks with real keys are pending.
 
 - `app/ai.py`: per-workspace tier resolution (`generator_for`), `embedder()` split from
   generation, billing-aware budgets (`userkey:<workspace>` scope, excluded from `global`),
@@ -103,15 +117,13 @@ Verification (local, synthetic providers and mock transports only):
 - No real Anthropic or OpenAI key was used. The OpenAI adapter is tested against the
   documented Responses API shape only; its first live call is part of the live checks.
 
-Pending before and after rollout:
+Pending live checks (deployment is recorded above):
 
-1. Deploy (migration `0003` runs in `release.sh`) and set in `runtime.env`:
-   `USER_AI_KEYS=anthropic` (add `openai` together with `OPENAI_MODEL`).
-2. Confirm `ANTHROPIC_MODEL` is a model id users' keys can call: it is what validation
-   checks and what users are billed for.
-3. Live checks: add a real Anthropic key, ask a question, see a cited answer and the usage
+1. Admin page: sign in as `errslima@gmail.com`, save the OpenAI (and optionally Voyage)
+   key, select the global provider; `/ready` should then report `ai_generation: true`.
+2. User keys: add a real Anthropic key, ask a question, see a cited answer and the usage
    in that account's console; add a revoked key and see the refusal; remove the key and
-   confirm fallback. Repeat for OpenAI if enabled.
+   confirm fallback. Repeat for OpenAI.
 
 ## Milestones
 
