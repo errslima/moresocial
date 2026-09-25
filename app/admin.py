@@ -1,25 +1,20 @@
-"""Admin page: the global AI provider and the operator's API keys.
-
-Only accounts listed in ADMIN_EMAILS (verified Google identities) can open it; everyone
-else gets a plain 404. Keys are validated with the provider before they are stored,
-stored encrypted, and never rendered. The web process applies a change immediately; the
-worker picks it up within `ai.OPERATOR_REFRESH_SECONDS`.
-"""
+"""Admin-only OpenRouter configuration and operational status."""
 from __future__ import annotations
+
+import time
 
 import httpx
 from fastapi import APIRouter, Depends, Form, Request
 from sqlalchemy import func, select
 
-from . import ai, ai_keys, config, operator_settings, security
+from . import ai, config, operator_settings, security
 from .auth_routes import throttle
-from .models import Connection, UsageBudget
+from .models import ProviderUsage
 from .web import Ctx, Problem, is_admin, redirect, render, require_mutation, require_user
 
 router = APIRouter()
-LABELS = {'anthropic': 'Anthropic (Claude)', 'openai': 'OpenAI', 'voyage': 'Voyage AI (embeddings)'}
-CHOICE_LABELS = {'anthropic': 'Anthropic (Claude)', 'openai': 'OpenAI', 'none': 'Off: only users with their own key get AI',
-                 'fake': 'Synthetic (development)'}
+_catalog: tuple[float, dict] | None = None
+CATALOG_SECONDS = 600
 
 
 def admin_only(ctx: Ctx = Depends(require_user)) -> Ctx:
@@ -32,71 +27,59 @@ def admin_mutation(ctx: Ctx = Depends(require_mutation)) -> Ctx:
     return admin_only(ctx)
 
 
-def model_for(provider: str) -> str:
-    settings = config.get()
-    return {'anthropic': settings.anthropic_model, 'openai': settings.openai_model,
-            'voyage': settings.embedding_model}[provider]
-
-
-def file_key(provider: str) -> bool:
-    settings = config.get()
-    path = {'anthropic': settings.anthropic_api_key_file, 'voyage': settings.voyage_api_key_file}.get(provider)
-    return bool(config.read_secret(path))
-
-
-def validate_voyage(key: str) -> str | None:
-    settings = config.get()
-    if ai_keys._transport is None and settings.synthetic_providers:
-        return 'invalid_key' if 'reject' in key else None
-    body = {'input': ['ok'], 'model': settings.embedding_model, 'input_type': 'query',
-            'output_dimension': settings.embedding_dimension}
+def catalog() -> dict:
+    """Fetch non-secret model metadata; a failed refresh never changes saved choices."""
+    global _catalog
+    if _catalog and time.monotonic() - _catalog[0] < CATALOG_SECONDS:
+        return _catalog[1]
     try:
-        with httpx.Client(timeout=15, transport=ai_keys._transport) as h:
-            r = h.post(ai.VoyageEmbedder.VOYAGE_URL, json=body, headers={'Authorization': 'Bearer ' + key})
-    except httpx.HTTPError as exc:
-        security.emit('admin_key_validation_failed', exc, provider='voyage')
-        return 'unreachable'
-    if r.is_success or r.status_code == 429:
-        return None
-    if r.status_code in (401, 403):
-        return 'invalid_key'
-    security.emit('admin_key_validation_failed', provider='voyage', status=r.status_code)
-    return 'model_unavailable' if r.status_code in (400, 404) else 'unreachable'
+        with httpx.Client(timeout=5) as h:
+            response = h.get(ai.OpenRouterProvider.BASE_URL + '/models')
+        response.raise_for_status()
+        rows = response.json().get('data') or []
+        reasoning, embedding = [], []
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get('id'), str):
+                continue
+            ident, params = row['id'], set(row.get('supported_parameters') or [])
+            outputs = set((row.get('architecture') or {}).get('output_modalities') or [])
+            if 'response_format' in params or 'structured_outputs' in params:
+                reasoning.append({'id': ident, 'reasoning': 'reasoning' in params})
+            if 'embeddings' in outputs or 'embedding' in outputs or 'embedding' in ident.lower():
+                embedding.append({'id': ident})
+        data = {'reasoning': sorted(reasoning, key=lambda x: x['id']), 'embedding': sorted(embedding, key=lambda x: x['id']), 'error': None}
+        _catalog = (time.monotonic(), data)
+        return data
+    except (httpx.HTTPError, ValueError, TypeError):
+        return {'reasoning': [], 'embedding': [], 'error': 'Model catalog is temporarily unavailable.'}
 
 
-def check_key(provider: str, key: str) -> str | None:
-    if provider == 'voyage':
-        if not 10 <= len(key) <= 300 or any(c.isspace() or not c.isprintable() for c in key):
-            return 'format'
-        return validate_voyage(key)
-    return ai_keys.check_format(provider, key) or ai_keys.validate(provider, key)
+def _with_selected(items: list[dict], selected: str) -> list[dict]:
+    items = [{**item, 'unverified': bool(item.get('unverified', False))} for item in items]
+    if selected and not any(i['id'] == selected for i in items):
+        return [{'id': selected, 'reasoning': False, 'unverified': True}] + items
+    return items
 
 
-def message(provider: str, reason: str) -> str:
-    return ai_keys.REASONS.get(reason, ai_keys.REASONS['invalid_key']).format(label=LABELS[provider],
-                                                                              model=model_for(provider))
+def _costs(ctx: Ctx) -> dict:
+    rows = ctx.s.execute(select(ProviderUsage.operation, func.count(), func.coalesce(func.sum(ProviderUsage.cost), 0),
+                                 func.count().filter(ProviderUsage.cost.is_(None))).where(ProviderUsage.provider == 'openrouter')
+                         .group_by(ProviderUsage.operation)).all()
+    return {operation: {'calls': calls, 'known': str(known), 'unknown': unknown} for operation, calls, known, unknown in rows}
 
 
-def admin_page(request: Request, ctx: Ctx, status: int = 200, error: dict | None = None):
-    settings = config.get()
-    stored = operator_settings.rows(ctx.s)
-    choice_row = stored.get(operator_settings.PROVIDER)
-    choice = choice_row.value if choice_row else settings.ai_provider
-    keys = []
-    for p in operator_settings.KEYS:
-        row = stored.get(operator_settings.key_name(p))
-        keys.append({'provider': p, 'label': LABELS[p], 'model': model_for(p),
-                     'row': row if row is not None and row.value else None,
-                     'removed': row if row is not None and not row.value else None,
-                     'from_file': file_key(p) and not (row is not None and row.value)})
-    operator = ai.provider()
-    used = ctx.s.scalar(select(UsageBudget.tokens).where(UsageBudget.scope == 'global', UsageBudget.day == ai.today())) or 0
-    own_keys = ctx.s.scalar(select(func.count(func.distinct(Connection.workspace_id))).where(
-        Connection.provider.in_(config.USER_KEY_PROVIDERS), Connection.state == 'active'))
-    return render(request, 'admin.html', ctx, status=status, error=error, choice=choice, choice_row=choice_row,
-                  choices=[c for c in operator_settings.CHOICES] + (['fake'] if choice == 'fake' else []),
-                  choice_labels=CHOICE_LABELS, keys=keys, operator=operator, used=used, own_keys=own_keys,
-                  limits=settings)
+def admin_page(request: Request, ctx: Ctx, status: int = 200, error: str | None = None):
+    settings, stored, rows = config.get(), operator_settings.values(ctx.s), operator_settings.rows(ctx.s)
+    meta = catalog()
+    reasoning = stored.get(operator_settings.REASONING_MODEL) or settings.openrouter_generation_model
+    embedding = stored.get(operator_settings.EMBEDDING_MODEL) or settings.openrouter_embedding_model
+    return render(request, 'admin.html', ctx, status=status, error=error,
+                  enabled=stored.get(operator_settings.ENABLED) == '1' or (operator_settings.ENABLED not in rows and settings.ai_provider == 'openrouter'),
+                  key_row=rows.get('openrouter_api_key'), reasoning_models=_with_selected(meta['reasoning'], reasoning),
+                  embedding_models=_with_selected(meta['embedding'], embedding), reasoning_model=reasoning, embedding_model=embedding,
+                  pending_embedding=stored.get(operator_settings.PENDING_EMBEDDING_MODEL), catalog_error=meta['error'],
+                  revision=operator_settings.revision(ctx.s), last_test=stored.get(operator_settings.LAST_TEST_STATUS),
+                  last_test_error=stored.get(operator_settings.LAST_TEST_ERROR), costs=_costs(ctx), limits=settings)
 
 
 @router.get('/admin')
@@ -104,48 +87,77 @@ def admin_home(request: Request, ctx: Ctx = Depends(admin_only)):
     return admin_page(request, ctx)
 
 
-@router.post('/admin/ai/provider')
-def admin_set_provider(request: Request, provider: str = Form(''), ctx: Ctx = Depends(admin_mutation)):
-    if provider not in operator_settings.CHOICES:
-        raise Problem(400, 'Unknown provider.')
-    stored = operator_settings.values(ctx.s)
-    if provider != 'none' and not (stored.get(operator_settings.key_name(provider)) or file_key(provider)):
-        return admin_page(request, ctx, status=400, error={'section': 'provider',
-                          'message': f'Add a working {LABELS[provider]} key below before selecting it.'})
-    operator_settings.set_provider(ctx.s, provider, ctx.account.email)
-    ctx.s.commit()
+def _valid_key(key: str) -> bool:
+    return 10 <= len(key) <= 300 and all(c.isprintable() and not c.isspace() for c in key)
+
+
+def _candidate(key: str, reasoning_model: str, embedding_model: str, *, reasoning_effort: bool) -> ai.OpenRouterProvider:
+    """Perform tiny paid synthetic calls, learning the actual embedding dimension."""
+    probe = ai.OpenRouterProvider(key, reasoning_model, embedding_model, 1, reasoning_effort=reasoning_effort)
+    generated = probe.generate(system='Return the requested object.', prompt='Synthetic setup check.',
+                               schema={'type': 'object', 'additionalProperties': False, 'required': ['ok'],
+                                       'properties': {'ok': {'type': 'boolean'}}}, max_tokens=32, effort='low', context={})
+    if generated.data.get('ok') is not True or generated.model != reasoning_model:
+        raise ai.InvalidOutput('validation_schema')
+    raw = probe._post('/embeddings', {'model': embedding_model, 'input': ['Synthetic setup check.']}, 'embedding')
+    data = raw.get('data') or []
+    vector = data[0].get('embedding') if len(data) == 1 and isinstance(data[0], dict) else None
+    if not isinstance(vector, list) or not vector:
+        raise ai.InvalidOutput('embedding_shape')
+    candidate = ai.OpenRouterProvider(key, reasoning_model, embedding_model, len(vector), reasoning_effort=reasoning_effort)
+    candidate.embed(['Synthetic setup check.'], 'query')
+    return candidate
+
+
+@router.post('/admin/ai/openrouter/save')
+def save_openrouter(request: Request, api_key: str = Form(''), reasoning_model: str = Form(''), embedding_model: str = Form(''),
+                    reasoning_effort: str = Form(''), revision: int = Form(-1), ctx: Ctx = Depends(admin_mutation)):
+    throttle(request, 'admin-openrouter', limit=20, window=3600)
+    submitted_key, reasoning_model, embedding_model = api_key.strip(), reasoning_model.strip(), embedding_model.strip()
+    key = submitted_key or operator_settings.values(ctx.s).get('openrouter_api_key', '')
+    if not _valid_key(key) or not reasoning_model or not embedding_model:
+        return admin_page(request, ctx, 400, 'Enter a valid key and exact model IDs.')
+    try:
+        candidate = _candidate(key, reasoning_model, embedding_model, reasoning_effort=reasoning_effort == 'yes')
+    except (ai.AIUnavailable, ai.InvalidOutput, ai.KeyRejected) as exc:
+        code = str(exc).split(':', 1)[0]
+        operator_settings.record_test(ctx.s, ok=False, error=code, by=ctx.account.email)
+        ctx.s.commit()
+        security.emit('admin_openrouter_test_failed', provider='openrouter', code=code)
+        return admin_page(request, ctx, 400, 'Test failed (' + code + '); existing settings were kept.')
+    try:
+        operator_settings.set_openrouter(ctx.s, key=key, reasoning_model=reasoning_model, embedding_model=embedding_model,
+                                         embedding_dimension=candidate.embedding_dimension, reasoning_effort=reasoning_effort == 'yes',
+                                         by=ctx.account.email, expected_revision=revision)
+        operator_settings.record_test(ctx.s, ok=True, error=None, by=ctx.account.email)
+        ctx.s.commit()
+    except ValueError:
+        ctx.s.rollback()
+        return admin_page(request, ctx, 409, 'Settings changed while the candidate was tested. Reload and try again.')
     ai.reload_operator()
-    security.emit('admin_ai_provider_set', provider=provider)
+    security.emit('admin_openrouter_saved', provider='openrouter')
     return redirect('/admin', notice='admin-saved')
 
 
-def key_provider(provider: str) -> str:
-    if provider not in operator_settings.KEYS:
-        raise Problem(404, 'Not found.')
-    return provider
-
-
-@router.post('/admin/ai/keys/{provider}')
-def admin_set_key(request: Request, provider: str, api_key: str = Form(''), ctx: Ctx = Depends(admin_mutation)):
-    provider = key_provider(provider)
-    throttle(request, 'admin-key', limit=20, window=3600)
-    key = (api_key or '').strip()
-    reason = check_key(provider, key)
-    if reason:
-        security.emit('admin_ai_key_not_saved', provider=provider, code=reason)
-        return admin_page(request, ctx, status=400, error={'section': provider, 'message': message(provider, reason)})
-    operator_settings.set_key(ctx.s, provider, key, ctx.account.email)
+@router.post('/admin/ai/openrouter/disable')
+def disable_openrouter(ctx: Ctx = Depends(admin_mutation)):
+    operator_settings.disable(ctx.s, ctx.account.email)
     ctx.s.commit()
     ai.reload_operator()
-    security.emit('admin_ai_key_saved', provider=provider)
     return redirect('/admin', notice='admin-saved')
 
 
-@router.post('/admin/ai/keys/{provider}/remove')
-def admin_remove_key(provider: str, ctx: Ctx = Depends(admin_mutation)):
-    provider = key_provider(provider)
-    operator_settings.remove_key(ctx.s, provider, ctx.account.email)
+@router.post('/admin/ai/openrouter/key/remove')
+def remove_openrouter_key(ctx: Ctx = Depends(admin_mutation)):
+    operator_settings.remove_key(ctx.s, 'openrouter', ctx.account.email)
+    operator_settings.disable(ctx.s, ctx.account.email)
     ctx.s.commit()
     ai.reload_operator()
-    security.emit('admin_ai_key_removed', provider=provider)
+    return redirect('/admin', notice='admin-saved')
+
+
+@router.post('/admin/ai/openrouter/pending/cancel')
+def cancel_pending(ctx: Ctx = Depends(admin_mutation)):
+    operator_settings.cancel_pending(ctx.s, ctx.account.email)
+    ctx.s.commit()
     return redirect('/admin', notice='admin-saved')

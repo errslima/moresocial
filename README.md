@@ -14,6 +14,8 @@ disabled until provider keys are configured. See [implementation status](docs/im
 - [Implementation status and pending live checks](docs/implementation-status.md)
 - [Operator setup, deployment and runbook](docs/operator-setup.md)
 - [Implementation execution plan](EXECUTION-PLAN.md)
+- [OpenRouter consolidation execution plan](docs/openrouter-execution-plan.md)
+- [OpenRouter deployment runbook](docs/openrouter-rollout.md)
 - [Prompt to hand to an implementing agent](IMPLEMENTATION-PROMPT.md)
 - [Product definition](docs/product-definition.md)
 - [Google and WhatsApp connection design](docs/connections.md)
@@ -24,10 +26,9 @@ bash scripts/dev.sh    # local synthetic app at http://localhost:8772/moresocial
 ```
 
 Stack: Python 3.12, FastAPI, SQLAlchemy/Alembic, PostgreSQL + pgvector, server-rendered
-Jinja; a Node `whatsapp-web.js` connector per user; Anthropic (generation) and Voyage AI
-(embeddings), with users optionally bringing their own Anthropic or OpenAI API key for
-generation. Read-only integrations: Moresocial never sends messages or writes to Gmail or
-Calendar.
+Jinja; a Node `whatsapp-web.js` connector per user; OpenRouter for the operator-paid
+generation and embedding models. Model settings are configured by an administrator, not
+users. Read-only integrations: Moresocial never sends messages or writes to Gmail or Calendar.
 
 Google credentials and other private configuration must remain outside Git.
 Parts of `connector/` and `app/google_sync.py` are adapted from EnzoSocial (GPL-3.0).

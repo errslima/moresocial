@@ -47,7 +47,10 @@ into a container: make it `0400`.
 With empty AI key files set `AI_PROVIDER=none`: import, browsing, gatherings and manual
 drafts work; memory extraction, semantic search, cited answers and AI drafts are disabled.
 
-### Admin page (global AI)
+### Historical legacy AI notes (superseded)
+
+The remainder of this legacy subsection describes the pre-OpenRouter release and is
+not an activation guide. Use [the OpenRouter rollout runbook](openrouter-rollout.md).
 
 Accounts listed in `ADMIN_EMAILS` (production: `errslima@gmail.com`) see an **Admin** link
 and can open `/moresocial/admin`; everyone else gets 404 there. It sets the operator tier's
@@ -57,7 +60,7 @@ and override `AI_PROVIDER` and the `anthropic_api_key`/`voyage_api_key` files, w
 the fallback when nothing is saved. The web process applies changes at once; the worker
 within 30 seconds. An admin must also be on `BETA_ALLOWLIST` to sign in.
 
-### Users' own API keys
+### Historical users' own API keys (removed)
 
 `USER_AI_KEYS=anthropic,openai` lets each user add their own Anthropic and/or OpenAI API key
 on the Connections page; that workspace's generation then runs on, and is billed to, their
@@ -88,6 +91,19 @@ WHATSAPP_CONNECTOR_CAP=2
 The runtime validates at startup that `https://1f517.com/moresocial/api/auth/google/callback`
 is listed in the client file's `redirect_uris` (`/ready` reports `google_client: false`
 otherwise) and never logs the file's contents.
+
+## OpenRouter-only configuration
+
+Set `AI_PROVIDER=openrouter` only when using an optional file bootstrap; an encrypted key can
+instead be stored entirely through Admin. In Admin choose exact catalog IDs for the reasoning
+and embedding models, then use **Test and save**. It makes tiny synthetic calls and learns the
+embedding dimension before activation. A failed test preserves the current configuration.
+
+There are no provider allowlists, `data_collection="deny"` or ZDR fields in app requests.
+OpenRouter can fail over among providers for the same pinned model. Set a monetary limit on the
+dedicated key in OpenRouter; local token allowances are a separate safety control. Embedding
+changes stage a new space and background rebuild while search remains on the active space.
+See [the rollout runbook](openrouter-rollout.md) for migration, verification and cleanup.
 
 ## 3. Google Cloud (operator only)
 

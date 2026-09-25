@@ -168,13 +168,14 @@ class KeyView:
 
 def status(ws: Scoped) -> dict:
     """View data for the Connections page. Contains no key material beyond the hint."""
+    shared = ai.provider().name == 'openrouter'
     rows = {c.provider: c for c in ws.all(ws.q(Connection).where(Connection.provider.in_(enabled())))}
     keys = [KeyView(p, LABELS[p], CONSOLES[p], PREFIXES[p], rows.get(p),
                     message(p, rows[p].detail) if p in rows and rows[p].state != 'active' else None) for p in enabled()]
     tier = ai.generator_for(ws.wid)
     preference = ws.s.get(Workspace, ws.wid).ai_preference
     active = [k.provider for k in keys if k.conn is not None and k.conn.state == 'active']
-    return {'providers': keys, 'labels': LABELS, 'company_names': COMPANIES,
+    return {'providers': keys, 'shared': shared, 'labels': LABELS, 'company_names': COMPANIES,
             'companies': ' or '.join(COMPANIES[p] for p in enabled()), 'tier': tier.billing, 'tier_provider': tier.provider.name, 'active': active,
             'preference': preference if preference in active else (active[0] if active else None),
             'budget': ai.budget_state(ws.wid, tier.billing)}

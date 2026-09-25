@@ -134,8 +134,7 @@ def rebuild_conversation(workspace_id: uuid.UUID, provider: str, conversation_id
             if key not in keep:
                 s.delete(chunk)
         created = 0
-        embeddings_on = bool(ai.embedder().embedding_dimension)
-        model = ai.embedder().embedding_model
+        embedding_targets = ai.embedding_targets()
         for p in planned:
             if p['key'] in existing:
                 continue
@@ -146,8 +145,11 @@ def rebuild_conversation(workspace_id: uuid.UUID, provider: str, conversation_id
             for n, m in enumerate(p['members']):
                 ws.add(ChunkSource(id=uuid.uuid4(), chunk_id=chunk.id, source_id=m.id, source_version=m.version,
                                    label=f'S{n + 1}', segment_text=p['segments'][m.id]))
-            if embeddings_on:  # reconcile_ai enqueues missing embeddings once an embedder is configured
-                jobs.enqueue(s, workspace_id, 'embed_chunk', f'embed:{p["key"]}:{model}', {'chunk_id': str(chunk.id)})
+            # During a staged rebuild, new content joins both spaces so cutover cannot
+            # miss concurrent ingestion.
+            for space in embedding_targets:
+                jobs.enqueue(s, workspace_id, 'embed_chunk', f'embed:{p["key"]}:{space}',
+                             {'chunk_id': str(chunk.id), 'space': space})
             if provider in EXTRACT_PROVIDERS:
                 jobs.enqueue(s, workspace_id, 'extract_chunk', f'extract:{p["key"]}', {'chunk_id': str(chunk.id)})
             created += 1
@@ -174,8 +176,10 @@ def _still_valid(chunk: Chunk | None, members: list[tuple[ChunkSource, Source]],
             and all(src.included and src.deleted_at is None and src.version == cs.source_version for cs, src in members))
 
 
-def embed_chunk(workspace_id: uuid.UUID, chunk_id, job_id=None) -> str:
-    p = ai.embedder()
+def embed_chunk(workspace_id: uuid.UUID, chunk_id, job_id=None, space: str | None = None) -> str:
+    p = ai.embedder_for_space(space) if space else ai.embedder()
+    if p is None:
+        return 'obsolete'
     if not p.embedding_dimension:
         return 'disabled'  # queued before embeddings were turned off; nothing to do or reserve
     with db.session() as s:
@@ -183,23 +187,24 @@ def embed_chunk(workspace_id: uuid.UUID, chunk_id, job_id=None) -> str:
         chunk, members = _chunk_current(ws, chunk_id, lock=False)
         if chunk is None or chunk.pipeline_version != PIPELINE_VERSION:
             return 'gone'
-        if ws.first(ws.q(Embedding).where(Embedding.chunk_id == chunk.id, Embedding.model == p.embedding_model)):
+        space = p.embedding_space  # snapshot identity before the network request
+        if ws.first(ws.q(Embedding).where(Embedding.chunk_id == chunk.id, Embedding.space == space)):
             return 'exists'
         text, digest = chunk.text, chunk.content_hash
-        cached = ws.first(ws.q(Embedding).where(Embedding.content_hash == digest, Embedding.model == p.embedding_model,
+        cached = ws.first(ws.q(Embedding).where(Embedding.content_hash == digest, Embedding.space == space,
                                                 Embedding.dimension == p.embedding_dimension,
                                                 Embedding.pipeline_version == PIPELINE_VERSION))
         vector = list(cached.vector) if cached is not None else None
     if vector is None:
-        vector = ai.embed(workspace_id, [text], 'document', job_id).vectors[0]
+        vector = ai.embed(workspace_id, [text], 'document', job_id, snapshot=p).vectors[0]
     with db.session() as s:
         ws = Scoped(s, workspace_id)
         chunk, members = _chunk_current(ws, chunk_id, lock=True)
         if not _still_valid(chunk, members, digest):
             return 'discarded'
-        if ws.first(ws.q(Embedding).where(Embedding.chunk_id == chunk.id, Embedding.model == p.embedding_model)):
+        if ws.first(ws.q(Embedding).where(Embedding.chunk_id == chunk.id, Embedding.space == space)):
             return 'exists'
-        ws.add(Embedding(id=uuid.uuid4(), chunk_id=chunk.id, model=p.embedding_model, dimension=len(vector),
+        ws.add(Embedding(id=uuid.uuid4(), chunk_id=chunk.id, model=p.embedding_model, space=space, dimension=len(vector),
                          content_hash=digest, pipeline_version=PIPELINE_VERSION, vector=vector))
     return 'embedded' if cached is None else 'cached'
 

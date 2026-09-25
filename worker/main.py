@@ -16,7 +16,7 @@ import uuid
 
 from sqlalchemy import and_, exists, select, text
 
-from app import accounts, ai, config, db, google_sync, jobs, memory, security
+from app import accounts, ai, config, db, google_sync, jobs, memory, operator_settings, security
 from app.google import GoogleError
 from app.models import Chunk, Connection, Embedding, Job, SyncStream, Workspace, PIPELINE_VERSION
 
@@ -52,7 +52,7 @@ def handle(job: Job) -> None:
     elif job.kind == 'rebuild_conversation':
         memory.rebuild_conversation(wid, p['provider'], p.get('conversation_id'))
     elif job.kind == 'embed_chunk':
-        memory.embed_chunk(wid, uuid.UUID(p['chunk_id']), job.id)
+        memory.embed_chunk(wid, uuid.UUID(p['chunk_id']), job.id, p.get('space'))
     elif job.kind == 'extract_chunk':
         memory.extract_chunk(wid, uuid.UUID(p['chunk_id']), job.id)
     else:
@@ -131,7 +131,7 @@ def schedule() -> int:
 def reconcile_ai(batch: int = 200) -> int:
     """Chunks missing an embedding for the configured model (new chunks, crashes, or a model
     change = reindex) or never extracted get idempotent jobs."""
-    p = ai.embedder()
+    targets = ai.embedding_targets()
     n = 0
     with db.session() as s:
         legacy = s.execute(select(Chunk.workspace_id, Chunk.provider, Chunk.conversation_id).where(
@@ -140,18 +140,31 @@ def reconcile_ai(batch: int = 200) -> int:
             key = 'pipeline:' + memory.h(PIPELINE_VERSION, provider, conversation)
             n += jobs.enqueue(s, wid, 'rebuild_conversation', key,
                               {'provider': provider, 'conversation_id': conversation})
-        if p.embedding_dimension:
+        for space, p in targets.items():
             missing = s.execute(select(Chunk.workspace_id, Chunk.id, Chunk.chunk_key).where(
                 Chunk.pipeline_version == PIPELINE_VERSION, ~exists().where(
                 Embedding.workspace_id == Chunk.workspace_id, Embedding.chunk_id == Chunk.id,
-                Embedding.model == p.embedding_model)).limit(batch)).all()
+                Embedding.space == space)).limit(batch)).all()
             for wid, cid, key in missing:
-                n += jobs.enqueue(s, wid, 'embed_chunk', f'embed:{key}:{p.embedding_model}', {'chunk_id': str(cid)})
+                n += jobs.enqueue(s, wid, 'embed_chunk', f'embed:{key}:{space}', {'chunk_id': str(cid), 'space': space})
         pending = s.execute(select(Chunk.workspace_id, Chunk.id, Chunk.chunk_key).where(
             Chunk.pipeline_version == PIPELINE_VERSION, Chunk.extracted_at.is_(None),
             Chunk.provider.in_(sorted(memory.EXTRACT_PROVIDERS))).limit(batch)).all()
         for wid, cid, key in pending:
             n += jobs.enqueue(s, wid, 'extract_chunk', f'extract:{key}', {'chunk_id': str(cid)})
+        # Cut over only after the complete pending space is covered. Chunks are locked
+        # before the final check so an ingestion commit cannot be missed.
+        values = operator_settings.values(s)
+        pending_model = values.get(operator_settings.PENDING_EMBEDDING_MODEL)
+        if pending_model:
+            pending = next((p for p in targets.values() if p.embedding_model == pending_model and p.embedding_space != ai.embedder().embedding_space), None)
+            if pending:
+                s.execute(select(Chunk.id).where(Chunk.pipeline_version == PIPELINE_VERSION).with_for_update()).all()
+                uncovered = s.scalar(select(Chunk.id).where(Chunk.pipeline_version == PIPELINE_VERSION, ~exists().where(
+                    Embedding.workspace_id == Chunk.workspace_id, Embedding.chunk_id == Chunk.id,
+                    Embedding.space == pending.embedding_space)).limit(1))
+                if uncovered is None:
+                    operator_settings.promote_pending(s)
     return n
 
 

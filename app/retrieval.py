@@ -66,14 +66,16 @@ def search_chunks(ws: Scoped, question: str, person_id: uuid.UUID | None = None,
     ranked: dict[uuid.UUID, float] = {}
     vector_rows = []
     if p.embedding_dimension:
-        vec = ai.embed(ws.wid, [question], 'query', job_id).vectors[0]
+        # Use the same immutable provider snapshot for query construction and space
+        # filtering; a settings refresh cannot mix vector spaces mid-request.
+        vec = ai.embed(ws.wid, [question], 'query', job_id, snapshot=p).vectors[0]
         if len(vec) != p.embedding_dimension:
             raise MixedEmbeddings('query embedding dimension does not match configuration')
         vector_rows = ws.s.execute(text(f'''
             SELECT c.id FROM embeddings e JOIN chunks c ON c.workspace_id = e.workspace_id AND c.id = e.chunk_id
-            WHERE e.workspace_id = :w AND e.model = :model AND e.dimension = :dim AND {where}
+            WHERE e.workspace_id = :w AND e.space = :space AND e.dimension = :dim AND {where}
             ORDER BY e.vector <=> CAST(:q AS vector) LIMIT :k'''),
-            {**params, 'model': p.embedding_model, 'dim': p.embedding_dimension, 'q': str(vec)}).all()
+            {**params, 'space': p.embedding_space, 'dim': p.embedding_dimension, 'q': str(vec)}).all()
     q = fts_query(question)
     text_rows = ws.s.execute(text(f'''
         SELECT c.id FROM chunks c WHERE {where} AND c.tsv @@ to_tsquery('simple', :tsq)

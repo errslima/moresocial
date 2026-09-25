@@ -1,5 +1,10 @@
 # Implementation status
 
+> Supersession note (2026-09-25): the legacy Anthropic/Voyage/OpenAI and personal-key
+> sections below describe a previous implementation. The active implementation is
+> OpenRouter-only; Admin owns one encrypted key and pinned reasoning/embedding models.
+> Local migration and synthetic checks are not evidence of live API validation or deployment.
+
 Last updated 2026-09-25. This is the resume point for any agent or operator.
 
 Synthetic-provider tests do **not** prove live Google, WhatsApp or AI integration. The

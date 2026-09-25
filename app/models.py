@@ -7,7 +7,7 @@ from datetime import datetime, date
 import uuid
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import (Boolean, Computed, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer,
+from sqlalchemy import (Boolean, Computed, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, Numeric,
                         BigInteger, String, Text, UniqueConstraint, func, text)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -260,11 +260,12 @@ class ChunkSource(Base):
 
 class Embedding(Base):
     __tablename__ = 'embeddings'
-    __table_args__ = (owned('chunks', 'chunk_id', ondelete='CASCADE'), UniqueConstraint('workspace_id', 'chunk_id', 'model'))
+    __table_args__ = (owned('chunks', 'chunk_id', ondelete='CASCADE'), UniqueConstraint('workspace_id', 'chunk_id', 'space'))
     id: Mapped[uuid.UUID] = pk()
     workspace_id: Mapped[uuid.UUID] = ws_fk()
     chunk_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     model: Mapped[str] = mapped_column(String(100), nullable=False)
+    space: Mapped[str] = mapped_column(String(180), nullable=False)
     dimension: Mapped[int] = mapped_column(Integer, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     pipeline_version: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -461,6 +462,9 @@ class ProviderUsage(Base):
     reserved_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     input_tokens: Mapped[int | None] = mapped_column(Integer)
     output_tokens: Mapped[int | None] = mapped_column(Integer)
+    # OpenRouter reports USD for some responses. NULL means unknown, never zero.
+    cost: Mapped[object | None] = mapped_column(Numeric(18, 8))
+    currency: Mapped[str | None] = mapped_column(String(3))
     status: Mapped[str] = mapped_column(String(15), default='reserved', nullable=False)  # reserved|reconciled|failed
     created_at: Mapped[datetime] = now_col()
 

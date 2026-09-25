@@ -17,11 +17,9 @@ x-app: &app
     GOOGLE_CLIENT_FILE: /run/secrets/google_auth.json
     ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
     OPERATOR_KEY_FILE: /run/secrets/operator_key
-    ANTHROPIC_API_KEY_FILE: /run/secrets/anthropic_api_key
-    VOYAGE_API_KEY_FILE: /run/secrets/voyage_api_key
     CONNECTOR_IMAGE: moresocial-connector:${MORESOCIAL_REVISION}
     TRUSTED_PROXY_IPS: 172.31.77.1
-  secrets: [db_password, google_auth.json, encryption_key, operator_key, anthropic_api_key, voyage_api_key]
+  secrets: [db_password, google_auth.json, encryption_key, operator_key]
   read_only: true
   tmpfs: [/tmp]
   cap_drop: [ALL]
@@ -91,5 +89,3 @@ secrets:
   google_auth.json: {file: /srv/moresocial/secrets/google_auth.json}
   encryption_key: {file: /srv/moresocial/secrets/encryption_key}
   operator_key: {file: /srv/moresocial/secrets/operator_key}
-  anthropic_api_key: {file: /srv/moresocial/secrets/anthropic_api_key}
-  voyage_api_key: {file: /srv/moresocial/secrets/voyage_api_key}

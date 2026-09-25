@@ -16,7 +16,7 @@ GOOGLE_SCOPES_IDENTITY = ('openid', 'email', 'profile')
 GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly'
 CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events.readonly'
 GOOGLE_SCOPES = GOOGLE_SCOPES_IDENTITY + (GMAIL_SCOPE, CALENDAR_SCOPE)
-USER_KEY_PROVIDERS = ('anthropic', 'openai')  # AI providers whose API keys users may add
+USER_KEY_PROVIDERS: tuple[str, ...] = ()  # Production AI is paid through the operator OpenRouter key.
 DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5'
 DEFAULT_OPENAI_MODEL = 'gpt-5.6-terra'
 
@@ -70,11 +70,16 @@ class Settings:
     operator_key_file: str | None
     beta_allowlist: frozenset[str]
     admin_emails: frozenset[str]   # accounts that may open /admin (global AI settings)
-    ai_provider: str               # anthropic | fake | none
+    ai_provider: str               # openrouter | fake | none (environment bootstrap only)
     anthropic_api_key_file: str | None
     anthropic_model: str
     anthropic_fallbacks: bool
     voyage_api_key_file: str | None
+    openrouter_api_key_file: str | None
+    openrouter_generation_model: str
+    openrouter_embedding_model: str
+    openrouter_generation_providers: tuple[str, ...]  # retained only for old env parsing; never sent
+    openrouter_embedding_providers: tuple[str, ...]   # retained only for old env parsing; never sent
     embedding_model: str
     embedding_dimension: int
     ai_daily_tokens_workspace: int
@@ -169,13 +174,19 @@ def load(env: dict | None = None) -> Settings:
             if not env.get(name):
                 raise ConfigError(f'{name} is required in production')
     ai_provider = env.get('AI_PROVIDER', 'fake' if synthetic else 'none')
-    if ai_provider not in ('anthropic', 'fake', 'none'):
-        raise ConfigError('AI_PROVIDER must be anthropic, fake or none')
+    if ai_provider not in ('openrouter', 'fake', 'none'):
+        raise ConfigError('AI_PROVIDER must be openrouter, fake or none')
     if ai_provider == 'fake' and (mode == 'production' or origin == PRODUCTION_ORIGIN):
         raise ConfigError('The deterministic fake AI provider is for tests and development only')
-    user_ai_keys = tuple(dict.fromkeys(p.strip().lower() for p in env.get('USER_AI_KEYS', '').split(',') if p.strip()))
-    if any(p not in USER_KEY_PROVIDERS for p in user_ai_keys):
-        raise ConfigError('USER_AI_KEYS may only list ' + ', '.join(USER_KEY_PROVIDERS))
+    openrouter_generation_model = env.get('OPENROUTER_GENERATION_MODEL', '').strip()
+    openrouter_embedding_model = env.get('OPENROUTER_EMBEDDING_MODEL', '').strip()
+    def providers(name: str) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(p.strip() for p in env.get(name, '').split(',') if p.strip()))
+    # Bootstrap is deliberately optional: Admin can start with no file-mounted key and
+    # persist a complete configuration later. Provider allowlists are not a contract.
+    if ai_provider == 'openrouter' and bool(openrouter_generation_model) != bool(openrouter_embedding_model):
+        raise ConfigError('OpenRouter bootstrap needs both generation and embedding models, or neither')
+    user_ai_keys: tuple[str, ...] = ()
     admins = frozenset(e.strip().lower() for e in env.get('ADMIN_EMAILS', '').split(',') if e.strip())
     allow = frozenset(e.strip().lower() for e in env.get('BETA_ALLOWLIST', '').split(',') if e.strip())
     proxies = frozenset(p.strip() for p in env.get('TRUSTED_PROXY_IPS', '127.0.0.1').split(',') if p.strip())
@@ -188,12 +199,17 @@ def load(env: dict | None = None) -> Settings:
         beta_allowlist=allow,
         admin_emails=admins,
         ai_provider=ai_provider,
-        anthropic_api_key_file=env.get('ANTHROPIC_API_KEY_FILE') or None,
+        anthropic_api_key_file=None,
         anthropic_model=env.get('ANTHROPIC_MODEL') or DEFAULT_ANTHROPIC_MODEL,
         anthropic_fallbacks=_bool(env.get('ANTHROPIC_REFUSAL_FALLBACKS'), True),
-        voyage_api_key_file=env.get('VOYAGE_API_KEY_FILE') or None,
-        embedding_model=env.get('EMBEDDING_MODEL', 'fake-hash-64' if ai_provider == 'fake' else 'voyage-3.5'),
-        embedding_dimension=_int(env, 'EMBEDDING_DIMENSION', 64 if ai_provider == 'fake' else 1024),
+        voyage_api_key_file=None,
+        openrouter_api_key_file=env.get('OPENROUTER_API_KEY_FILE') or None,
+        openrouter_generation_model=openrouter_generation_model,
+        openrouter_embedding_model=openrouter_embedding_model,
+        openrouter_generation_providers=providers('OPENROUTER_GENERATION_PROVIDERS'),
+        openrouter_embedding_providers=providers('OPENROUTER_EMBEDDING_PROVIDERS'),
+        embedding_model=env.get('EMBEDDING_MODEL', 'fake-hash-64' if ai_provider == 'fake' else ''),
+        embedding_dimension=_int(env, 'EMBEDDING_DIMENSION', 64 if ai_provider == 'fake' else 0),
         ai_daily_tokens_workspace=_int(env, 'AI_DAILY_TOKENS_PER_WORKSPACE', 400_000),
         ai_daily_tokens_global=_int(env, 'AI_DAILY_TOKENS_GLOBAL', 2_000_000),
         user_ai_keys=user_ai_keys,

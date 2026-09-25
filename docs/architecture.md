@@ -10,24 +10,20 @@ revision, deployment evidence and outstanding checks, read
 | Area | Implemented behavior | Main code |
 | --- | --- | --- |
 | Onboarding | One Google flow for identity, Gmail read and Calendar read; partial consent, reconnect, beta allowlist | `app/auth_routes.py`, `app/accounts.py`, `app/google.py` |
-| Connections | Google connection status; WhatsApp QR linking, status and disconnect; users' own Anthropic/OpenAI API keys; account deletion | `app/pages.py`, `app/whatsapp.py`, `app/ai_keys.py`, `app/templates/connections.html` |
+| Connections | Google connection status; WhatsApp QR linking, status and disconnect; shared-AI status; account deletion | `app/pages.py`, `app/whatsapp.py`, `app/templates/connections.html` |
 | People and sources | Contact profiles, explicit identity linking/unlinking, source browsing, exclusions, relationship notes and claim corrections | `app/ingest.py`, `app/pages.py` |
 | Personal profile | Editable self-profile and evidence-backed memory | `app/pages.py`, `app/models.py` |
 | Gatherings | Invitees, candidate dates, conflicts with the user's calendar, manual drafts, RSVP tracking and optional next steps | `app/gatherings.py`, `app/pages.py` |
-| Admin | `ADMIN_EMAILS` only: global AI provider (Anthropic/OpenAI/off) and operator API keys, overriding the environment | `app/admin.py`, `app/operator_settings.py`, `app/templates/admin.html` |
+| Admin | `ADMIN_EMAILS` only: encrypted OpenRouter key, pinned reasoning/embedding models, test/save, disable and rebuild status | `app/admin.py`, `app/operator_settings.py`, `app/templates/admin.html` |
 | AI assistance | Claim extraction, embeddings, hybrid retrieval, cited answers, invitation drafts, rewrites and RSVP suggestions | `app/memory.py`, `app/retrieval.py`, `app/ai.py`, `app/gatherings.py` |
 
 AI assistance is implemented but **disabled in the deployed configuration**
 (`AI_PROVIDER=none`); live provider behavior and quality remain unverified.
-Generation runs on one of two tiers, resolved per call from the job's or request's
-workspace (`ai.generator_for`): the workspace's own API key when `USER_AI_KEYS` enables
-it and a key works (Anthropic Messages API or OpenAI Responses API, billed to the user,
-capped by `AI_DAILY_TOKENS_USER_KEY`), otherwise the operator tier under the workspace and
-global budgets. The operator tier is built from the admin page's settings
-(`operator_settings`), falling back to `AI_PROVIDER` and the secret files; every process
-rebuilds it within 30 seconds of a change. A key the provider refuses is flagged on the Connections page and the call
-moves to the next tier. Embeddings always use the operator's embedder, so vectors never
-mix models or accounts. Manual
+All generation and embeddings use the shared operator-owned OpenRouter key, under workspace
+and global token allowances. The encrypted admin configuration overrides an optional bootstrap
+file and refreshes in each process within 30 seconds. Embedding-space identity includes the
+exact model, returned dimension and preprocessing contract; a changed model is staged and
+rebuilt before cutover, so vectors never mix spaces. Manual
 workflows remain available. Integrations are read-only: drafts are copied by the
 user, and the app does not send messages, write Gmail drafts or change calendars.
 It does not know invitees' calendars merely because it can read the user's calendar.

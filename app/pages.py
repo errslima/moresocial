@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, or_, select
 
-from . import accounts, ai, ai_keys, config, gatherings, ingest, memory, retrieval, whatsapp
+from . import accounts, ai, config, gatherings, ingest, memory, retrieval, whatsapp
 from .models import (Answer, AnswerSource, Claim, ClaimSource, Connection, Draft, Event, EventCandidate, EventPerson,
                      Exclusion, Job, Person, PersonIdentifier, RelationshipNote, SelfProfile, Source,
                      SourceParticipant, SyncStream, WhatsAppConnector)
@@ -452,7 +452,7 @@ def connections(request: Request, ctx: Ctx = Depends(require_user)):
     return connections_page(request, ctx)
 
 
-def connections_page(request: Request, ctx: Ctx, status: int = 200, key_error: dict | None = None):
+def connections_page(request: Request, ctx: Ctx, status: int = 200):
     ws = ctx.ws
     conn = ws.first(ws.q(Connection).where(Connection.provider == 'google'))
     streams = {st.stream: st for st in ws.all(ws.q(SyncStream))} if conn else {}
@@ -467,41 +467,15 @@ def connections_page(request: Request, ctx: Ctx, status: int = 200, key_error: d
     paused = ws.s.scalar(select(func.count()).select_from(Job).where(Job.workspace_id == ws.wid, Job.status == 'queued',
                                                                      Job.last_error.like('AI paused%')))
     settings = config.get()
-    assistant = ai_keys.status(ws)
+    operator = ai.provider()
+    assistant = {'tier': 'operator' if operator.can_generate() else 'none',
+                 'generation_model': operator.generation_model,
+                 'embedding_model': operator.embedding_model,
+                 'shared': True}
     return render(request, 'connections.html', ctx, status=status, conn=conn, streams=streams, counts=counts, wa=wa,
                   exclusions=exclusions, scopes={'gmail': config.GMAIL_SCOPE, 'calendar': config.CALENDAR_SCOPE},
-                  pending=sum(r[2] for r in ai_jobs), ai_paused=paused, budget=assistant['budget'], limits=settings,
-                  ai_configured=assistant['tier'] != 'none', assistant=assistant, key_error=key_error)
-
-
-def key_provider(provider: str) -> str:
-    if provider not in ai_keys.enabled():
-        raise Problem(404, 'Not found.')
-    return provider
-
-
-@router.post('/connections/ai/{provider}/key')
-def ai_key_save(request: Request, provider: str, api_key: str = Form(''), ctx: Ctx = Depends(require_mutation)):
-    provider = key_provider(provider)
-    throttle(request, f'ai-key:{ctx.ws.wid}', limit=10, window=3600)
-    reason = ai_keys.save(ctx.s, ctx.ws.wid, provider, api_key)
-    if reason:
-        # Re-render rather than redirect: the outcome must not travel in a URL, and the key is never echoed.
-        return connections_page(request, ctx, status=400,
-                                key_error={'provider': provider, 'message': ai_keys.message(provider, reason)})
-    return redirect('/connections', notice='ai-key-saved')
-
-
-@router.post('/connections/ai/{provider}/remove')
-def ai_key_remove(provider: str, ctx: Ctx = Depends(require_mutation)):
-    ai_keys.remove(ctx.s, ctx.ws.wid, key_provider(provider))
-    return redirect('/connections', notice='ai-key-removed')
-
-
-@router.post('/connections/ai/preference')
-def ai_key_preference(provider: str = Form(''), ctx: Ctx = Depends(require_mutation)):
-    ai_keys.set_preference(ctx.s, ctx.ws.wid, key_provider(provider))
-    return redirect('/connections')
+                  pending=sum(r[2] for r in ai_jobs), ai_paused=paused, budget=ai.budget_state(ws.wid), limits=settings,
+                  ai_configured=assistant['tier'] != 'none', assistant=assistant)
 
 
 @router.post('/connections/google/sync')
