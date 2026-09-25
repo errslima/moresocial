@@ -3,11 +3,36 @@
 Last updated 2026-09-25. This is the resume point for any agent or operator.
 
 Synthetic-provider tests do **not** prove live Google, WhatsApp or AI integration. The
-release is **not deployed**. Live checks are listed separately at the end.
+release is **deployed** at https://1f517.com/moresocial/. Interactive provider checks remain pending.
+
+## Production deployment — 2026-09-25
+
+- Active application revision: `c921458b7ece3329e41ef7390dd4bf171ef062f5`.
+  Source transferred from a local Git bundle; this commit has not been pushed to GitHub.
+- Server: `ubuntu@54.37.204.161`, using `~/.ssh/qoc_vps_ed25519`.
+  Isolated release/state under `/srv/moresocial`; migration `0002` applied.
+- Both Docker images built successfully. Database and web healthy; worker running;
+  connector provisioner and daily backup timer enabled and active.
+- Public home, static CSS, health and readiness return 200; bare `/moresocial` redirects
+  with 308. Internal management path returns 404 publicly. Existing root (200),
+  EnzoSocial (303) and Quorum (200) preserved their responses.
+- OAuth initiation verified: Google authorization endpoint, exact production callback,
+  Gmail/Calendar read-only scopes and secure HttpOnly callback cookie. No user signed in
+  during deployment; actual consent, grants and provider sync remain unverified.
+- `AI_PROVIDER=none`; Anthropic and Voyage secret files are empty. AI features are disabled.
+  Beta allowlist contains only the configured first tester. WhatsApp cap is two.
+- First encrypted backup `moresocial-20260925T133655Z.tar.enc` restored successfully into
+  an isolated container, migration head `0002`, zero workspaces/sources (fresh installation).
+  Disposable restore container, volume and decrypted files removed afterward.
+- Live Caddy configuration backed up at `/srv/moresocial/Caddyfile.before-20260925T133638Z`.
+  Shared local `../deploy/Caddyfile` includes the new route; that shared-repository change
+  still needs committing/publishing before future shared deployments.
+- Secrets stay outside Git. Recovery secrets and backups currently remain on this host;
+  an independent private recovery-vault copy has not been configured.
 
 ## Review fixes completed
 
-All six confirmed findings in `docs/review-findings.md` are fixed locally:
+All six confirmed findings in `docs/review-findings.md` are fixed and deployed:
 
 - Public synchronous DB/provider work runs in FastAPI's thread pool; the internal
   async handlers offload DB work too. Slow AI no longer blocks the public/internal
@@ -26,7 +51,7 @@ All six confirmed findings in `docs/review-findings.md` are fixed locally:
   replacement availability before stopping, and preserves each session mount.
 
 Migration `0002` adds `connector_cleanups` and `chunk_sources.segment_text`.
-Normal release migration runs it automatically; no production migration has run here.
+The production release applied this migration successfully.
 Old chunks are temporarily unavailable to retrieval until the worker rebuilds them.
 
 Verification after fixes (2026-09-25):
@@ -41,10 +66,10 @@ Verification after fixes (2026-09-25):
   and unavailable-image preservation.
 - Python compilation and shell syntax checks passed. Docker is unavailable locally:
   connector image reconciliation is tested with FakeDocker, and restore bootstrap SQL
-  with real temporary Postgres. Full container restore/rollout still needs a Docker check.
+  with real temporary Postgres. Full container restore/rollout subsequently passed on the VPS (above).
 
 `docs/review-probes.py` now forwards to the permanent regressions rather than retaining
-obsolete failing probes. No credentials were changed, and nothing was pushed or deployed.
+obsolete failing probes. The fix verification itself used no live credentials; the subsequent deployment is recorded above.
 
 ## Milestones
 
@@ -56,7 +81,7 @@ obsolete failing probes. No credentials were changed, and nothing was pushed or 
 | M3 WhatsApp | done (synthetic) | `tests/test_whatsapp.py` (scoped keys, payload workspace ignored, owner-only no-store QR, dedupe/edit/revoke, bounds, group authors, no name merges, exclusions, cap, disconnect/delete); provisioner with fake Docker (separate mounts/networks/keys, no ports or Docker socket, restart keeps session, no deletion when the API fails or reports an empty DB); Node `connector/*.test.js` (19 tests: auth, no send route, history bounds, durable queue, normalization) |
 | M4 memory/answers | done (synthetic) | `tests/test_memory.py`: sourced claims, conflicting locations kept distinguishable, workspace-scoped retrieval and citations, prompt-injection fixture (no tools, no cross-user evidence), server-side citation validation, deletion wins extraction race, exclusion invalidates answers and survives resync, rejections/edits authoritative, per-workspace + global budgets with reconciliation, bounded failure on invalid output, reindex on embedding-model change |
 | M5 workflow UI | done (synthetic) | `tests/test_workflow.py` (all screens, gathering flow with calendar conflicts, drafts, rewrite, manual edit, RSVP suggestion needing confirmation, next steps, About me, manual link/unlink, account deletion); `tests/test_browser.py` Playwright at 1280px and 390px through the prefix proxy: sign-in, QR pairing, evidence, claim fix, gathering, draft + real clipboard copy, RSVP, cited answer, no horizontal scroll, no provider writes |
-| M6 deployment packaging | done locally; live pending | `deploy/` (Dockerfile, compose, db init, Caddy fragment, provisioner + systemd, backup/restore, release/rollback), `docs/operator-setup.md`, `.github/workflows/ci.yml`, `scripts/test.sh`, `scripts/dev.sh`, `scripts/seed_demo.py`; `tests/test_backup_restore.py` (dump → encrypt → restore into a disposable DB → head, counts, grants decrypt, vector query) |
+| M6 deployment packaging | deployed; interactive provider checks pending | `deploy/` (Dockerfile, compose, db init, Caddy fragment, provisioner + systemd, backup/restore, release/rollback), `docs/operator-setup.md`, `.github/workflows/ci.yml`, `scripts/test.sh`, `scripts/dev.sh`, `scripts/seed_demo.py`; `tests/test_backup_restore.py` (dump → encrypt → restore into a disposable DB → head, counts, grants decrypt, vector query) |
 
 ## Original implementation verification (before review fixes)
 
@@ -97,8 +122,8 @@ live checks below.
 | Real Google consent + bounded first sync | **pending** | operator after deploy |
 | Real WhatsApp QR pairing, history sync, restart keeps session | **pending** | user pairs phone |
 | Anthropic + Voyage keys; live cited-answer and extraction quality evaluation | **pending**: no keys available | operator |
-| Docker image builds, Compose stack, provisioner with real Docker | **pending** (CI builds images) | operator/CI |
-| VPS rollout (ports, subnet, Caddy route, existing apps unaffected) | **pending**: no server access used | operator |
-| First backup + scratch restore on the host | **pending** | operator |
+| Docker image builds, Compose stack, provisioner with real Docker | **passed** build/start; actual paired connector lifecycle pending | deployed |
+| VPS rollout (ports, subnet, Caddy route, existing apps unaffected) | **passed** | deployed |
+| First backup + scratch restore on the host | **passed**; scratch resources removed | deployed |
 
-Deployed revision: none. Rollback target: none (first deployment).
+Deployed revision: `c921458b7ece3329e41ef7390dd4bf171ef062f5`. Rollback target: none (first deployment); removal procedure is in the operator runbook.
