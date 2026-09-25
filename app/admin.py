@@ -58,7 +58,8 @@ def catalog() -> dict:
                 outputs = set((row.get('architecture') or {}).get('output_modalities') or [])
                 if not outputs or 'embeddings' in outputs:
                     ident = row['id']
-                    embedding.append({'id': ident})
+                    canonical = row.get('canonical_slug')
+                    embedding.append({'id': ident, 'canonical': canonical if isinstance(canonical, str) else ident})
         data = {'reasoning': sorted(reasoning, key=lambda x: x['id']), 'embedding': sorted(embedding, key=lambda x: x['id']), 'error': None}
         _catalog = (time.monotonic(), data)
         return data
@@ -116,7 +117,19 @@ def _candidate(key: str, reasoning_model: str, embedding_model: str, *, reasonin
     vector = data[0].get('embedding') if len(data) == 1 and isinstance(data[0], dict) else None
     if not isinstance(vector, list) or not vector:
         raise ai.InvalidOutput('embedding_shape')
-    candidate = ai.OpenRouterProvider(key, reasoning_model, embedding_model, len(vector), reasoning_effort=reasoning_effort)
+    # Stable catalog IDs (for example ``voyageai/voyage-4``) may resolve to a
+    # dated canonical slug. That is an explicitly documented equivalence, not a
+    # provider/model fallback. Persist the returned exact identity so future calls
+    # and the embedding-space identity remain pinned.
+    returned_model = raw.get('model') or embedding_model
+    accepted = {embedding_model}
+    for model in catalog()['embedding']:
+        if model['id'] == embedding_model:
+            accepted.add(model.get('canonical') or embedding_model)
+            break
+    if not isinstance(returned_model, str) or returned_model not in accepted:
+        raise ai.InvalidOutput('embedding_model')
+    candidate = ai.OpenRouterProvider(key, reasoning_model, returned_model, len(vector), reasoning_effort=reasoning_effort)
     candidate.embed(['Synthetic setup check.'], 'query')
     return candidate
 
