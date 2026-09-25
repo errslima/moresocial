@@ -28,25 +28,37 @@ def admin_mutation(ctx: Ctx = Depends(require_mutation)) -> Ctx:
 
 
 def catalog() -> dict:
-    """Fetch non-secret model metadata; a failed refresh never changes saved choices."""
+    """Fetch non-secret model metadata; a failed refresh never changes saved choices.
+
+    OpenRouter's generic ``/models`` listing defaults to text-output models. Embedders
+    are listed separately at ``/embeddings/models``; filtering the generic listing
+    therefore produces an empty selector even while the embedding catalog is healthy.
+    """
     global _catalog
     if _catalog and time.monotonic() - _catalog[0] < CATALOG_SECONDS:
         return _catalog[1]
     try:
         with httpx.Client(timeout=5) as h:
-            response = h.get(ai.OpenRouterProvider.BASE_URL + '/models')
-        response.raise_for_status()
-        rows = response.json().get('data') or []
-        reasoning, embedding = [], []
-        for row in rows:
+            models_response = h.get(ai.OpenRouterProvider.BASE_URL + '/models')
+            embedding_response = h.get(ai.OpenRouterProvider.BASE_URL + '/embeddings/models')
+        models_response.raise_for_status()
+        embedding_response.raise_for_status()
+        reasoning = []
+        for row in models_response.json().get('data') or []:
             if not isinstance(row, dict) or not isinstance(row.get('id'), str):
                 continue
             ident, params = row['id'], set(row.get('supported_parameters') or [])
-            outputs = set((row.get('architecture') or {}).get('output_modalities') or [])
             if 'response_format' in params or 'structured_outputs' in params:
                 reasoning.append({'id': ident, 'reasoning': 'reasoning' in params})
-            if 'embeddings' in outputs or 'embedding' in outputs or 'embedding' in ident.lower():
-                embedding.append({'id': ident})
+        embedding = []
+        for row in embedding_response.json().get('data') or []:
+            if isinstance(row, dict) and isinstance(row.get('id'), str):
+                # The dedicated endpoint is the contract. Keep a defensive modality
+                # check only when the field is present, for forward-compatible data.
+                outputs = set((row.get('architecture') or {}).get('output_modalities') or [])
+                if not outputs or 'embeddings' in outputs:
+                    ident = row['id']
+                    embedding.append({'id': ident})
         data = {'reasoning': sorted(reasoning, key=lambda x: x['id']), 'embedding': sorted(embedding, key=lambda x: x['id']), 'error': None}
         _catalog = (time.monotonic(), data)
         return data
