@@ -1,12 +1,15 @@
 """Generation and embedding providers with per-workspace and global daily token budgets.
 
-Production adapter: Anthropic Messages API (structured JSON output) for generation and
-Voyage AI for embeddings; both configured by the operator. The deterministic fake is for
-tests and local development only. Prompts and responses are never logged. Imported
-content is passed as untrusted data; no tools are ever offered to the model.
+Operator tier: Anthropic Messages API (structured JSON output) for generation and Voyage AI
+for embeddings, configured by the operator. User tier: a workspace's own Anthropic or OpenAI
+API key (see `ai_keys`) pays for that workspace's generation; embeddings always stay on the
+operator's embedder so every vector shares one model. The deterministic fake is for tests
+and local development only. Prompts, responses and keys are never logged. Imported content
+is passed as untrusted data; no tools are ever offered to the model.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import hashlib
@@ -18,14 +21,23 @@ import time
 import uuid
 
 import httpx
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from . import config, db, security
-from .models import ProviderUsage
+from .models import Connection, ProviderUsage, Workspace
+from .repo import Scoped
 
 
 class AIUnavailable(Exception):
     """Provider not configured or failed after bounded retries."""
+
+
+class KeyRejected(AIUnavailable):
+    """The provider refused a user's API key: invalid_key | no_credit | model_unavailable."""
+
+    def __init__(self, reason: str):
+        super().__init__('key_rejected:' + reason)
+        self.reason = reason
 
 
 class BudgetExhausted(Exception):
@@ -80,20 +92,29 @@ TAKE_SQL = text("""UPDATE usage_budgets SET tokens = tokens + :n WHERE scope = :
                    RETURNING tokens""")
 
 
-def reserve(workspace_id: uuid.UUID, operation: str, model: str, tokens: int, job_id: uuid.UUID | None = None) -> uuid.UUID:
-    """Atomically reserve estimated tokens against both the workspace and global budgets."""
+def _scopes(workspace_id: uuid.UUID, billing: str) -> list[tuple[str, int]]:
+    """Budget scopes a call reserves against. A user's own key is capped per workspace only
+    (runaway protection); it never consumes the operator's workspace or global allowance."""
     settings = config.get()
+    if billing == 'user':
+        return [('userkey:' + str(workspace_id), settings.ai_daily_tokens_user_key)]
+    return [('workspace:' + str(workspace_id), settings.ai_daily_tokens_workspace), ('global', settings.ai_daily_tokens_global)]
+
+
+def reserve(workspace_id: uuid.UUID, operation: str, model: str, tokens: int, job_id: uuid.UUID | None = None,
+            billing: str = 'operator', provider_name: str = 'anthropic') -> uuid.UUID:
+    """Atomically reserve estimated tokens against every budget scope of the paying tier."""
     day = today()
-    scopes = [('workspace:' + str(workspace_id), settings.ai_daily_tokens_workspace), ('global', settings.ai_daily_tokens_global)]
+    scopes = _scopes(workspace_id, billing)
     with db.session() as s:
         for scope, limit in scopes:
             s.execute(RESERVE_SQL, {'scope': scope, 'day': day})
         for scope, limit in scopes:
             if s.execute(TAKE_SQL, {'scope': scope, 'day': day, 'n': tokens, 'limit': limit}).first() is None:
                 s.rollback()
-                raise BudgetExhausted('workspace' if scope != 'global' else 'global')
+                raise BudgetExhausted(scope.split(':', 1)[0])
         usage = ProviderUsage(id=uuid.uuid4(), workspace_id=workspace_id, job_id=job_id, day=day, operation=operation,
-                              model=model, reserved_tokens=tokens, status='reserved')
+                              model=model, provider=provider_name, billing=billing, reserved_tokens=tokens, status='reserved')
         s.add(usage)
         return usage.id
 
@@ -108,21 +129,24 @@ def reconcile(usage_id: uuid.UUID, input_tokens: int | None, output_tokens: int 
             delta = 0  # unknown provider-side cost: keep the reservation (conservative)
         else:
             delta = (input_tokens or 0) + (output_tokens or 0) - usage.reserved_tokens
-        for scope in ('workspace:' + str(usage.workspace_id), 'global'):
+        for scope, _ in _scopes(usage.workspace_id, usage.billing):
             s.execute(text('UPDATE usage_budgets SET tokens = GREATEST(0, tokens + :d) WHERE scope = :scope AND day = :day'),
                       {'d': delta, 'scope': scope, 'day': usage.day})
         usage.input_tokens, usage.output_tokens = input_tokens, output_tokens
         usage.status = 'failed' if failed else 'reconciled'
 
 
-def budget_state(workspace_id: uuid.UUID) -> dict:
-    settings = config.get()
+def budget_state(workspace_id: uuid.UUID, billing: str | None = None) -> dict:
+    """Today's usage for the tier that currently pays for this workspace's generation."""
+    if billing is None:
+        billing = generator_for(workspace_id).billing
+    scopes = dict(_scopes(workspace_id, billing))
     with db.session() as s:
-        rows = dict(s.execute(text('SELECT scope, tokens FROM usage_budgets WHERE day = :d AND scope IN (:w, :g)'),
-                              {'d': today(), 'w': 'workspace:' + str(workspace_id), 'g': 'global'}).all())
-    used, glob = rows.get('workspace:' + str(workspace_id), 0), rows.get('global', 0)
-    return {'used': used, 'limit': settings.ai_daily_tokens_workspace,
-            'paused': used >= settings.ai_daily_tokens_workspace * 0.98 or glob >= settings.ai_daily_tokens_global * 0.98}
+        rows = dict(s.execute(text('SELECT scope, tokens FROM usage_budgets WHERE day = :d AND scope = ANY(:scopes)'),
+                              {'d': today(), 'scopes': list(scopes)}).all())
+    key = next(iter(scopes))
+    paused = any(rows.get(scope, 0) >= limit * 0.98 for scope, limit in scopes.items()) if billing != 'none' else False
+    return {'billing': billing, 'used': rows.get(key, 0), 'limit': scopes[key], 'paused': paused}
 
 
 _slots: threading.BoundedSemaphore | None = None
@@ -143,6 +167,9 @@ class Provider:
     embedding_model = 'none'
     embedding_dimension = 0
 
+    def can_generate(self) -> bool:
+        return False
+
     def generate(self, *, system: str, prompt: str, schema: dict, max_tokens: int, effort: str, context: dict) -> Generated:
         raise AIUnavailable('AI provider is not configured')
 
@@ -150,26 +177,34 @@ class Provider:
         raise AIUnavailable('Embedding provider is not configured')
 
 
-class AnthropicVoyageProvider(Provider):
+def _anthropic_rejection(exc) -> str | None:
+    """Classify an Anthropic status error that means the key itself cannot be used."""
+    status = getattr(exc, 'status_code', None)
+    if status == 401:
+        return 'invalid_key'
+    if status == 402:
+        return 'no_credit'
+    if status in (403, 404):
+        return 'model_unavailable'
+    message = str(getattr(exc, 'message', '') or '').lower()
+    if status == 400 and ('credit balance' in message or 'spend limit' in message):
+        return 'no_credit'
+    return None
+
+
+class AnthropicGenerator(Provider):
+    """Messages API generation with one API key (the operator's or a user's)."""
     name = 'anthropic'
-    VOYAGE_URL = 'https://api.voyageai.com/v1/embeddings'
 
-    def __init__(self, settings: config.Settings, voyage_transport: httpx.BaseTransport | None = None):
-        self.settings = settings
-        self.generation_model = settings.anthropic_model
-        self.embedding_model = settings.embedding_model
-        self.embedding_dimension = settings.embedding_dimension
-        self._client = None
-        self._voyage_transport = voyage_transport
+    def __init__(self, key: str, model: str, fallbacks: bool, http_client=None):
+        # http_client: an `httpx2.Client` (the SDK's HTTP library), for tests only.
+        self.generation_model = model
+        self.fallbacks = fallbacks
+        import anthropic
+        self._client = anthropic.Anthropic(api_key=key, timeout=90.0, max_retries=2, http_client=http_client)
 
-    def client(self):
-        if self._client is None:
-            key = config.read_secret(self.settings.anthropic_api_key_file)
-            if not key:
-                raise AIUnavailable('Anthropic API key is not configured')
-            import anthropic
-            self._client = anthropic.Anthropic(api_key=key, timeout=90.0, max_retries=2)
-        return self._client
+    def can_generate(self) -> bool:
+        return True
 
     def generate(self, *, system, prompt, schema, max_tokens, effort, context) -> Generated:
         import anthropic
@@ -177,15 +212,19 @@ class AnthropicVoyageProvider(Provider):
                        messages=[{'role': 'user', 'content': prompt}],
                        output_config={'effort': effort, 'format': {'type': 'json_schema', 'schema': schema}})
         try:
-            if self.settings.anthropic_fallbacks:
+            if self.fallbacks:
                 # Server-side refusal fallback: a declined request is re-run on a fallback model.
-                response = self.client().beta.messages.create(**request, betas=['server-side-fallback-2026-07-01'],
-                                                              fallbacks='default')
+                response = self._client.beta.messages.create(**request, betas=['server-side-fallback-2026-07-01'],
+                                                             fallbacks='default')
             else:
-                response = self.client().messages.create(**request)
+                response = self._client.messages.create(**request)
         except anthropic.RateLimitError as exc:
             raise AIUnavailable('rate_limited') from exc
         except anthropic.APIStatusError as exc:
+            reason = _anthropic_rejection(exc)
+            if reason:
+                security.emit('ai_key_refused', exc, provider='anthropic', status=exc.status_code, code=reason)
+                raise KeyRejected(reason) from None
             security.emit('ai_generation_failed', exc, status=exc.status_code)
             raise AIUnavailable('provider_error') from exc
         except anthropic.APIConnectionError as exc:
@@ -198,18 +237,118 @@ class AnthropicVoyageProvider(Provider):
         if response.stop_reason in ('refusal', 'max_tokens'):
             raise InvalidOutput(response.stop_reason, tokens_in, tokens_out)
         text_ = next((b.text for b in response.content if getattr(b, 'type', '') == 'text'), None)
+        return Generated(data=_json_object(text_, tokens_in, tokens_out), input_tokens=tokens_in, output_tokens=tokens_out,
+                         model=response.model)
+
+
+def _json_object(text_: str | None, tokens_in: int, tokens_out: int) -> dict:
+    try:
+        data = json.loads(text_ or '')
+    except ValueError:
+        raise InvalidOutput('invalid_json', tokens_in, tokens_out) from None
+    if not isinstance(data, dict):
+        raise InvalidOutput('invalid_json', tokens_in, tokens_out)
+    return data
+
+
+def _openai_rejection(r: httpx.Response) -> str | None:
+    if r.status_code == 401:
+        return 'invalid_key'
+    if r.status_code in (403, 404):
+        return 'model_unavailable'
+    if r.status_code == 429:
         try:
-            data = json.loads(text_ or '')
-        except ValueError:
-            raise InvalidOutput('invalid_json', tokens_in, tokens_out) from None
-        if not isinstance(data, dict):
-            raise InvalidOutput('invalid_json', tokens_in, tokens_out)
-        return Generated(data=data, input_tokens=tokens_in, output_tokens=tokens_out, model=response.model)
+            code = (r.json().get('error') or {}).get('code')
+        except (ValueError, AttributeError):
+            code = None
+        if code == 'insufficient_quota':
+            return 'no_credit'
+    return None
+
+
+class OpenAIGenerator(Provider):
+    """OpenAI Responses API with strict JSON-schema output, using a user's API key."""
+    name = 'openai'
+    URL = 'https://api.openai.com/v1/responses'
+    REASONING_HEADROOM = 4000  # reasoning tokens count toward max_output_tokens
+
+    def __init__(self, key: str, model: str, reasoning: bool, transport: httpx.BaseTransport | None = None):
+        self._key = key
+        self.generation_model = model
+        self.reasoning = reasoning
+        self._transport = transport
+
+    def __repr__(self) -> str:
+        return f'OpenAIGenerator(model={self.generation_model!r})'
+
+    def can_generate(self) -> bool:
+        return True
+
+    def generate(self, *, system, prompt, schema, max_tokens, effort, context) -> Generated:
+        body = {'model': self.generation_model, 'instructions': system, 'input': prompt, 'store': False,
+                'max_output_tokens': max_tokens + (self.REASONING_HEADROOM if self.reasoning else 0),
+                'text': {'format': {'type': 'json_schema', 'name': 'result', 'schema': schema, 'strict': True}}}
+        if self.reasoning:
+            body['reasoning'] = {'effort': effort}
+        r = None
+        for attempt in range(3):
+            try:
+                with httpx.Client(timeout=90, transport=self._transport) as h:
+                    r = h.post(self.URL, json=body, headers={'Authorization': 'Bearer ' + self._key})
+            except httpx.HTTPError as exc:
+                security.emit('ai_generation_failed', exc, provider='openai', attempt=attempt)
+                r = None
+            if r is not None:
+                if r.is_success:
+                    break
+                reason = _openai_rejection(r)
+                if reason:
+                    security.emit('ai_key_refused', provider='openai', status=r.status_code, code=reason)
+                    raise KeyRejected(reason)
+                if r.status_code == 429:
+                    raise AIUnavailable('rate_limited')
+                if r.status_code not in (500, 502, 503, 504):
+                    security.emit('ai_generation_failed', provider='openai', status=r.status_code)
+                    raise AIUnavailable('provider_error')
+            if attempt < 2:
+                time.sleep(min(8, 2 ** attempt))
+        else:
+            raise AIUnavailable('connection' if r is None else 'provider_error')
+        data = r.json()
+        usage = data.get('usage') or {}
+        tokens_in, tokens_out = int(usage.get('input_tokens') or 0), int(usage.get('output_tokens') or 0)
+        if data.get('status') == 'incomplete':
+            reason = (data.get('incomplete_details') or {}).get('reason')
+            raise InvalidOutput('max_tokens' if reason == 'max_output_tokens' else 'incomplete', tokens_in, tokens_out)
+        text_ = None
+        for item in data.get('output') or []:
+            if item.get('type') != 'message':
+                continue
+            for part in item.get('content') or []:
+                if part.get('type') == 'refusal':
+                    raise InvalidOutput('refusal', tokens_in, tokens_out)
+                if part.get('type') == 'output_text':
+                    text_ = part.get('text')
+        return Generated(data=_json_object(text_, tokens_in, tokens_out), input_tokens=tokens_in, output_tokens=tokens_out,
+                         model=data.get('model') or self.generation_model)
+
+
+class VoyageEmbedder(Provider):
+    """Operator-paid embeddings (Voyage AI)."""
+    name = 'voyage'
+    VOYAGE_URL = 'https://api.voyageai.com/v1/embeddings'
+
+    def __init__(self, key: str, model: str, dimension: int, voyage_transport: httpx.BaseTransport | None = None):
+        self._key = key
+        self.embedding_model = model
+        self.embedding_dimension = dimension
+        self._voyage_transport = voyage_transport
+
+    def __repr__(self) -> str:
+        return f'VoyageEmbedder(model={self.embedding_model!r})'
 
     def embed(self, texts, input_type) -> Embedded:
-        key = config.read_secret(self.settings.voyage_api_key_file)
-        if not key:
-            raise AIUnavailable('Voyage API key is not configured')
+        key = self._key
         body = {'input': texts, 'model': self.embedding_model, 'input_type': input_type,
                 'output_dimension': self.embedding_dimension}
         for attempt in range(3):
@@ -234,6 +373,33 @@ class AnthropicVoyageProvider(Provider):
         raise AIUnavailable('embedding_unavailable')
 
 
+
+
+class OperatorTier(Provider):
+    """The operator's generation provider (if any) plus the operator's embedder (if any)."""
+
+    def __init__(self, generator: Provider | None, embedder_: Provider | None):
+        self.generator, self.embedder = generator, embedder_
+        self.name = generator.name if generator else 'none'
+        self.generation_model = generator.generation_model if generator else 'none'
+        self.embed_name = embedder_.name if embedder_ else 'none'
+        if embedder_:
+            self.embedding_model, self.embedding_dimension = embedder_.embedding_model, embedder_.embedding_dimension
+
+    def can_generate(self) -> bool:
+        return self.generator is not None
+
+    def generate(self, **kw) -> Generated:
+        if self.generator is None:
+            raise AIUnavailable('AI provider is not configured')
+        return self.generator.generate(**kw)
+
+    def embed(self, texts, input_type) -> Embedded:
+        if self.embedder is None:
+            raise AIUnavailable('Embedding provider is not configured')
+        return self.embedder.embed(texts, input_type)
+
+
 WORD = re.compile(r"[\w']+", re.UNICODE)
 
 
@@ -247,6 +413,9 @@ class FakeProvider(Provider):
         self.embedding_dimension = dimension
         self.embedding_model = model
         self.calls: list[dict] = []
+
+    def can_generate(self) -> bool:
+        return True
 
     def embed(self, texts, input_type) -> Embedded:
         vectors = []
@@ -269,40 +438,208 @@ class FakeProvider(Provider):
                          model=self.generation_model)
 
 
-_provider: Provider | None = None
+class SyntheticKeyProvider(FakeProvider):
+    """Stands in for a user's key under synthetic providers. A key containing `revoked`
+    passes validation but is refused at generation time, like a key revoked later."""
+
+    def __init__(self, name: str, key: str):
+        super().__init__()
+        self.name = name
+        self.generation_model = 'fake-' + name
+        self._revoked = 'revoked' in key
+
+    def generate(self, **kw) -> Generated:
+        if self._revoked:
+            raise KeyRejected('invalid_key')
+        return super().generate(**kw)
+
+
+_override: Provider | None = None
+_operator: Provider | None = None
+_operator_stamp = None
+_operator_checked = 0.0
+_operator_lock = threading.Lock()
+OPERATOR_REFRESH_SECONDS = 30
 
 
 def provider() -> Provider:
-    global _provider
-    if _provider is None:
-        settings = config.get()
-        if settings.ai_provider == 'fake':
-            _provider = FakeProvider(settings.embedding_dimension, settings.embedding_model)
-        elif settings.ai_provider == 'anthropic':
-            _provider = AnthropicVoyageProvider(settings)
-        else:
-            _provider = Provider()
-    return _provider
+    """The operator tier. Rebuilt when the admin page changes global settings (checked at
+    most every OPERATOR_REFRESH_SECONDS; `reload_operator()` forces it)."""
+    if _override is not None:
+        return _override
+    if _operator is None or time.monotonic() - _operator_checked > OPERATOR_REFRESH_SECONDS:
+        reload_operator(force=False)
+    return _operator
+
+
+def reload_operator(force: bool = True) -> None:
+    global _operator, _operator_stamp, _operator_checked
+    from . import operator_settings
+    settings = config.get()
+    try:
+        with db.session() as s:
+            stamp = operator_settings.stamp(s)
+            stored = operator_settings.values(s) if force or _operator is None or stamp != _operator_stamp else None
+    except Exception as exc:  # database unavailable: keep the current tier, or fall back to the environment
+        security.emit('operator_settings_unavailable', exc)
+        stamp, stored = _operator_stamp, ({} if _operator is None else None)
+    with _operator_lock:
+        if stored is not None:
+            _operator = build_operator(settings, stored)
+            _operator_stamp = stamp
+        _operator_checked = time.monotonic()
+
+
+def build_operator(settings: config.Settings, stored: dict[str, str]) -> Provider:
+    """Admin-page settings first, then the server environment (AI_PROVIDER, secret files)."""
+    choice = stored.get('ai_provider')
+    if settings.ai_provider == 'fake' and choice is None:
+        return FakeProvider(settings.embedding_dimension, settings.embedding_model)
+    if settings.ai_provider == 'fake':
+        embedder_ = FakeProvider(settings.embedding_dimension, settings.embedding_model)
+    else:
+        voyage = stored.get('voyage_api_key') or config.read_secret(settings.voyage_api_key_file)
+        embedder_ = VoyageEmbedder(voyage, settings.embedding_model, settings.embedding_dimension) if voyage else None
+    if choice is None:
+        choice = 'anthropic' if settings.ai_provider == 'anthropic' else 'none'
+    key = None
+    if choice == 'anthropic':
+        key = stored.get('anthropic_api_key') or config.read_secret(settings.anthropic_api_key_file)
+    elif choice == 'openai':
+        key = stored.get('openai_api_key')
+    generator = None
+    if key and settings.synthetic_providers:
+        generator = SyntheticKeyProvider(choice, key)
+    elif key and choice == 'anthropic':
+        generator = AnthropicGenerator(key, settings.anthropic_model, settings.anthropic_fallbacks)
+    elif key and choice == 'openai':
+        generator = OpenAIGenerator(key, settings.openai_model, settings.openai_reasoning)
+    return OperatorTier(generator, embedder_)
 
 
 def set_provider(p: Provider | None) -> None:
-    global _provider
-    _provider = p
+    """Replace the operator tier (tests); None rebuilds it from settings on next use.
+    Also clears cached user-key adapters."""
+    global _override, _operator, _operator_stamp
+    _override = p
+    with _operator_lock:
+        _operator, _operator_stamp = None, None
+    with _adapters_lock:
+        _adapters.clear()
+
+
+def embedder() -> Provider:
+    """Embeddings always use the operator tier, whoever pays for generation."""
+    return provider()
+
+
+# ---------------- per-workspace generation tier ----------------
+
+@dataclass
+class Resolved:
+    provider: Provider
+    billing: str                         # user | operator | none
+    connection_id: uuid.UUID | None = None
+
+
+_adapters: OrderedDict[tuple, Provider] = OrderedDict()
+_adapters_lock = threading.Lock()
+_user_factory = None
+ADAPTER_CACHE = 64
+
+
+def set_user_adapter_factory(factory) -> None:
+    """Tests: `factory(provider_name, key) -> Provider` replaces real user-key adapters."""
+    global _user_factory
+    _user_factory = factory
+    with _adapters_lock:
+        _adapters.clear()
+
+
+def _build_user_adapter(name: str, key: str, settings: config.Settings) -> Provider:
+    if _user_factory is not None:
+        return _user_factory(name, key)
+    if settings.synthetic_providers:
+        return SyntheticKeyProvider(name, key)
+    if name == 'anthropic':
+        return AnthropicGenerator(key, settings.anthropic_model, settings.anthropic_fallbacks)
+    return OpenAIGenerator(key, settings.openai_model, settings.openai_reasoning)
+
+
+def _user_adapter(name: str, fingerprint: str, key_enc: str | None, settings: config.Settings) -> Provider | None:
+    """Adapters are cached by key fingerprint, so a replaced key never reuses an old client."""
+    model = settings.anthropic_model if name == 'anthropic' else settings.openai_model
+    cache_key = (name, fingerprint, model)
+    with _adapters_lock:
+        adapter = _adapters.get(cache_key)
+        if adapter is not None:
+            _adapters.move_to_end(cache_key)
+            return adapter
+    key = security.decrypt(key_enc)
+    if not key:
+        return None
+    adapter = _build_user_adapter(name, key, settings)
+    with _adapters_lock:
+        _adapters[cache_key] = adapter
+        while len(_adapters) > ADAPTER_CACHE:
+            _adapters.popitem(last=False)
+    return adapter
+
+
+def generator_for(workspace_id: uuid.UUID) -> Resolved:
+    """The workspace's working key (its preferred provider first), else the operator tier."""
+    settings = config.get()
+    if settings.user_ai_keys:
+        with db.session() as s:
+            ws = Scoped(s, workspace_id)
+            preference = s.scalar(select(Workspace.ai_preference).where(Workspace.id == workspace_id))
+            rows = s.execute(ws.q(Connection, Connection.id, Connection.provider, Connection.provider_account,
+                                  Connection.access_token_enc)
+                             .where(Connection.provider.in_(settings.user_ai_keys), Connection.state == 'active')).all()
+        rows.sort(key=lambda r: (r.provider != preference, settings.user_ai_keys.index(r.provider)))
+        for row in rows:
+            adapter = _user_adapter(row.provider, row.provider_account, row.access_token_enc, settings)
+            if adapter is not None:
+                return Resolved(adapter, 'user', row.id)
+    operator = provider()
+    return Resolved(operator, 'operator' if operator.can_generate() else 'none')
 
 
 # ---------------- budgeted calls ----------------
 
 def generate(workspace_id: uuid.UUID, *, system: str, prompt: str, schema: dict, context: dict, max_tokens: int = 2000,
              effort: str = 'low', job_id: uuid.UUID | None = None) -> Generated:
-    p = provider()
+    """Generate on the workspace's paying tier. A refused user key is marked for the user's
+    attention and the call is retried on the next tier (another key, then the operator)."""
+    for _ in range(len(config.USER_KEY_PROVIDERS) + 1):
+        tier = generator_for(workspace_id)
+        if tier.billing == 'none':
+            raise AIUnavailable('AI provider is not configured')
+        try:
+            return _generate_on(tier, workspace_id, system=system, prompt=prompt, schema=schema, context=context,
+                                max_tokens=max_tokens, effort=effort, job_id=job_id)
+        except KeyRejected as exc:
+            if tier.billing != 'user':
+                raise
+            from . import ai_keys
+            ai_keys.mark_rejected(workspace_id, tier.connection_id, tier.provider.name, exc.reason)
+    raise AIUnavailable('no usable AI provider')
+
+
+def _generate_on(tier: Resolved, workspace_id: uuid.UUID, *, system, prompt, schema, context, max_tokens, effort,
+                 job_id) -> Generated:
+    p = tier.provider
     # Reserve input + max output (+ one retry's worth of input for provider-side retries).
     estimate = 2 * estimate_tokens(system + prompt) + max_tokens
-    usage = reserve(workspace_id, 'generate', p.generation_model, estimate, job_id)
+    usage = reserve(workspace_id, 'generate', p.generation_model, estimate, job_id, billing=tier.billing, provider_name=p.name)
     try:
         with _slot():
             out = p.generate(system=system, prompt=prompt, schema=schema, max_tokens=max_tokens, effort=effort, context=context)
     except InvalidOutput as exc:
         reconcile(usage, exc.input_tokens, exc.output_tokens, failed=True)
+        raise
+    except KeyRejected:
+        reconcile(usage, 0, 0, failed=True)  # refused before any work: nothing was billed
         raise
     except BaseException:
         reconcile(usage, None, None, failed=True)
@@ -312,8 +649,9 @@ def generate(workspace_id: uuid.UUID, *, system: str, prompt: str, schema: dict,
 
 
 def embed(workspace_id: uuid.UUID, texts: list[str], input_type: str, job_id: uuid.UUID | None = None) -> Embedded:
-    p = provider()
-    usage = reserve(workspace_id, 'embed', p.embedding_model, 2 * sum(estimate_tokens(t) for t in texts), job_id)
+    p = embedder()
+    usage = reserve(workspace_id, 'embed', p.embedding_model, 2 * sum(estimate_tokens(t) for t in texts), job_id,
+                    provider_name=getattr(p, 'embed_name', p.name))
     try:
         with _slot():
             out = p.embed(texts, input_type)

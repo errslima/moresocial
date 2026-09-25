@@ -68,7 +68,9 @@ def run_one(kinds: list[str] | None = None) -> bool:
         handle(job)
     except ai.BudgetExhausted as exc:
         with db.session() as s:
-            jobs.defer(s, job.id, OWNER, ai.tomorrow_start(), f'AI paused: daily {exc.scope} budget reached')
+            reason = ('AI paused: daily limit for your API key reached' if exc.scope == 'userkey'
+                      else f'AI paused: daily {exc.scope} budget reached')
+            jobs.defer(s, job.id, OWNER, ai.tomorrow_start(), reason)
         return True
     except LeaseLost:
         return True
@@ -122,7 +124,7 @@ def schedule() -> int:
 def reconcile_ai(batch: int = 200) -> int:
     """Chunks missing an embedding for the configured model (new chunks, crashes, or a model
     change = reindex) or never extracted get idempotent jobs."""
-    p = ai.provider()
+    p = ai.embedder()
     n = 0
     with db.session() as s:
         legacy = s.execute(select(Chunk.workspace_id, Chunk.provider, Chunk.conversation_id).where(

@@ -59,10 +59,40 @@
 <p class="small muted">History: up to 50 recent chats, 200 messages each, from the last 90 days, as far as WhatsApp Web makes them available. Imported WhatsApp items: {{ counts.get('whatsapp', 0) }}.</p>
 </section>
 
-<section aria-labelledby="m" class="card"><h2 id="m">Memory processing</h2>
-{% if not ai_configured %}<p>The assistant is not configured on this server yet; sources are imported and searchable by text only.</p>
-{% elif budget.paused or ai_paused %}<p class="warn">Paused: today's AI budget is used up. Processing resumes tomorrow.</p>
-{% elif pending %}<p>Processing {{ pending }} item(s)…</p>{% else %}<p>Up to date.</p>{% endif %}
+<section aria-labelledby="m" class="card"><h2 id="m">AI assistant</h2>
+{% set companies = assistant.company_names %}
+{% if assistant.providers %}
+<p class="small">You can run the assistant on your own {{ assistant.companies }} account by adding an API key. The provider bills you directly for what Moresocial uses. Without a working key, the assistant {% if assistant.tier == 'none' %}is off{% else %}uses Moresocial's shared daily allowance{% endif %}.</p>
+{% for k in assistant.providers %}
+<div class="ai-key">
+  <h3 id="k-{{ k.provider }}">{{ k.label }}</h3>
+  <p>{% if not k.conn %}No key added.
+  {% elif k.conn.state == 'active' %}<span class="tag ok">working</span> Key ending in <code>{{ k.conn.key_hint }}</code>{% if k.conn.validated_at %}, checked {{ when(k.conn.validated_at) }}{% endif %}.
+  {% else %}<span class="tag warn">needs attention</span> Key ending in <code>{{ k.conn.key_hint }}</code>.{% endif %}</p>
+  {% if k.problem %}<p class="warn">{{ k.problem }} Until you replace it, the assistant {% if assistant.tier == 'user' %}uses your other key{% elif assistant.tier == 'operator' %}uses Moresocial's shared allowance{% else %}is off{% endif %}.</p>{% endif %}
+  {% if key_error and key_error.provider == k.provider %}<p class="warn" role="alert">{{ key_error.message }}</p>{% endif %}
+  <form method="post" action="{{ url('/connections/ai/' ~ k.provider ~ '/key') }}" class="row">{{ csrf_field() }}
+    <label for="key-{{ k.provider }}">{{ 'New key' if k.conn else 'API key' }}</label>
+    <input id="key-{{ k.provider }}" name="api_key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required placeholder="{{ k.prefix }}…">
+    <button type="submit" class="primary">{{ 'Replace key' if k.conn else 'Add key' }}</button></form>
+  {% if k.conn %}<form method="post" action="{{ url('/connections/ai/' ~ k.provider ~ '/remove') }}" class="row">{{ csrf_field() }}<button type="submit">Remove key</button></form>{% endif %}
+  <p class="small muted">Create a key in the <a href="{{ k.console }}" target="_blank" rel="noopener noreferrer">{{ companies[k.provider] }} console</a>. Moresocial checks it with the provider before saving and never shows it again.</p>
+</div>
+{% endfor %}
+{% if assistant.active|length > 1 %}
+<form method="post" action="{{ url('/connections/ai/preference') }}" class="row">{{ csrf_field() }}
+  <fieldset><legend>Use for the assistant</legend>
+  {% for p in assistant.active %}<label><input type="radio" name="provider" value="{{ p }}"{% if p == assistant.preference %} checked{% endif %}> {{ assistant.labels[p] }}</label> {% endfor %}
+  </fieldset><button type="submit">Save choice</button></form>
+{% endif %}
+<p class="small muted">Removing a key here does not revoke it; revoke it in the provider console if you no longer need it. Server backups keep an encrypted copy for up to {{ limits.backup_retention_days }} days.</p>
+{% endif %}
+<h3>Now</h3>
+{% if assistant.tier == 'user' %}<p>The assistant runs on your {{ companies.get(assistant.tier_provider, assistant.tier_provider) }} key: excerpts of your sources are sent to {{ companies.get(assistant.tier_provider, assistant.tier_provider) }} under your API account. Used today: {{ '{:,}'.format(budget.used) }} of {{ '{:,}'.format(budget.limit) }} tokens (Moresocial's daily safety limit for your key).</p>
+{% elif assistant.tier == 'operator' and assistant.providers %}<p>The assistant uses Moresocial's shared allowance: {{ '{:,}'.format(budget.used) }} of {{ '{:,}'.format(budget.limit) }} tokens used today.</p>{% endif %}
+{% if not ai_configured %}<p>{% if assistant.providers %}The assistant is off. Add an API key above to turn it on; {% else %}The assistant is not configured on this server yet; {% endif %}sources are imported and searchable by text only.</p>
+{% elif budget.paused or ai_paused %}<p class="warn">Paused: {% if assistant.tier == 'user' %}today's limit for your API key is used up{% else %}today's AI budget is used up{% endif %}. Processing resumes tomorrow.</p>
+{% elif pending %}<p>Processing {{ pending }} item(s)…</p>{% else %}<p>Memory processing is up to date.</p>{% endif %}
 </section>
 
 <section aria-labelledby="x" class="card"><h2 id="x">Removed items</h2>

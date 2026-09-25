@@ -48,7 +48,7 @@ def fts_query(question: str) -> str | None:
 
 def search_chunks(ws: Scoped, question: str, person_id: uuid.UUID | None = None, since: datetime | None = None,
                   until: datetime | None = None, limit: int = EVIDENCE_CHUNKS, job_id=None) -> list[uuid.UUID]:
-    p = ai.provider()
+    p = ai.embedder()
     filters, params = ['c.workspace_id = :w', 'c.pipeline_version = :pipeline'], {
         'w': ws.wid, 'k': CANDIDATES, 'pipeline': PIPELINE_VERSION}
     if person_id:

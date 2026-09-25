@@ -38,7 +38,14 @@ NOTICES = {
     'unconfigured': 'Google sign-in is temporarily unavailable.',
     'account-deleted': 'Your account and its data were deleted.',
     'reconnected': 'Google access was updated.',
+    'ai-key-saved': 'Your API key works and is saved. The assistant now uses it.',
+    'ai-key-removed': 'Your API key was removed from Moresocial. Revoke it in the provider console if you no longer need it.',
+    'admin-saved': 'Global AI settings saved. The worker picks them up within a minute.',
 }
+
+
+def is_admin(ctx) -> bool:
+    return bool(ctx) and ctx.account.email.strip().lower() in config.get().admin_emails
 
 
 class Problem(Exception):
@@ -119,6 +126,7 @@ def render(request: Request, name: str, ctx: Ctx | None = None, status: int = 20
     settings = config.get()
     notice = NOTICES.get(request.query_params.get('notice', ''))
     return templates.TemplateResponse(request, name, {'ctx': ctx, 'url': settings.url, 'settings': settings,
+                                                       'is_admin': is_admin(ctx),
                                                        'notice': notice, 'csrf': ctx.csrf if ctx else '', **data},
                                       status_code=status)
 
@@ -195,21 +203,26 @@ def create_app() -> FastAPI:
     def ready():
         checks = {'database': False, 'migrations': False, 'google_client': not config.validate_google(settings),
                   'encryption_key': (not settings.is_production) or bool(config.read_secret(settings.encryption_key_file)),
-                  'ai_keys': settings.ai_provider != 'anthropic' or bool(
-                      config.read_secret(settings.anthropic_api_key_file) and config.read_secret(settings.voyage_api_key_file))}
+                  'ai_generation': False, 'ai_embeddings': False}
         try:
             at_head, _ = db.migration_state()
             checks['database'] = True
             checks['migrations'] = at_head
+            if at_head:
+                from . import ai
+                operator = ai.provider()
+                checks['ai_generation'] = operator.can_generate()
+                checks['ai_embeddings'] = bool(operator.embedding_dimension)
         except Exception as exc:
             security.emit('readiness_failed', exc)
         # External providers (Google, AI) are reported but do not make the app unready.
         ok = checks['database'] and checks['migrations'] and checks['encryption_key']
         return JSONResponse({'status': 'ready' if ok else 'not_ready', 'checks': checks}, status_code=200 if ok else 503)
 
-    from . import auth_routes, pages
+    from . import admin, auth_routes, pages
     app.include_router(auth_routes.router)
     app.include_router(pages.router)
+    app.include_router(admin.router)
     if settings.synthetic_providers:
         from . import dev_routes
         app.include_router(dev_routes.router)

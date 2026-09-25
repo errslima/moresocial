@@ -47,6 +47,36 @@ into a container: make it `0400`.
 With empty AI key files set `AI_PROVIDER=none`: import, browsing, gatherings and manual
 drafts work; memory extraction, semantic search, cited answers and AI drafts are disabled.
 
+### Admin page (global AI)
+
+Accounts listed in `ADMIN_EMAILS` (production: `errslima@gmail.com`) see an **Admin** link
+and can open `/moresocial/admin`; everyone else gets 404 there. It sets the operator tier's
+generation provider (Anthropic, OpenAI or off) and the operator's Anthropic, OpenAI and
+Voyage keys. Keys are validated with the provider, stored encrypted in `operator_settings`,
+and override `AI_PROVIDER` and the `anthropic_api_key`/`voyage_api_key` files, which remain
+the fallback when nothing is saved. The web process applies changes at once; the worker
+within 30 seconds. An admin must also be on `BETA_ALLOWLIST` to sign in.
+
+### Users' own API keys
+
+`USER_AI_KEYS=anthropic,openai` lets each user add their own Anthropic and/or OpenAI API key
+on the Connections page; that workspace's generation then runs on, and is billed to, their
+key. Without a working key a workspace falls back to the operator tier above (or has no AI
+when `AI_PROVIDER=none`). No new secret files are needed: keys are stored encrypted with
+`encryption_key` in the database and are therefore inside the encrypted backups.
+
+- `ANTHROPIC_MODEL` (default `claude-sonnet-5`) is also the model users' Anthropic keys are
+  checked against and billed for; `OPENAI_MODEL` (default `gpt-5.6-terra`) is the OpenAI model. Changing either
+  does not invalidate saved keys, but a key without access to the new model is flagged at its
+  next call and the workspace falls back.
+- `AI_DAILY_TOKENS_USER_KEY` (default 2,000,000) is a per-workspace safety cap on a user's key;
+  it does not count toward `AI_DAILY_TOKENS_GLOBAL`.
+- `OPENAI_REASONING=0` if `OPENAI_MODEL` is not a reasoning model.
+- Embeddings are never billed to users. Semantic search is on whenever an operator Voyage
+  key exists (admin page or secret file), independent of the generation provider.
+- Validation calls `api.anthropic.com` / `api.openai.com` from the web container; generation
+  calls them from web and worker. `AI_CONCURRENCY` caps simultaneous calls across all tiers.
+
 `runtime.env` minimum:
 
 ```
@@ -175,6 +205,8 @@ that has newer user writes.
   retrieval skips old chunks until rebuilt. Source data and user-confirmed claims remain.
   Do not downgrade the database while cleanup acknowledgments are pending. Prefer a
   forward fix over reverting to pre-review code, which contains the documented defects.
+- Migration `0003` (AI keys, admin settings) is additive: the previous release runs on it
+  unchanged and simply ignores stored keys and admin settings.
 - Application: `sudo /srv/moresocial/src/deploy/rollback.sh <previous-sha>` switches images and
   source back, keeping all data (first-release migrations are additive).
 - If a future migration is not backward compatible, the previous release cannot run on the new

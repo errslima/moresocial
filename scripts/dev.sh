@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.."
 uv sync --frozen -p 3.12 >/dev/null
 mkdir -p .dev
 export MORESOCIAL_MODE=development PUBLIC_ORIGIN=http://localhost:8772 BASE_PATH=/moresocial \
-  SYNTHETIC_PROVIDERS=1 AI_PROVIDER=fake BETA_ALLOWLIST=alex@example.test,blake@example.test
+  SYNTHETIC_PROVIDERS=1 AI_PROVIDER=fake BETA_ALLOWLIST=alex@example.test,blake@example.test \
+  USER_AI_KEYS=anthropic,openai OPENAI_MODEL=fake-openai-model
 export DATABASE_URL=$(uv run --frozen python -c "
 import pgserver; s = pgserver.get_server('.dev/postgres', cleanup_mode=None)
 s.psql('CREATE EXTENSION IF NOT EXISTS vector;'); print(s.get_uri())")

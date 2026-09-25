@@ -72,6 +72,47 @@ Verification after fixes (2026-09-25):
 `docs/review-probes.py` now forwards to the permanent regressions rather than retaining
 obsolete failing probes. The fix verification itself used no live credentials; the subsequent deployment is recorded above.
 
+## User AI API keys — implemented 2026-09-25, not deployed
+
+Implements [the API-key execution plan](api-keys-execution-plan.md) milestones K0–K4; K5
+code/docs are done, the rollout and live checks are pending.
+
+- `app/ai.py`: per-workspace tier resolution (`generator_for`), `embedder()` split from
+  generation, billing-aware budgets (`userkey:<workspace>` scope, excluded from `global`),
+  `AnthropicGenerator` for any key, new `OpenAIGenerator` (Responses API, strict JSON
+  schema, `store: false`), `KeyRejected` mapping, automatic retry on the next tier.
+- `app/ai_keys.py`: format check, validation request, encrypted storage, removal,
+  preference, run-time rejection marking, resumption of AI-paused jobs on save.
+- Connections page "AI assistant" card, routes under `/connections/ai/…`, notices,
+  home/ask messages for the user-key cap. Feature is off unless `USER_AI_KEYS` is set.
+- Migration `0003`: `connections.key_hint`, `connections.validated_at`,
+  `workspaces.ai_preference`, `provider_usage.provider`, `provider_usage.billing`,
+  `operator_settings`.
+- Admin page (`/admin`, `ADMIN_EMAILS` only): global provider Anthropic/OpenAI/off and
+  operator Anthropic/OpenAI/Voyage keys, stored encrypted, overriding the environment.
+- Default models: `claude-sonnet-5` and `gpt-5.6-terra`.
+
+Verification (local, synthetic providers and mock transports only):
+
+- `uv run pytest -o addopts='' -q`: **121 passed** (81 existing + 40 new in
+  `tests/test_ai_keys.py`, `tests/test_admin.py` and Playwright runs of the key flow and
+  the admin page at desktop and 390px),
+  including `alembic check` after a `0003` downgrade/upgrade with existing usage rows.
+- Connector Node suite not run in this session (Node unavailable locally); `connector/`
+  is unchanged.
+- No real Anthropic or OpenAI key was used. The OpenAI adapter is tested against the
+  documented Responses API shape only; its first live call is part of the live checks.
+
+Pending before and after rollout:
+
+1. Deploy (migration `0003` runs in `release.sh`) and set in `runtime.env`:
+   `USER_AI_KEYS=anthropic` (add `openai` together with `OPENAI_MODEL`).
+2. Confirm `ANTHROPIC_MODEL` is a model id users' keys can call: it is what validation
+   checks and what users are billed for.
+3. Live checks: add a real Anthropic key, ask a question, see a cited answer and the usage
+   in that account's console; add a revoked key and see the refusal; remove the key and
+   confirm fallback. Repeat for OpenAI if enabled.
+
 ## Milestones
 
 | Milestone | State | Evidence |
@@ -100,6 +141,18 @@ and connector recovery with a real Chromium. CI builds both images; the rest is 
 live checks below.
 
 ## Decisions and deviations
+
+User API keys (deviations from `docs/api-keys-execution-plan.md`):
+
+- The OpenAI adapter uses `httpx` directly (like the Voyage adapter) instead of the
+  `openai` SDK, so no dependency or lock-file change was needed.
+- A key refused at run time is retried on the next tier inside `ai.generate`, so both
+  interactive requests and worker jobs continue without a failed attempt; the worker needs
+  no `KeyRejected` handler (it is an `AIUnavailable` and keeps that handling).
+- Validation attempts are limited with the existing in-process `throttle` (10 per hour per
+  workspace and client IP), not a database counter.
+- `ai.provider()` remains the operator tier and still serves embeddings through
+  `ai.embedder()`, so existing tests and their fakes are unchanged.
 
 - Provider (M0): generation via the official `anthropic` SDK (1.8.0), model `claude-opus-5`
   (`ANTHROPIC_MODEL`), structured JSON output, low/medium effort, server-side refusal fallback

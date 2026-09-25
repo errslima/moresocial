@@ -111,6 +111,33 @@ This is an unofficial integration. The library documents account-blocking risk,
 and WhatsApp changes can break compatibility. Keep the connector replaceable and
 account for per-user browser resource costs in the multi-user design.
 
+## AI provider keys
+
+Implemented 2026-09-25 (see [the execution plan](api-keys-execution-plan.md)); not yet
+deployed or verified with real keys. When `USER_AI_KEYS` lists a provider, the Connections
+page lets a user add an Anthropic and/or OpenAI **API key**. Their workspace's generation
+(claim extraction, cited answers, drafts, rewrites, RSVP suggestions) then runs on that key
+and the provider bills them directly. Embeddings stay on the operator's Voyage key.
+
+- A key is checked with one free request (`GET /v1/models/<configured model>`) before it is
+  stored; failures store nothing and say why (invalid, no credit, no model access, provider
+  unreachable). Ten attempts per hour per workspace.
+- Stored encrypted in `connections.access_token_enc` with a fingerprint and the last four
+  characters. The key is never rendered, logged, put in a URL or written to job errors.
+  Removing it deletes the row; it does not revoke the key at the provider.
+- A key refused later (revoked, out of credit, model access lost) is marked
+  `reconnect_required` with the reason, and the call is retried on the user's other key or
+  the operator tier. The user sees "needs attention" and replaces the key.
+- If both keys work, the user picks which one the assistant uses.
+- The page states who pays and which company processes the data for each tier.
+
+Subscription login (Claude Pro/Max, ChatGPT plans via the Claude or Codex CLI) is
+deliberately **not** offered. Anthropic's terms forbid third-party products from offering
+Claude.ai login or routing requests through Free/Pro/Max credentials on users' behalf, and
+from collecting or storing those credentials; OpenAI's Codex documentation directs
+programmatic use to API keys. Sharing the operator's own subscription among users is
+likewise excluded.
+
 ## References
 
 - https://developers.google.com/identity/protocols/oauth2/web-server
@@ -118,3 +145,5 @@ account for per-user browser resource costs in the multi-user design.
 - https://developers.google.com/workspace/calendar/api/auth
 - https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification
 - https://wwebjs.dev/
+- https://code.claude.com/docs/en/legal-and-compliance (authentication and credential use)
+- https://learn.chatgpt.com/docs/auth (Codex authentication)

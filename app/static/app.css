@@ -41,4 +41,6 @@ button[disabled]{opacity:.6;cursor:progress}
 table.sync{width:100%;border-collapse:collapse;margin:10px 0}table.sync th,table.sync td{text-align:left;vertical-align:top;padding:8px 6px;border-top:1px solid var(--line)}
 .hero h1{font-size:1.9rem}.access li{margin:6px 0}
 code{overflow-wrap:anywhere}
+.ai-key{border-top:1px solid var(--line);margin-top:12px}.ai-key h3{font-size:1.05rem;margin:10px 0 4px}
+fieldset{border:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:4px 14px}legend{padding:0;margin-bottom:4px}
 @media (max-width:600px){h1{font-size:1.35rem}table.sync thead{display:none}table.sync tr,table.sync td,table.sync th{display:block}.logout{margin-left:0}}

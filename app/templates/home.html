@@ -6,7 +6,7 @@
 {% if conn and conn.state != 'active' %}
 <p class="warn">Google access needs attention. <a href="{{ url('/connections') }}">Open Connections</a> to reconnect.</p>
 {% endif %}
-{% if budget.paused %}<p class="warn">Today's AI budget is used up. Memory updates and drafting resume tomorrow.</p>{% endif %}
+{% if budget.paused %}<p class="warn">{% if budget.billing == 'user' %}Today's limit for your API key is used up{% else %}Today's AI budget is used up{% endif %}. Memory updates and drafting resume tomorrow.</p>{% endif %}
 <section aria-labelledby="steps">
   <h2 id="steps">A few optional next steps</h2>
   {% if steps %}

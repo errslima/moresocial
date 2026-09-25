@@ -25,7 +25,8 @@ bash scripts/dev.sh    # local synthetic app at http://localhost:8772/moresocial
 
 Stack: Python 3.12, FastAPI, SQLAlchemy/Alembic, PostgreSQL + pgvector, server-rendered
 Jinja; a Node `whatsapp-web.js` connector per user; Anthropic (generation) and Voyage AI
-(embeddings). Read-only integrations: Moresocial never sends messages or writes to Gmail or
+(embeddings), with users optionally bringing their own Anthropic or OpenAI API key for
+generation. Read-only integrations: Moresocial never sends messages or writes to Gmail or
 Calendar.
 
 Google credentials and other private configuration must remain outside Git.

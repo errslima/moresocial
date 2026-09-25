@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field, when with context %}
+{% block title %}Admin{% endblock %}
+{% block content %}
+<h1>Admin: global AI</h1>
+<p>The global AI is Moresocial's shared allowance for users without their own key, plus the embeddings behind semantic search for everyone. Settings here override the server configuration.</p>
+
+<section aria-labelledby="now" class="card"><h2 id="now">Now</h2>
+<ul class="list">
+  <li>Generation: {% if operator.can_generate() %}<strong>{{ choice_labels.get(operator.name, operator.name) }}</strong>, model <code>{{ operator.generation_model }}</code>{% else %}<strong>off</strong>{% if choice in ('anthropic', 'openai') %} <span class="tag warn">the selected provider has no key</span>{% endif %}{% endif %}.</li>
+  <li>Embeddings: {% if operator.embedding_dimension %}<strong>on</strong>, model <code>{{ operator.embedding_model }}</code>{% else %}<strong>off</strong>: search matches text only{% endif %}.</li>
+  <li>Shared allowance used today: {{ '{:,}'.format(used) }} of {{ '{:,}'.format(limits.ai_daily_tokens_global) }} tokens ({{ '{:,}'.format(limits.ai_daily_tokens_workspace) }} per user).</li>
+  <li>Users with their own working key: {{ own_keys }}.</li>
+</ul>
+</section>
+
+<section aria-labelledby="prov" class="card"><h2 id="prov">Global provider</h2>
+{% if error and error.section == 'provider' %}<p class="warn" role="alert">{{ error.message }}</p>{% endif %}
+<form method="post" action="{{ url('/admin/ai/provider') }}">{{ csrf_field() }}
+  <fieldset class="stack"><legend class="sr">Global provider</legend>
+  {% for c in choices %}<label><input type="radio" name="provider" value="{{ c }}"{% if c == choice %} checked{% endif %}{% if c == 'fake' %} disabled{% endif %}> {{ choice_labels[c] }}</label>{% endfor %}
+  </fieldset>
+  <button type="submit" class="primary">Save provider</button>
+</form>
+<p class="small muted">{% if choice_row %}Set by {{ choice_row.updated_by }}, {{ when(choice_row.updated_at) }}.{% else %}From the server configuration (<code>AI_PROVIDER</code>) until you save a choice here.{% endif %}</p>
+</section>
+
+<section aria-labelledby="keys" class="card"><h2 id="keys">API keys</h2>
+<p class="small">Each key is checked with its provider before it is saved, stored encrypted and never shown again.</p>
+{% for k in keys %}
+<div class="ai-key">
+  <h3 id="key-h-{{ k.provider }}">{{ k.label }}</h3>
+  <p>{% if k.row %}<span class="tag ok">saved</span> Key ending in <code>{{ k.row.hint }}</code>, saved by {{ k.row.updated_by }}, {{ when(k.row.updated_at) }}.
+  {% elif k.from_file %}<span class="tag">server file</span> Using the key from the server's secret file.
+  {% else %}No key.{% endif %} Model: <code>{{ k.model }}</code>.</p>
+  {% if error and error.section == k.provider %}<p class="warn" role="alert">{{ error.message }}</p>{% endif %}
+  <form method="post" action="{{ url('/admin/ai/keys/' ~ k.provider) }}" class="row">{{ csrf_field() }}
+    <label for="admin-key-{{ k.provider }}">{{ 'New key' if k.row else 'API key' }}</label>
+    <input id="admin-key-{{ k.provider }}" name="api_key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+    <button type="submit" class="primary">{{ 'Replace key' if k.row else 'Save key' }}</button></form>
+  {% if k.row %}<form method="post" action="{{ url('/admin/ai/keys/' ~ k.provider ~ '/remove') }}" class="row">{{ csrf_field() }}<button type="submit">Remove key</button></form>{% endif %}
+</div>
+{% endfor %}
+<p class="small muted">Models and daily limits come from the server configuration (<code>ANTHROPIC_MODEL</code>, <code>OPENAI_MODEL</code>, <code>EMBEDDING_MODEL</code>, <code>AI_DAILY_TOKENS_*</code>). Turning embeddings on (or changing <code>EMBEDDING_MODEL</code>) embeds existing sources in the background.</p>
+</section>
+{% endblock %}

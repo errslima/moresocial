@@ -16,7 +16,7 @@
   <nav aria-label="Main">
     <ul>
       {% set here = request.url.path %}
-      {% for path, label in [('/home','Home'),('/people','People'),('/ask','Ask'),('/gatherings','Gatherings'),('/me','About me'),('/connections','Connections')] %}
+      {% for path, label in [('/home','Home'),('/people','People'),('/ask','Ask'),('/gatherings','Gatherings'),('/me','About me'),('/connections','Connections')] + ([('/admin','Admin')] if is_admin else []) %}
       <li><a href="{{ url(path) }}" {% if here.endswith(path) or (path != '/home' and (path ~ '/') in here) %}aria-current="page"{% endif %}>{{ label }}</a></li>
       {% endfor %}
     </ul>

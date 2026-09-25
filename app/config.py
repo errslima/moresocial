@@ -16,6 +16,9 @@ GOOGLE_SCOPES_IDENTITY = ('openid', 'email', 'profile')
 GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly'
 CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events.readonly'
 GOOGLE_SCOPES = GOOGLE_SCOPES_IDENTITY + (GMAIL_SCOPE, CALENDAR_SCOPE)
+USER_KEY_PROVIDERS = ('anthropic', 'openai')  # AI providers whose API keys users may add
+DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5'
+DEFAULT_OPENAI_MODEL = 'gpt-5.6-terra'
 
 
 class ConfigError(RuntimeError):
@@ -66,6 +69,7 @@ class Settings:
     encryption_key_file: str | None
     operator_key_file: str | None
     beta_allowlist: frozenset[str]
+    admin_emails: frozenset[str]   # accounts that may open /admin (global AI settings)
     ai_provider: str               # anthropic | fake | none
     anthropic_api_key_file: str | None
     anthropic_model: str
@@ -75,6 +79,10 @@ class Settings:
     embedding_dimension: int
     ai_daily_tokens_workspace: int
     ai_daily_tokens_global: int
+    user_ai_keys: tuple[str, ...]  # providers users may add their own key for; empty = feature off
+    openai_model: str
+    openai_reasoning: bool
+    ai_daily_tokens_user_key: int
     ai_concurrency: int
     connector_cap: int
     connector_image: str
@@ -165,6 +173,10 @@ def load(env: dict | None = None) -> Settings:
         raise ConfigError('AI_PROVIDER must be anthropic, fake or none')
     if ai_provider == 'fake' and (mode == 'production' or origin == PRODUCTION_ORIGIN):
         raise ConfigError('The deterministic fake AI provider is for tests and development only')
+    user_ai_keys = tuple(dict.fromkeys(p.strip().lower() for p in env.get('USER_AI_KEYS', '').split(',') if p.strip()))
+    if any(p not in USER_KEY_PROVIDERS for p in user_ai_keys):
+        raise ConfigError('USER_AI_KEYS may only list ' + ', '.join(USER_KEY_PROVIDERS))
+    admins = frozenset(e.strip().lower() for e in env.get('ADMIN_EMAILS', '').split(',') if e.strip())
     allow = frozenset(e.strip().lower() for e in env.get('BETA_ALLOWLIST', '').split(',') if e.strip())
     proxies = frozenset(p.strip() for p in env.get('TRUSTED_PROXY_IPS', '127.0.0.1').split(',') if p.strip())
     return Settings(
@@ -174,15 +186,20 @@ def load(env: dict | None = None) -> Settings:
         encryption_key_file=env.get('ENCRYPTION_KEY_FILE') or None,
         operator_key_file=env.get('OPERATOR_KEY_FILE') or None,
         beta_allowlist=allow,
+        admin_emails=admins,
         ai_provider=ai_provider,
         anthropic_api_key_file=env.get('ANTHROPIC_API_KEY_FILE') or None,
-        anthropic_model=env.get('ANTHROPIC_MODEL', 'claude-opus-5'),
+        anthropic_model=env.get('ANTHROPIC_MODEL') or DEFAULT_ANTHROPIC_MODEL,
         anthropic_fallbacks=_bool(env.get('ANTHROPIC_REFUSAL_FALLBACKS'), True),
         voyage_api_key_file=env.get('VOYAGE_API_KEY_FILE') or None,
         embedding_model=env.get('EMBEDDING_MODEL', 'fake-hash-64' if ai_provider == 'fake' else 'voyage-3.5'),
         embedding_dimension=_int(env, 'EMBEDDING_DIMENSION', 64 if ai_provider == 'fake' else 1024),
         ai_daily_tokens_workspace=_int(env, 'AI_DAILY_TOKENS_PER_WORKSPACE', 400_000),
         ai_daily_tokens_global=_int(env, 'AI_DAILY_TOKENS_GLOBAL', 2_000_000),
+        user_ai_keys=user_ai_keys,
+        openai_model=env.get('OPENAI_MODEL') or DEFAULT_OPENAI_MODEL,
+        openai_reasoning=_bool(env.get('OPENAI_REASONING'), True),
+        ai_daily_tokens_user_key=_int(env, 'AI_DAILY_TOKENS_USER_KEY', 2_000_000),
         ai_concurrency=_int(env, 'AI_CONCURRENCY', 2),
         connector_cap=_int(env, 'WHATSAPP_CONNECTOR_CAP', 2),
         connector_image=env.get('CONNECTOR_IMAGE', 'moresocial-connector:current'),

@@ -134,7 +134,7 @@ def rebuild_conversation(workspace_id: uuid.UUID, provider: str, conversation_id
             if key not in keep:
                 s.delete(chunk)
         created = 0
-        model = ai.provider().embedding_model
+        model = ai.embedder().embedding_model
         for p in planned:
             if p['key'] in existing:
                 continue
@@ -173,7 +173,7 @@ def _still_valid(chunk: Chunk | None, members: list[tuple[ChunkSource, Source]],
 
 
 def embed_chunk(workspace_id: uuid.UUID, chunk_id, job_id=None) -> str:
-    p = ai.provider()
+    p = ai.embedder()
     with db.session() as s:
         ws = Scoped(s, workspace_id)
         chunk, members = _chunk_current(ws, chunk_id, lock=False)

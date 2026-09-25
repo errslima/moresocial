@@ -153,3 +153,58 @@ def test_full_lasergame_scenario(live, chromium, viewport):
     assert all(m == 'GET' or 'oauth2.googleapis.com' in h for m, h in synthetic.STATE.calls)
     assert not [e for e in errors if 'favicon' not in e], errors
     ctx.close()
+
+
+@pytest.mark.parametrize('viewport', [{'width': 1280, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])
+def test_ai_key_rejection_add_and_remove(live, chromium, viewport):
+    config.override(dataclasses.replace(config.get(), user_ai_keys=('anthropic', 'openai'), openai_model='gpt-test'))
+    page = chromium.new_context(viewport=viewport).new_page()
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    page.goto(live + '/')
+    page.get_by_role('button', name='Continue with Google').click()
+    page.get_by_role('button', name='Allow').click()
+    page.wait_for_url(live + '/home')
+    page.get_by_role('link', name='Connections').click()
+    key = page.locator('#key-anthropic')
+    assert key.get_attribute('type') == 'password' and key.get_attribute('autocomplete') == 'off'
+
+    key.fill('sk-ant-reject-SyntheticSecretValue-0001')
+    page.get_by_role('button', name='Add key').first.click()
+    playwright.expect(page.get_by_role('alert')).to_contain_text('did not accept this key')
+    assert 'SyntheticSecretValue' not in page.content() and page.locator('#key-anthropic').input_value() == ''
+
+    page.locator('#key-anthropic').fill('sk-ant-api03-SyntheticSecretValue-0002-abcd')
+    page.get_by_role('button', name='Add key').first.click()
+    playwright.expect(page.locator('.notice, [role=status]').first).to_be_visible()
+    assert 'Your API key works and is saved' in page.content()
+    section = page.locator('.ai-key', has_text='Anthropic (Claude)')
+    playwright.expect(section).to_contain_text('working')
+    playwright.expect(section).to_contain_text('abcd')
+    assert 'runs on your Anthropic key' in page.content() and 'SyntheticSecretValue' not in page.content()
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
+
+    section.get_by_role('button', name='Remove key').click()
+    assert 'Your API key was removed' in page.content()
+    playwright.expect(page.locator('.ai-key', has_text='Anthropic (Claude)')).to_contain_text('No key added')
+    assert errors == []
+
+
+@pytest.mark.parametrize('viewport', [{'width': 1280, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])
+def test_admin_sets_global_provider(live, chromium, viewport):
+    config.override(dataclasses.replace(config.get(), admin_emails=frozenset({'alex@example.test'})))
+    page = chromium.new_context(viewport=viewport).new_page()
+    page.goto(live + '/')
+    page.get_by_role('button', name='Continue with Google').click()
+    page.get_by_role('button', name='Allow').click()
+    page.wait_for_url(live + '/home')
+    page.get_by_role('link', name='Admin').click()
+    section = page.locator('.ai-key', has_text='OpenAI')
+    section.get_by_label('API key').fill('sk-proj-SyntheticAdminSecret-0003-wxyz')
+    section.get_by_role('button', name='Save key').click()
+    assert 'Global AI settings saved' in page.content()
+    page.get_by_label('OpenAI').check()
+    page.get_by_role('button', name='Save provider').click()
+    playwright.expect(page.locator('section', has_text='Generation:')).to_contain_text('OpenAI')
+    assert 'SyntheticAdminSecret' not in page.content()
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')

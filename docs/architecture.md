@@ -10,14 +10,24 @@ revision, deployment evidence and outstanding checks, read
 | Area | Implemented behavior | Main code |
 | --- | --- | --- |
 | Onboarding | One Google flow for identity, Gmail read and Calendar read; partial consent, reconnect, beta allowlist | `app/auth_routes.py`, `app/accounts.py`, `app/google.py` |
-| Connections | Google connection status; WhatsApp QR linking, status and disconnect; account deletion | `app/pages.py`, `app/whatsapp.py`, `app/templates/connections.html` |
+| Connections | Google connection status; WhatsApp QR linking, status and disconnect; users' own Anthropic/OpenAI API keys; account deletion | `app/pages.py`, `app/whatsapp.py`, `app/ai_keys.py`, `app/templates/connections.html` |
 | People and sources | Contact profiles, explicit identity linking/unlinking, source browsing, exclusions, relationship notes and claim corrections | `app/ingest.py`, `app/pages.py` |
 | Personal profile | Editable self-profile and evidence-backed memory | `app/pages.py`, `app/models.py` |
 | Gatherings | Invitees, candidate dates, conflicts with the user's calendar, manual drafts, RSVP tracking and optional next steps | `app/gatherings.py`, `app/pages.py` |
+| Admin | `ADMIN_EMAILS` only: global AI provider (Anthropic/OpenAI/off) and operator API keys, overriding the environment | `app/admin.py`, `app/operator_settings.py`, `app/templates/admin.html` |
 | AI assistance | Claim extraction, embeddings, hybrid retrieval, cited answers, invitation drafts, rewrites and RSVP suggestions | `app/memory.py`, `app/retrieval.py`, `app/ai.py`, `app/gatherings.py` |
 
 AI assistance is implemented but **disabled in the deployed configuration**
-(`AI_PROVIDER=none`); live provider behavior and quality remain unverified. Manual
+(`AI_PROVIDER=none`); live provider behavior and quality remain unverified.
+Generation runs on one of two tiers, resolved per call from the job's or request's
+workspace (`ai.generator_for`): the workspace's own API key when `USER_AI_KEYS` enables
+it and a key works (Anthropic Messages API or OpenAI Responses API, billed to the user,
+capped by `AI_DAILY_TOKENS_USER_KEY`), otherwise the operator tier under the workspace and
+global budgets. The operator tier is built from the admin page's settings
+(`operator_settings`), falling back to `AI_PROVIDER` and the secret files; every process
+rebuilds it within 30 seconds of a change. A key the provider refuses is flagged on the Connections page and the call
+moves to the next tier. Embeddings always use the operator's embedder, so vectors never
+mix models or accounts. Manual
 workflows remain available. Integrations are read-only: drafts are copied by the
 user, and the app does not send messages, write Gmail drafts or change calendars.
 It does not know invitees' calendars merely because it can read the user's calendar.
@@ -41,11 +51,14 @@ It does not know invitees' calendars merely because it can read the user's calen
 PostgreSQL with pgvector holds both relational records and vectors; there is no
 separate vector database service. `app/models.py` defines accounts, workspaces,
 connections, sources, people, chunks, embeddings, claims, gatherings, drafts,
-answers, jobs and usage budgets. Workspace scoping and composite foreign keys
+answers, jobs and usage budgets. Users' API keys are `connections` rows (provider
+`anthropic`/`openai`) holding only the encrypted key, a fingerprint and its last four
+characters; `provider_usage` records which provider and tier (`operator`/`user`) paid. Workspace scoping and composite foreign keys
 separate users' data; matching contacts do not create shared cross-user profiles.
 
 Migration `0001` creates the initial schema. `0002` adds source segments and the
-connector cleanup outbox. Pipeline `v2-segments` rebuilds legacy chunks, which are
+connector cleanup outbox. `0003` adds API-key metadata, the provider preference and usage
+billing columns and the `operator_settings` table (additive; downgrade removes stored keys). Pipeline `v2-segments` rebuilds legacy chunks, which are
 excluded from retrieval until rebuilt. Account deletion leaves only an opaque
 cleanup identifier until the host removes connector resources and acknowledges it.
 
@@ -66,5 +79,5 @@ cleanup identifier until the host removes connector resources and acknowledges i
 See the [operator runbook](operator-setup.md) for deployment, secret configuration,
 backup/restore and rollback; [connections](connections.md) for OAuth/WhatsApp design;
 and [review findings](review-findings.md) for the six fixes and regression coverage.
-The validated local suite has 81 Python tests and 19 Node tests. Synthetic tests
+The validated local suite has 121 Python tests and 19 Node tests. Synthetic tests
 do not establish that real Google sync, WhatsApp pairing or AI quality work.

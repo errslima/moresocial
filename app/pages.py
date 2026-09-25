@@ -11,10 +11,11 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, or_, select
 
-from . import accounts, ai, config, gatherings, ingest, memory, retrieval, whatsapp
+from . import accounts, ai, ai_keys, config, gatherings, ingest, memory, retrieval, whatsapp
 from .models import (Answer, AnswerSource, Claim, ClaimSource, Connection, Draft, Event, EventCandidate, EventPerson,
                      Exclusion, Job, Person, PersonIdentifier, RelationshipNote, SelfProfile, Source,
                      SourceParticipant, SyncStream, WhatsAppConnector)
+from .auth_routes import throttle
 from .web import SESSION_COOKIE, Ctx, Problem, optional_user, redirect, render, require_mutation, require_user
 
 router = APIRouter()
@@ -33,6 +34,9 @@ def found(obj, what='That item'):
 
 
 def ai_error(exc: Exception) -> str:
+    if isinstance(exc, ai.BudgetExhausted) and exc.scope == 'userkey':
+        return ("Today's Moresocial limit for your own API key is used up. AI features resume tomorrow; "
+                'everything else keeps working.')
     if isinstance(exc, ai.BudgetExhausted):
         return "Today's AI budget is used up. AI features resume tomorrow; everything else keeps working."
     if isinstance(exc, ai.InvalidOutput):
@@ -445,6 +449,10 @@ def save_me(preferences: str = Form(''), goals: str = Form(''), ctx: Ctx = Depen
 
 @router.get('/connections')
 def connections(request: Request, ctx: Ctx = Depends(require_user)):
+    return connections_page(request, ctx)
+
+
+def connections_page(request: Request, ctx: Ctx, status: int = 200, key_error: dict | None = None):
     ws = ctx.ws
     conn = ws.first(ws.q(Connection).where(Connection.provider == 'google'))
     streams = {st.stream: st for st in ws.all(ws.q(SyncStream))} if conn else {}
@@ -459,9 +467,41 @@ def connections(request: Request, ctx: Ctx = Depends(require_user)):
     paused = ws.s.scalar(select(func.count()).select_from(Job).where(Job.workspace_id == ws.wid, Job.status == 'queued',
                                                                      Job.last_error.like('AI paused%')))
     settings = config.get()
-    return render(request, 'connections.html', ctx, conn=conn, streams=streams, counts=counts, wa=wa, exclusions=exclusions,
-                  scopes={'gmail': config.GMAIL_SCOPE, 'calendar': config.CALENDAR_SCOPE}, pending=sum(r[2] for r in ai_jobs),
-                  ai_paused=paused, budget=ai.budget_state(ws.wid), limits=settings, ai_configured=ai.provider().name != 'none')
+    assistant = ai_keys.status(ws)
+    return render(request, 'connections.html', ctx, status=status, conn=conn, streams=streams, counts=counts, wa=wa,
+                  exclusions=exclusions, scopes={'gmail': config.GMAIL_SCOPE, 'calendar': config.CALENDAR_SCOPE},
+                  pending=sum(r[2] for r in ai_jobs), ai_paused=paused, budget=assistant['budget'], limits=settings,
+                  ai_configured=assistant['tier'] != 'none', assistant=assistant, key_error=key_error)
+
+
+def key_provider(provider: str) -> str:
+    if provider not in ai_keys.enabled():
+        raise Problem(404, 'Not found.')
+    return provider
+
+
+@router.post('/connections/ai/{provider}/key')
+def ai_key_save(request: Request, provider: str, api_key: str = Form(''), ctx: Ctx = Depends(require_mutation)):
+    provider = key_provider(provider)
+    throttle(request, f'ai-key:{ctx.ws.wid}', limit=10, window=3600)
+    reason = ai_keys.save(ctx.s, ctx.ws.wid, provider, api_key)
+    if reason:
+        # Re-render rather than redirect: the outcome must not travel in a URL, and the key is never echoed.
+        return connections_page(request, ctx, status=400,
+                                key_error={'provider': provider, 'message': ai_keys.message(provider, reason)})
+    return redirect('/connections', notice='ai-key-saved')
+
+
+@router.post('/connections/ai/{provider}/remove')
+def ai_key_remove(provider: str, ctx: Ctx = Depends(require_mutation)):
+    ai_keys.remove(ctx.s, ctx.ws.wid, key_provider(provider))
+    return redirect('/connections', notice='ai-key-removed')
+
+
+@router.post('/connections/ai/preference')
+def ai_key_preference(provider: str = Form(''), ctx: Ctx = Depends(require_mutation)):
+    ai_keys.set_preference(ctx.s, ctx.ws.wid, key_provider(provider))
+    return redirect('/connections')
 
 
 @router.post('/connections/google/sync')

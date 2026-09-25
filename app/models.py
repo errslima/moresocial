@@ -41,6 +41,7 @@ class Workspace(Base):
     id: Mapped[uuid.UUID] = pk()
     status: Mapped[str] = mapped_column(String(20), default='active', nullable=False)  # active|deleting
     timezone: Mapped[str] = mapped_column(String(64), default='Europe/Amsterdam', nullable=False)
+    ai_preference: Mapped[str | None] = mapped_column(String(20))  # anthropic | openai, when both keys work
     created_at: Mapped[datetime] = now_col()
 
 
@@ -91,7 +92,9 @@ class Connection(Base):
     __table_args__ = (UniqueConstraint('workspace_id', 'id'), UniqueConstraint('workspace_id', 'provider'))
     id: Mapped[uuid.UUID] = pk()
     workspace_id: Mapped[uuid.UUID] = ws_fk()
-    provider: Mapped[str] = mapped_column(String(20), nullable=False)  # google
+    # google (OAuth grant) | anthropic | openai (user API key: access_token_enc holds the key,
+    # provider_account a non-reversible fingerprint, key_hint its last four characters)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
     provider_account: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str | None] = mapped_column(String(320))
     scopes: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, nullable=False)
@@ -101,6 +104,8 @@ class Connection(Base):
     # active | reconnect_required | disconnected
     state: Mapped[str] = mapped_column(String(30), default='active', nullable=False)
     detail: Mapped[str | None] = mapped_column(String(300))
+    key_hint: Mapped[str | None] = mapped_column(String(8))
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = now_col()
     updated_at: Mapped[datetime] = now_col(onupdate=func.now())
 
@@ -451,11 +456,25 @@ class ProviderUsage(Base):
     day: Mapped[date] = mapped_column(Date, nullable=False)
     operation: Mapped[str] = mapped_column(String(20), nullable=False)  # generate | embed
     model: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), default='anthropic', server_default='anthropic', nullable=False)
+    billing: Mapped[str] = mapped_column(String(10), default='operator', server_default='operator', nullable=False)  # operator|user
     reserved_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     input_tokens: Mapped[int | None] = mapped_column(Integer)
     output_tokens: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(15), default='reserved', nullable=False)  # reserved|reconciled|failed
     created_at: Mapped[datetime] = now_col()
+
+
+class OperatorSetting(Base):
+    """Global AI configuration set on the admin page; overrides the server environment.
+    Secret values (API keys) are encrypted. A removed value is NULLed, not deleted, so
+    max(updated_at) always advances and processes notice the change."""
+    __tablename__ = 'operator_settings'
+    name: Mapped[str] = mapped_column(String(40), primary_key=True)  # ai_provider | <provider>_api_key
+    value: Mapped[str | None] = mapped_column(Text)
+    hint: Mapped[str | None] = mapped_column(String(8))
+    updated_by: Mapped[str | None] = mapped_column(String(320))
+    updated_at: Mapped[datetime] = now_col()
 
 
 class Exclusion(Base):
