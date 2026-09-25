@@ -134,6 +134,7 @@ def rebuild_conversation(workspace_id: uuid.UUID, provider: str, conversation_id
             if key not in keep:
                 s.delete(chunk)
         created = 0
+        embeddings_on = bool(ai.embedder().embedding_dimension)
         model = ai.embedder().embedding_model
         for p in planned:
             if p['key'] in existing:
@@ -145,7 +146,8 @@ def rebuild_conversation(workspace_id: uuid.UUID, provider: str, conversation_id
             for n, m in enumerate(p['members']):
                 ws.add(ChunkSource(id=uuid.uuid4(), chunk_id=chunk.id, source_id=m.id, source_version=m.version,
                                    label=f'S{n + 1}', segment_text=p['segments'][m.id]))
-            jobs.enqueue(s, workspace_id, 'embed_chunk', f'embed:{p["key"]}:{model}', {'chunk_id': str(chunk.id)})
+            if embeddings_on:  # reconcile_ai enqueues missing embeddings once an embedder is configured
+                jobs.enqueue(s, workspace_id, 'embed_chunk', f'embed:{p["key"]}:{model}', {'chunk_id': str(chunk.id)})
             if provider in EXTRACT_PROVIDERS:
                 jobs.enqueue(s, workspace_id, 'extract_chunk', f'extract:{p["key"]}', {'chunk_id': str(chunk.id)})
             created += 1
@@ -174,6 +176,8 @@ def _still_valid(chunk: Chunk | None, members: list[tuple[ChunkSource, Source]],
 
 def embed_chunk(workspace_id: uuid.UUID, chunk_id, job_id=None) -> str:
     p = ai.embedder()
+    if not p.embedding_dimension:
+        return 'disabled'  # queued before embeddings were turned off; nothing to do or reserve
     with db.session() as s:
         ws = Scoped(s, workspace_id)
         chunk, members = _chunk_current(ws, chunk_id, lock=False)

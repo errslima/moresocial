@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import os
+import random
 import signal
 import socket
 import threading
@@ -84,6 +85,12 @@ def run_one(kinds: list[str] | None = None) -> bool:
             jobs.fail(s, job.id, OWNER, f'invalid model output: {exc}', retry=job.attempts < 2)
         return True
     except ai.AIUnavailable as exc:
+        if str(exc) == 'rate_limited':
+            # Pace backfills: wait for the provider without spending one of the job's attempts.
+            wait = min(ai.RATE_LIMIT_MAX_WAIT, exc.retry_after or ai.RATE_LIMIT_DEFAULT_WAIT) + random.uniform(0, 30)
+            with db.session() as s:
+                jobs.defer(s, job.id, OWNER, utcnow() + timedelta(seconds=wait), 'AI waiting: provider rate limit')
+            return True
         with db.session() as s:
             jobs.fail(s, job.id, OWNER, f'ai unavailable: {exc}', delay=600 if 'configured' in str(exc) else None)
         return True

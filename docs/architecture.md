@@ -79,5 +79,5 @@ cleanup identifier until the host removes connector resources and acknowledges i
 See the [operator runbook](operator-setup.md) for deployment, secret configuration,
 backup/restore and rollback; [connections](connections.md) for OAuth/WhatsApp design;
 and [review findings](review-findings.md) for the six fixes and regression coverage.
-The validated local suite has 121 Python tests and 19 Node tests. Synthetic tests
+The validated local suite has 126 Python tests and 19 Node tests. Synthetic tests
 do not establish that real Google sync, WhatsApp pairing or AI quality work.

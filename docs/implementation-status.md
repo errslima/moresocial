@@ -72,6 +72,23 @@ Verification after fixes (2026-09-25):
 `docs/review-probes.py` now forwards to the permanent regressions rather than retaining
 obsolete failing probes. The fix verification itself used no live credentials; the subsequent deployment is recorded above.
 
+## Events plan E0 — budget leak, failure logging, pacing (2026-09-25)
+
+From [the events plan](events-execution-plan.md) §3, found in the production review:
+
+- No embed jobs are queued, and `ai.embed` reserves nothing, while no embedder is
+  configured; an embed job queued earlier completes as a no-op. Before this, every such
+  call kept its reservation and the operator budget was exhausted (400,000/400,000) on
+  2026-09-25.
+- `AIUnavailable.not_billed`: failures where the provider certainly charged nothing (not
+  configured, rate limited, key refused) release their reservation; unknown outcomes
+  (connection errors) still keep it.
+- Rate limits and provider errors are logged as `ai_generation_failed` with provider,
+  status and code only. After a 429 the adapter is not called again for `retry-after`
+  (default 30 s, max 300 s), and the worker defers the job ("AI waiting: provider rate
+  limit") without using one of its attempts, so backfills no longer fail jobs.
+- `tests/test_ai_budget.py` (5 tests); full suite **126 passed**.
+
 ## Production deployment — AI keys and admin page, 2026-09-25
 
 - Active revision `a66135449b826d2a43a0f07721c974a6cebae07a` (previous `c921458`), deployed

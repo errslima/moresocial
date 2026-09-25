@@ -29,14 +29,33 @@ from .repo import Scoped
 
 
 class AIUnavailable(Exception):
-    """Provider not configured or failed after bounded retries."""
+    """Provider not configured or failed after bounded retries. `not_billed` marks failures
+    where the provider certainly charged nothing (not configured, rate limited, key refused),
+    so the budget reservation is released instead of kept."""
+
+    def __init__(self, reason: str = '', *, not_billed: bool = False, retry_after: float | None = None):
+        super().__init__(reason)
+        self.not_billed = not_billed
+        self.retry_after = retry_after
+
+
+def rate_limited(retry_after: float | None = None) -> AIUnavailable:
+    return AIUnavailable('rate_limited', not_billed=True, retry_after=retry_after)
+
+
+def _retry_after(headers) -> float | None:
+    try:
+        value = float((headers or {}).get('retry-after'))
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
 
 
 class KeyRejected(AIUnavailable):
     """The provider refused a user's API key: invalid_key | no_credit | model_unavailable."""
 
     def __init__(self, reason: str):
-        super().__init__('key_rejected:' + reason)
+        super().__init__('key_rejected:' + reason, not_billed=True)
         self.reason = reason
 
 
@@ -166,6 +185,14 @@ class Provider:
     generation_model = 'none'
     embedding_model = 'none'
     embedding_dimension = 0
+    cooldown_until = 0.0  # monotonic time before which this adapter is not called (after a 429)
+
+    def cool_down(self, retry_after: float | None) -> None:
+        self.cooldown_until = time.monotonic() + min(RATE_LIMIT_MAX_WAIT, retry_after or RATE_LIMIT_DEFAULT_WAIT)
+
+    def cooling_down(self) -> float | None:
+        remaining = self.cooldown_until - time.monotonic()
+        return remaining if remaining > 0 else None
 
     def can_generate(self) -> bool:
         return False
@@ -175,6 +202,10 @@ class Provider:
 
     def embed(self, texts: list[str], input_type: str) -> Embedded:
         raise AIUnavailable('Embedding provider is not configured')
+
+
+RATE_LIMIT_DEFAULT_WAIT = 30.0
+RATE_LIMIT_MAX_WAIT = 300.0
 
 
 def _anthropic_rejection(exc) -> str | None:
@@ -219,16 +250,18 @@ class AnthropicGenerator(Provider):
             else:
                 response = self._client.messages.create(**request)
         except anthropic.RateLimitError as exc:
-            raise AIUnavailable('rate_limited') from exc
+            wait = _retry_after(getattr(getattr(exc, 'response', None), 'headers', None))
+            security.emit('ai_generation_failed', exc, provider='anthropic', status=429, code='rate_limited')
+            raise rate_limited(wait) from exc
         except anthropic.APIStatusError as exc:
             reason = _anthropic_rejection(exc)
             if reason:
                 security.emit('ai_key_refused', exc, provider='anthropic', status=exc.status_code, code=reason)
                 raise KeyRejected(reason) from None
-            security.emit('ai_generation_failed', exc, status=exc.status_code)
+            security.emit('ai_generation_failed', exc, provider='anthropic', status=exc.status_code, code='provider_error')
             raise AIUnavailable('provider_error') from exc
         except anthropic.APIConnectionError as exc:
-            security.emit('ai_generation_failed', exc)
+            security.emit('ai_generation_failed', exc, provider='anthropic', code='connection')
             raise AIUnavailable('connection') from exc
         usage = response.usage
         tokens_in = (usage.input_tokens or 0) + (getattr(usage, 'cache_read_input_tokens', 0) or 0) + \
@@ -296,7 +329,7 @@ class OpenAIGenerator(Provider):
                 with httpx.Client(timeout=90, transport=self._transport) as h:
                     r = h.post(self.URL, json=body, headers={'Authorization': 'Bearer ' + self._key})
             except httpx.HTTPError as exc:
-                security.emit('ai_generation_failed', exc, provider='openai', attempt=attempt)
+                security.emit('ai_generation_failed', exc, provider='openai', attempt=attempt, code='connection')
                 r = None
             if r is not None:
                 if r.is_success:
@@ -306,9 +339,10 @@ class OpenAIGenerator(Provider):
                     security.emit('ai_key_refused', provider='openai', status=r.status_code, code=reason)
                     raise KeyRejected(reason)
                 if r.status_code == 429:
-                    raise AIUnavailable('rate_limited')
+                    security.emit('ai_generation_failed', provider='openai', status=429, code='rate_limited')
+                    raise rate_limited(_retry_after(r.headers))
                 if r.status_code not in (500, 502, 503, 504):
-                    security.emit('ai_generation_failed', provider='openai', status=r.status_code)
+                    security.emit('ai_generation_failed', provider='openai', status=r.status_code, code='provider_error')
                     raise AIUnavailable('provider_error')
             if attempt < 2:
                 time.sleep(min(8, 2 ** attempt))
@@ -391,12 +425,12 @@ class OperatorTier(Provider):
 
     def generate(self, **kw) -> Generated:
         if self.generator is None:
-            raise AIUnavailable('AI provider is not configured')
+            raise AIUnavailable('AI provider is not configured', not_billed=True)
         return self.generator.generate(**kw)
 
     def embed(self, texts, input_type) -> Embedded:
         if self.embedder is None:
-            raise AIUnavailable('Embedding provider is not configured')
+            raise AIUnavailable('Embedding provider is not configured', not_billed=True)
         return self.embedder.embed(texts, input_type)
 
 
@@ -629,6 +663,9 @@ def generate(workspace_id: uuid.UUID, *, system: str, prompt: str, schema: dict,
 def _generate_on(tier: Resolved, workspace_id: uuid.UUID, *, system, prompt, schema, context, max_tokens, effort,
                  job_id) -> Generated:
     p = tier.provider
+    wait = p.cooling_down()
+    if wait:
+        raise rate_limited(wait)  # recently rate limited: do not call (or reserve) again yet
     # Reserve input + max output (+ one retry's worth of input for provider-side retries).
     estimate = 2 * estimate_tokens(system + prompt) + max_tokens
     usage = reserve(workspace_id, 'generate', p.generation_model, estimate, job_id, billing=tier.billing, provider_name=p.name)
@@ -638,8 +675,13 @@ def _generate_on(tier: Resolved, workspace_id: uuid.UUID, *, system, prompt, sch
     except InvalidOutput as exc:
         reconcile(usage, exc.input_tokens, exc.output_tokens, failed=True)
         raise
-    except KeyRejected:
-        reconcile(usage, 0, 0, failed=True)  # refused before any work: nothing was billed
+    except AIUnavailable as exc:
+        if exc.not_billed:  # refused before any work (key refused, rate limited): nothing was billed
+            reconcile(usage, 0, 0, failed=True)
+            if str(exc) == 'rate_limited':
+                p.cool_down(exc.retry_after)
+        else:
+            reconcile(usage, None, None, failed=True)
         raise
     except BaseException:
         reconcile(usage, None, None, failed=True)
@@ -650,6 +692,8 @@ def _generate_on(tier: Resolved, workspace_id: uuid.UUID, *, system, prompt, sch
 
 def embed(workspace_id: uuid.UUID, texts: list[str], input_type: str, job_id: uuid.UUID | None = None) -> Embedded:
     p = embedder()
+    if not p.embedding_dimension:
+        raise AIUnavailable('Embedding provider is not configured', not_billed=True)
     usage = reserve(workspace_id, 'embed', p.embedding_model, 2 * sum(estimate_tokens(t) for t in texts), job_id,
                     provider_name=getattr(p, 'embed_name', p.name))
     try:
@@ -657,6 +701,9 @@ def embed(workspace_id: uuid.UUID, texts: list[str], input_type: str, job_id: uu
             out = p.embed(texts, input_type)
     except InvalidOutput as exc:
         reconcile(usage, exc.input_tokens, exc.output_tokens, failed=True)
+        raise
+    except AIUnavailable as exc:
+        reconcile(usage, *((0, 0) if exc.not_billed else (None, None)), failed=True)
         raise
     except BaseException:
         reconcile(usage, None, None, failed=True)
