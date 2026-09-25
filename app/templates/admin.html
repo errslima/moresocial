@@ -9,25 +9,25 @@
 <ul class="list">
   <li>AI: {% if enabled %}<strong>enabled</strong>{% else %}<strong>disabled</strong>{% endif %}.</li>
   <li>Reasoning model: <code>{{ reasoning_model or 'not configured' }}</code>.</li>
-  <li>Active embedding model: <code>{{ embedding_model or 'not configured' }}</code>{% if pending_embedding %}; rebuilding pending <code>{{ pending_embedding }}</code>{% endif %}.</li>
-  <li>Last explicit test: {{ last_test or 'not run' }}{% if last_test_error %} ({{ last_test_error }}){% endif %}.</li>
+  <li>Active embedding model: <code>{{ embedding_model or 'not configured' }}</code>{% if embedding_identity and embedding_identity != embedding_model %} (verified identity <code>{{ embedding_identity }}</code>){% endif %}{% if pending_embedding %}; rebuilding pending <code>{{ pending_embedding }}</code>{% endif %}.</li>
+  <li>Last explicit test: {{ last_test or 'not run' }}{% if last_test_error %} ({{ last_test_error }}){% endif %}{% if last_test_reference %}, reference <code>{{ last_test_reference }}</code>{% endif %}.</li>
 </ul>
 {% if pending_embedding %}<form method="post" action="{{ url('/admin/ai/openrouter/pending/cancel') }}">{{ csrf_field() }}<button>Cancel pending rebuild</button></form>{% endif %}
 </section>
 
 <section class="card"><h2>Test and save</h2>
 <p>This sends a tiny synthetic JSON request and embedding request. It may incur a small OpenRouter charge. A failed test preserves the current key and configuration.</p>
-{% if error %}<p class="warn" role="alert">{{ error }}</p>{% endif %}
+{% if error %}<p class="warn" role="alert">{{ error }}{% if reference %} Reference: <code>{{ reference }}</code>.{% endif %}</p>{% endif %}
 {% if catalog_error %}<p class="warn">{{ catalog_error }} Previously configured IDs remain available; retry later to choose from the current catalog.</p>{% endif %}
 <form method="post" action="{{ url('/admin/ai/openrouter/save') }}" class="stack">{{ csrf_field() }}
   <input type="hidden" name="revision" value="{{ revision }}">
   <label for="or-key">OpenRouter API key</label>
   <input id="or-key" name="api_key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"{% if not key_row or not key_row.value %} required{% endif %}>
   <label for="or-reason">Reasoning model</label>
-  <select id="or-reason" name="reasoning_model" required>{% for model in reasoning_models %}<option value="{{ model.id }}"{% if model.id == reasoning_model %} selected{% endif %}>{{ model.id }}{% if model.unverified %} (configured; catalog not verified){% endif %}</option>{% endfor %}</select>
+  <select id="or-reason" name="reasoning_model" required>{% for model in reasoning_models %}<option value="{{ model.id }}"{% if model.id == chosen_reasoning %} selected{% endif %}>{{ model.id }}{% if model.unverified %} (configured; catalog not verified){% endif %}</option>{% endfor %}</select>
   <label for="or-embed">Embedding model</label>
-  <select id="or-embed" name="embedding_model" required>{% for model in embedding_models %}<option value="{{ model.id }}"{% if model.id == embedding_model %} selected{% endif %}>{{ model.id }}{% if model.unverified %} (configured; catalog not verified){% endif %}</option>{% endfor %}</select>
-  <label><input type="checkbox" name="reasoning_effort" value="yes"> Selected reasoning model supports an effort parameter</label>
+  <select id="or-embed" name="embedding_model" required>{% for model in embedding_models %}<option value="{{ model.id }}"{% if model.id == chosen_embedding %} selected{% endif %}>{{ model.id }}{% if model.unverified %} (configured; catalog not verified){% endif %}</option>{% endfor %}</select>
+  <label><input type="checkbox" name="reasoning_effort" value="yes"{% if chosen_effort %} checked{% endif %}> Selected reasoning model supports an effort parameter</label>
   <button class="primary">Test and save</button>
 </form>
 <p class="small muted">Changing the reasoning model affects future generation only. Changing the embedding model stages a rebuild; searches keep using the active index until coverage is complete.</p>

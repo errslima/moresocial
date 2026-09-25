@@ -24,13 +24,16 @@ REASONING_EFFORT = 'openrouter_reasoning_effort'
 EMBEDDING_MODEL = 'openrouter_embedding_model'
 EMBEDDING_DIMENSION = 'openrouter_embedding_dimension'
 EMBEDDING_CONTRACT = 'openrouter_embedding_contract'
+EMBEDDING_IDENTITY = 'openrouter_embedding_identity'  # verified canonical ID; names the vector space
 PENDING_EMBEDDING_MODEL = 'openrouter_pending_embedding_model'
 PENDING_EMBEDDING_DIMENSION = 'openrouter_pending_embedding_dimension'
 PENDING_EMBEDDING_CONTRACT = 'openrouter_pending_embedding_contract'
+PENDING_EMBEDDING_IDENTITY = 'openrouter_pending_embedding_identity'
 REVISION = 'ai_revision'
 LAST_TEST_AT = 'openrouter_last_test_at'
 LAST_TEST_STATUS = 'openrouter_last_test_status'
 LAST_TEST_ERROR = 'openrouter_last_test_error'
+LAST_TEST_REFERENCE = 'openrouter_last_test_reference'
 
 
 def key_name(provider: str) -> str:
@@ -88,23 +91,30 @@ def revision(s: DB) -> int:
     return _revision(s)
 
 
+def _value(s: DB, name: str) -> str | None:
+    row = s.get(OperatorSetting, name)
+    return row.value if row else None
+
+
 def set_openrouter(s: DB, *, key: str, reasoning_model: str, embedding_model: str,
                    embedding_dimension: int, reasoning_effort: bool, by: str,
-                   expected_revision: int | None = None) -> tuple[int, bool]:
+                   expected_revision: int | None = None, embedding_identity: str | None = None) -> tuple[int, bool]:
     """Atomically activate a tested candidate.
 
-    An embedding change is staged.  The active index remains queryable until the
-    worker has populated the pending space and cuts it over.
+    ``embedding_model`` is the catalog ID sent in requests; ``embedding_identity`` is the
+    identity the setup test verified (see `ai.identity_accepted`). An embedding change is
+    staged. The active index remains queryable until the worker has populated the
+    pending space and cuts it over.
     """
     current = _revision(s)
     if expected_revision is not None and expected_revision != current:
         raise ValueError('stale configuration test')
-    old_model = s.get(OperatorSetting, EMBEDDING_MODEL)
-    old_dim = s.get(OperatorSetting, EMBEDDING_DIMENSION)
-    old_model_value = old_model.value if old_model else None
-    old_dim_value = old_dim.value if old_dim else None
+    identity = embedding_identity or embedding_model
+    old_model_value = _value(s, EMBEDDING_MODEL)
+    old_dim_value = _value(s, EMBEDDING_DIMENSION)
+    old_identity = _value(s, EMBEDDING_IDENTITY) or old_model_value
     contract = 'v1:plain-text:document-query'
-    changed_space = bool(old_model_value and (old_model_value != embedding_model or old_dim_value != str(embedding_dimension)))
+    changed_space = bool(old_model_value and (old_identity != identity or old_dim_value != str(embedding_dimension)))
     set_key(s, 'openrouter', key, by)
     _put(s, PROVIDER, 'openrouter', None, by)
     _put(s, ENABLED, '1', None, by)
@@ -114,19 +124,22 @@ def set_openrouter(s: DB, *, key: str, reasoning_model: str, embedding_model: st
         _put(s, PENDING_EMBEDDING_MODEL, embedding_model, None, by)
         _put(s, PENDING_EMBEDDING_DIMENSION, str(embedding_dimension), None, by)
         _put(s, PENDING_EMBEDDING_CONTRACT, contract, None, by)
+        _put(s, PENDING_EMBEDDING_IDENTITY, identity, None, by)
     else:
         _put(s, EMBEDDING_MODEL, embedding_model, None, by)
         _put(s, EMBEDDING_DIMENSION, str(embedding_dimension), None, by)
         _put(s, EMBEDDING_CONTRACT, contract, None, by)
+        _put(s, EMBEDDING_IDENTITY, identity, None, by)
     new_revision = current + 1
     _put(s, REVISION, str(new_revision), None, by)
     return new_revision, changed_space
 
 
-def record_test(s: DB, *, ok: bool, error: str | None, by: str) -> None:
+def record_test(s: DB, *, ok: bool, error: str | None, by: str, reference: str | None = None) -> None:
     _put(s, LAST_TEST_AT, datetime.utcnow().isoformat(timespec='seconds') + 'Z', None, by)
     _put(s, LAST_TEST_STATUS, 'ok' if ok else 'failed', None, by)
     _put(s, LAST_TEST_ERROR, error if not ok else None, None, by)
+    _put(s, LAST_TEST_REFERENCE, reference, None, by)
 
 
 def disable(s: DB, by: str) -> None:
@@ -134,7 +147,7 @@ def disable(s: DB, by: str) -> None:
 
 
 def cancel_pending(s: DB, by: str) -> None:
-    for name in (PENDING_EMBEDDING_MODEL, PENDING_EMBEDDING_DIMENSION, PENDING_EMBEDDING_CONTRACT):
+    for name in (PENDING_EMBEDDING_MODEL, PENDING_EMBEDDING_DIMENSION, PENDING_EMBEDDING_CONTRACT, PENDING_EMBEDDING_IDENTITY):
         _put(s, name, None, None, by)
 
 
@@ -147,6 +160,7 @@ def promote_pending(s: DB, by: str = 'worker') -> bool:
     _put(s, EMBEDDING_MODEL, model, None, by)
     _put(s, EMBEDDING_DIMENSION, dimension, None, by)
     _put(s, EMBEDDING_CONTRACT, pending.get(PENDING_EMBEDDING_CONTRACT) or 'v1:plain-text:document-query', None, by)
+    _put(s, EMBEDDING_IDENTITY, pending.get(PENDING_EMBEDDING_IDENTITY) or model, None, by)
     cancel_pending(s, by)
     _put(s, REVISION, str(_revision(s) + 1), None, by)
     return True

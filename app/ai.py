@@ -34,10 +34,14 @@ class AIUnavailable(Exception):
     where the provider certainly charged nothing (not configured, rate limited, key refused),
     so the budget reservation is released instead of kept."""
 
-    def __init__(self, reason: str = '', *, not_billed: bool = False, retry_after: float | None = None):
+    http_status: int | None = None  # the provider's HTTP status, when one was received
+
+    def __init__(self, reason: str = '', *, not_billed: bool = False, retry_after: float | None = None,
+                 http_status: int | None = None):
         super().__init__(reason)
         self.not_billed = not_billed
         self.retry_after = retry_after
+        self.http_status = http_status
 
 
 def rate_limited(retry_after: float | None = None) -> AIUnavailable:
@@ -417,12 +421,26 @@ class VoyageEmbedder(Provider):
         raise AIUnavailable('embedding_unavailable')
 
 
+def identity_accepted(returned: str | None, requested: str, identity: str | None) -> bool:
+    """The one embedding/generation identity policy, shared by setup, runtime and storage.
+
+    A response is accepted only when it names exactly the requested catalog ID or the
+    canonical identity that the OpenRouter catalog documented for that ID when an
+    administrator tested it. No prefix stripping, aliasing or other normalization.
+    """
+    return isinstance(returned, str) and returned in {requested, identity or requested}
+
+
 class OpenRouterProvider(Provider):
     """The sole production adapter.
 
     Models are exact IDs selected and tested by an administrator.  Routing deliberately
     leaves provider choice to OpenRouter, which may fail over *within that same model*.
     No privacy-routing flags, provider allowlists, or alternate-model fallback exists.
+
+    ``embedding_model`` is the catalog ID sent in requests. ``embedding_identity`` is the
+    verified canonical identity (catalog ``canonical_slug``) recorded at setup; it names
+    the vector space, so a later re-pointing of a stable alias cannot mix spaces.
     """
     name = 'openrouter'
     BASE_URL = 'https://openrouter.ai/api/v1'
@@ -430,14 +448,17 @@ class OpenRouterProvider(Provider):
     def __init__(self, key: str, generation_model: str, embedding_model: str, dimension: int,
                  generation_providers: tuple[str, ...] = (), embedding_providers: tuple[str, ...] = (),
                  transport: httpx.BaseTransport | None = None, *, reasoning_effort: bool = False,
-                 embedding_contract: str = 'v1:plain-text:document-query', revision: int = 0):
+                 embedding_contract: str = 'v1:plain-text:document-query', revision: int = 0,
+                 embedding_identity: str | None = None):
         self._key, self.generation_model = key, generation_model
         self.embedding_model, self.embedding_dimension = embedding_model, dimension
+        self.embedding_identity = embedding_identity or embedding_model
         self.generation_providers, self.embedding_providers = generation_providers, embedding_providers
         self._transport = transport
         self.reasoning_effort = reasoning_effort
         self.embedding_contract = embedding_contract
         self.revision = revision
+        self.last_call: dict = {}  # metadata of the latest request (setup probes read it)
 
     def __repr__(self):
         return f'OpenRouterProvider(generation_model={self.generation_model!r}, embedding_model={self.embedding_model!r})'
@@ -447,42 +468,75 @@ class OpenRouterProvider(Provider):
 
     @property
     def embedding_space(self) -> str:
-        return f'v2:openrouter:{self.embedding_model}:{self.embedding_dimension}:{self.embedding_contract}'
+        return f'v2:openrouter:{self.embedding_identity}:{self.embedding_dimension}:{self.embedding_contract}'
+
+    def accepts_embedding_model(self, returned: str | None) -> bool:
+        return identity_accepted(returned, self.embedding_model, self.embedding_identity)
+
+    def _call_event(self, operation: str, model, attempt: int, started: float, outcome: str, *, status=None,
+                    category=None, payload=None, delay=None, exc=None) -> None:
+        fields = {'provider': 'openrouter', 'operation': operation, 'requested_model': model, 'attempt': attempt,
+                  'http_status': status, 'duration_ms': int((time.monotonic() - started) * 1000), 'outcome': outcome,
+                  'error_category': category, 'delay_ms': int(delay * 1000) if delay else None}
+        if isinstance(payload, dict):
+            tin, tout = self._usage(payload)
+            fields.update(returned_model=payload.get('model'), provider_request_id=payload.get('id'),
+                          input_tokens=tin, output_tokens=tout, cost_usd=self._cost(payload))
+        self.last_call.update({k: v for k, v in fields.items() if v is not None})
+        level = 'info' if outcome == 'ok' else ('warn' if outcome == 'retrying' else 'error')
+        security.emit('provider_call', exc, level=level, **fields)
 
     def _post(self, endpoint: str, body: dict, operation: str) -> dict:
         response = None
+        model = body.get('model')
+        self.last_call = {}
         for attempt in range(3):
+            started = time.monotonic()
+            delay = min(4, 2 ** attempt) if attempt < 2 else None
             try:
                 with httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0), transport=self._transport) as client:
                     response = client.post(self.BASE_URL + endpoint, json=body,
                                            headers={'Authorization': 'Bearer ' + self._key, 'Content-Type': 'application/json'})
             except httpx.HTTPError as exc:
-                security.emit('ai_' + operation + '_failed', exc, provider='openrouter', attempt=attempt, code='connection')
+                category = 'timeout' if isinstance(exc, httpx.TimeoutException) else 'connection'
+                self._call_event(operation, model, attempt, started, 'retrying' if delay else 'failed',
+                                 category=category, delay=delay, exc=exc)
             else:
+                status = response.status_code
                 if response.is_success:
                     try:
                         payload = response.json()
                     except ValueError:
-                        raise AIUnavailable('malformed_response') from None
+                        self._call_event(operation, model, attempt, started, 'failed', status=status, category='malformed_response')
+                        raise AIUnavailable('malformed_response', http_status=status) from None
                     if isinstance(payload, dict) and payload.get('error'):
-                        raise AIUnavailable('provider_error')
+                        self._call_event(operation, model, attempt, started, 'failed', status=status, category='provider_error')
+                        raise AIUnavailable('provider_error', http_status=status)
                     if isinstance(payload, dict):
+                        self._call_event(operation, model, attempt, started, 'ok', status=status, payload=payload)
                         return payload
-                    raise AIUnavailable('malformed_response')
-                if response.status_code == 401:
-                    raise KeyRejected('invalid_key')
-                if response.status_code == 402:
-                    raise KeyRejected('no_credit')
-                if response.status_code in (403, 404):
-                    raise KeyRejected('model_unavailable')
-                if response.status_code == 429:
-                    raise rate_limited(_retry_after(response.headers))
-                if response.status_code not in (500, 502, 503, 504):
-                    security.emit('ai_' + operation + '_failed', provider='openrouter', status=response.status_code, code='provider_error')
-                    raise AIUnavailable('provider_error')
-            if attempt < 2:
-                time.sleep(min(4, 2 ** attempt))
-        raise AIUnavailable('connection' if response is None else 'provider_error')
+                    self._call_event(operation, model, attempt, started, 'failed', status=status, category='malformed_response')
+                    raise AIUnavailable('malformed_response', http_status=status)
+                rejection = {401: 'invalid_key', 402: 'no_credit', 403: 'model_unavailable', 404: 'model_unavailable'}.get(status)
+                retryable = status in (500, 502, 503, 504)
+                category = rejection or ('rate_limited' if status == 429 else 'http_5xx' if status >= 500 else 'http_4xx')
+                wait = _retry_after(response.headers) if status == 429 else None
+                self._call_event(operation, model, attempt, started, 'retrying' if retryable and delay else 'failed',
+                                 status=status, category=category, delay=wait if status == 429 else (delay if retryable else None))
+                if rejection:
+                    error = KeyRejected(rejection)
+                    error.http_status = status
+                    raise error
+                if status == 429:
+                    error = rate_limited(wait)
+                    error.http_status = status
+                    raise error
+                if not retryable:
+                    raise AIUnavailable('provider_error', http_status=status)
+            if delay:
+                time.sleep(delay)
+        raise AIUnavailable('connection' if response is None else 'provider_error',
+                            http_status=None if response is None else response.status_code)
 
     @staticmethod
     def _usage(payload: dict) -> tuple[int, int]:
@@ -540,6 +594,7 @@ class OpenRouterProvider(Provider):
             if vectors[row['index']] is not None:
                 raise InvalidOutput('embedding_index')
             if not isinstance(vector, list) or len(vector) != self.embedding_dimension:
+                self.last_call['actual_dimension'] = len(vector) if isinstance(vector, list) else None
                 raise InvalidOutput('embedding_shape')
             if any(not isinstance(x, (int, float)) or not math.isfinite(x) for x in vector) or not any(vector):
                 raise InvalidOutput('embedding_values')
@@ -547,8 +602,9 @@ class OpenRouterProvider(Provider):
         if any(v is None for v in vectors):
             raise InvalidOutput('embedding_index')
         tokens, _ = self._usage(payload)
-        returned_model = str(payload.get('model') or self.embedding_model)
-        if returned_model != self.embedding_model:
+        # A response without a model field is attributed to the requested ID.
+        returned_model = payload.get('model') if payload.get('model') is not None else self.embedding_model
+        if not self.accepts_embedding_model(returned_model):
             raise InvalidOutput('embedding_model')
         return Embedded(vectors=vectors, tokens=tokens, model=returned_model, cost=self._cost(payload))
 
@@ -702,7 +758,7 @@ def build_operator(settings: config.Settings, stored: dict[str, str]) -> Provide
         return OpenRouterProvider(key, generation, embedding, dimension, transport=None,
                                   reasoning_effort=stored.get('openrouter_reasoning_effort') == '1',
                                   embedding_contract=stored.get('openrouter_embedding_contract') or 'v1:plain-text:document-query',
-                                  revision=revision)
+                                  revision=revision, embedding_identity=stored.get('openrouter_embedding_identity') or embedding)
     return OperatorTier(None, None)
 
 
@@ -735,12 +791,13 @@ def embedding_targets() -> dict[str, Provider]:
         model = values.get(operator_settings.PENDING_EMBEDDING_MODEL)
         dimension = int(values.get(operator_settings.PENDING_EMBEDDING_DIMENSION) or 0)
         contract = values.get(operator_settings.PENDING_EMBEDDING_CONTRACT) or 'v1:plain-text:document-query'
+        identity = values.get(operator_settings.PENDING_EMBEDDING_IDENTITY) or model
     except (Exception, ValueError):
         return targets
     if model and dimension:
         pending = OpenRouterProvider(active._key, active.generation_model, model, dimension,
                                      reasoning_effort=active.reasoning_effort, embedding_contract=contract,
-                                     revision=active.revision)
+                                     revision=active.revision, embedding_identity=identity)
         targets[pending.embedding_space] = pending
     return targets
 

@@ -1,18 +1,15 @@
 """Token hashing, symmetric encryption for provider credentials, and diagnostics.
 
 Credentials are encrypted with a Fernet key held outside the database. Diagnostics
-carry an opaque reference and sanitized fields only: never tokens, codes, QR payloads,
-message bodies or prompts.
+(`diagnostics.emit`) carry an opaque reference and field-validated metadata only: never
+tokens, codes, QR payloads, message bodies or prompts.
 """
 from __future__ import annotations
 
 import base64
 import hashlib
 import hmac
-import json
 import secrets
-import sys
-import time
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -78,21 +75,7 @@ def reset_cipher() -> None:
     _fernet_source = None
 
 
-SAFE_FIELDS = ('status', 'count', 'duration_ms', 'code', 'stream', 'kind', 'attempt', 'provider', 'outcome', 'route')
-
-
 def emit(event: str, exc: BaseException | None = None, **fields) -> str:
-    """Write one sanitized JSON diagnostic line to stderr; return its reference."""
-    ref = secrets.token_hex(8)
-    row = {'ts': round(time.time(), 3), 'event': event, 'reference': ref}
-    for k in SAFE_FIELDS:
-        v = fields.get(k)
-        if isinstance(v, (int, float)) or (isinstance(v, str) and len(v) <= 80 and v.replace('_', '').replace('-', '').replace('.', '').replace(':', '').isalnum()):
-            row[k] = v
-    if exc is not None:
-        row['error_type'] = type(exc).__name__
-    try:
-        sys.stderr.write(json.dumps(row) + '\n')
-    except Exception:
-        pass
-    return ref
+    """Write one sanitized diagnostic event (see `diagnostics`); return its reference."""
+    from . import diagnostics
+    return diagnostics.emit(event, exc, **fields)

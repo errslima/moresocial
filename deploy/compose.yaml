@@ -19,6 +19,7 @@ x-app: &app
     OPERATOR_KEY_FILE: /run/secrets/operator_key
     CONNECTOR_IMAGE: moresocial-connector:${MORESOCIAL_REVISION}
     TRUSTED_PROXY_IPS: 172.31.77.1
+    MORESOCIAL_RELEASE: ${MORESOCIAL_REVISION}
   secrets: [db_password, google_auth.json, encryption_key, operator_key]
   read_only: true
   tmpfs: [/tmp]
@@ -53,6 +54,7 @@ services:
 
   migrate:
     <<: *app
+    environment: {<<: *app-env, MORESOCIAL_SERVICE: migrate}
     command: ["alembic", "upgrade", "head"]
     restart: "no"
     profiles: [migrate]
@@ -60,6 +62,7 @@ services:
 
   web:
     <<: *app
+    environment: {<<: *app-env, MORESOCIAL_SERVICE: web}
     ports:
       - "127.0.0.1:8772:8000"   # public app, proxied by Caddy at /moresocial/
       - "127.0.0.1:8773:8001"   # private management API for the host provisioner only
@@ -69,6 +72,7 @@ services:
 
   worker:
     <<: *app
+    environment: {<<: *app-env, MORESOCIAL_SERVICE: worker}
     command: ["python", "-m", "worker.main"]
     healthcheck: {disable: true}
     mem_limit: 768m
