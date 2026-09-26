@@ -1,6 +1,6 @@
 # Current architecture and feature map
 
-Updated 2026-09-25. This describes the implemented first release. For the active
+Updated 2026-09-26. This describes the implemented first release. For the active
 revision, deployment evidence and outstanding checks, read
 [implementation status](implementation-status.md). The execution plan and original
 [review handover](handover-review.md) are historical inputs, not current status.
@@ -18,8 +18,9 @@ revision, deployment evidence and outstanding checks, read
 | AI assistance | Claim extraction, embeddings, hybrid retrieval, cited answers, invitation drafts, rewrites and RSVP suggestions | `app/memory.py`, `app/retrieval.py`, `app/ai.py`, `app/gatherings.py` |
 | Suggestions | Evidence-backed replies, promises and follow-ups from one-to-one WhatsApp; drafts, snooze, dismissal, resolution and per-chat pause | `app/suggestions.py`, `app/suggestion_pages.py`, [feature details](suggestions.md) |
 
-AI assistance is implemented but **disabled in the deployed configuration**
-(`AI_PROVIDER=none`); live provider behavior and quality remain unverified.
+AI generation and embeddings are **enabled in production**, verified by the live readiness
+check on 2026-09-26. Synthetic tests establish workflow behavior; recommendation quality
+still needs evaluation through use.
 All generation and embeddings use the shared operator-owned OpenRouter key, with spending limits managed in OpenRouter
 and no local workspace or global token allowance. The encrypted admin configuration overrides an optional bootstrap
 file and refreshes in each process within 30 seconds. Embedding-space identity includes the
@@ -53,6 +54,7 @@ answers, jobs and usage budgets. Users' API keys are `connections` rows (provide
 characters; `provider_usage` records which provider and tier (`operator`/`user`) paid. Workspace scoping and composite foreign keys
 separate users' data; matching contacts do not create shared cross-user profiles.
 
+Migration `0008` adds the Suggestions inbox, conversation review state and evidence references.
 Migration `0001` creates the initial schema. `0002` adds source segments and the
 connector cleanup outbox. `0003` adds API-key metadata, the provider preference and usage
 billing columns and the `operator_settings` table (additive; downgrade removes stored keys). Pipeline `v2-segments` rebuilds legacy chunks, which are

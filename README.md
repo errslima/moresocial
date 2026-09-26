@@ -7,8 +7,8 @@ with independent application files and state under `/srv/moresocial`.
 
 The first release (milestones M0–M6) is deployed at the URL above. Database, web, worker,
 OAuth initiation, and encrypted backup restoration have passed deployment checks.
-Interactive Google consent/sync and WhatsApp pairing remain unverified. AI features are
-disabled until provider keys are configured. See [implementation status](docs/implementation-status.md).
+Interactive Google consent/sync and WhatsApp pairing remain unverified. AI generation and embeddings are enabled through the shared OpenRouter configuration.
+The Suggestions inbox is deployed at `/moresocial/suggestions`. See [implementation status](docs/implementation-status.md).
 
 - [Current architecture and feature map](docs/architecture.md)
 - [Suggestions: behavior and background reviews](docs/suggestions.md)

@@ -7,6 +7,32 @@
 
 Last updated 2026-09-26. This is the resume point for any agent or operator.
 
+## Suggestions release — 2026-09-26
+
+Production revision: `c89c164` (previous: `6c762e3`). Migration `0008` adds
+workspace-scoped conversation reviews, suggestions and evidence references. See
+[suggestions](suggestions.md) for the implementation and lifecycle.
+
+- New `/suggestions` inbox: replies, promises and follow-ups from recent one-to-one
+  WhatsApp chats; evidence/context, copyable editable drafts, Done/dismissal reasons,
+  snooze, history and per-conversation pause/resume.
+- Change-driven review jobs and deadline revisits use the configured OpenRouter model.
+  Stale review/draft results cannot overwrite newer messages or edits; source removal
+  invalidates derived text and evidence. Drafting/copying never sends a message.
+- Final targeted checks: **22 passed**, including desktop/mobile Chromium flows.
+  Broader suite: **187 passed, 22 failed** before the final added edge-case tests.
+  The failures match the documented legacy AI-key tests: 20 non-browser failures
+  reproduce on unchanged `6c762e3`; two browser failures still expect removed key fields.
+  Connector tests: **27 passed** locally and in the production Node 22 image.
+- Encrypted pre-release backup completed: `moresocial-20260926T133440Z.tar.enc`.
+  Standard `deploy/release.sh` completed; public health/readiness passed, web and worker
+  run `c89c164`, schema is at `0008`, and all three inbox views render with live data.
+  Initial reconciliation discovered 36 eligible conversations. The first live model review
+  completed successfully; subsequent reviews are queued/running with no terminal failures
+  observed at verification.
+- Rollback: `sudo /srv/moresocial/src/deploy/rollback.sh 6c762e3`; keep the additive
+  tables and user data. No shared proxy changes were needed.
+
 ## Voyage response identity fix — 2026-09-26
 
 Active production revision: `1585035` (previous: `1f753c0`). Operation
