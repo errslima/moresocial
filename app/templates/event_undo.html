@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field with context %}
+{% block title %}Undo correction · {{ event.title }}{% endblock %}
+{% block content %}
+<a class="small" href="{{ url('/events/' ~ event.id) }}">← {{ event.title }}</a>
+<header class="events-hero"><h1>Undo this correction?</h1>
+<p class="muted">You said “{{ a.title }}” and “{{ b.title }}” {{ 'are the same event' if decision.verdict == 'same' else 'are separate events' }}.</p></header>
+<section><h2>Result</h2>
+{% if groups|length == 1 %}<p>These records stay together as one event{% if decision.verdict == 'same' %}, because another correction or match still connects them{% endif %}.</p>
+{% else %}<p>This event becomes {{ groups|length }} separate events:</p>{% endif %}
+<ul class="event-records">{% for g in groups %}<li><div>{% for m in g %}<strong>{{ m.title }}</strong>{% if m.starts_at %} <span class="small muted">{{ m.starts_at.astimezone(tz).strftime('%a %d %b %H:%M') }}</span>{% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}</div></li>{% endfor %}</ul>
+<p class="small muted">No messages are removed. New messages keep attaching to the event they belong to.</p></section>
+<form method="post" action="{{ url('/events/' ~ event.id ~ '/undo') }}">{{ csrf_field() }}
+<input type="hidden" name="decision" value="{{ decision.id }}"><input type="hidden" name="state" value="{{ state }}">
+<button>Undo correction</button> <a href="{{ url('/events/' ~ event.id) }}">Cancel</a></form>
+{% endblock %}

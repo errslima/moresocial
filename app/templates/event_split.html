@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field, provider_name with context %}
+{% block title %}Separate · {{ event.title }}{% endblock %}
+{% block content %}
+<a class="small" href="{{ url('/events/' ~ event.id) }}">← {{ event.title }}</a>
+<header class="events-hero"><h1>Separate this part?</h1>
+<p class="muted">The messages below will become their own event. They will not be grouped with the rest again automatically. You can undo this from the event’s grouping history.</p></header>
+<div class="event-split">
+{% for part in parts %}<section class="event-split-part"><h2>{{ 'Becomes its own event' if loop.first else 'Stays in this event' }}</h2>
+<p class="small muted">{{ part.sources|length }} {{ 'message' if part.sources|length == 1 else 'messages' }}</p>
+<ul>{% for s in part.sources[:12] %}<li><a href="{{ url('/sources/' ~ s.id) }}">{{ provider_name(s.provider) }} · {{ s.occurred_at.astimezone(tz).strftime('%d %b %H:%M') }}{% if s.conversation_title %} · {{ s.conversation_title }}{% endif %}</a><span class="small muted">{{ (s.title or s.body)[:90] }}</span></li>{% endfor %}
+{% if part.sources|length > 12 %}<li class="small muted">and {{ part.sources|length - 12 }} more</li>{% endif %}</ul></section>{% endfor %}
+</div>
+<form method="post" action="{{ url('/events/' ~ event.id ~ '/split') }}">{{ csrf_field() }}
+<input type="hidden" name="member" value="{{ moving.id }}"><input type="hidden" name="state" value="{{ state }}">
+<button>Separate</button> <a href="{{ url('/events/' ~ event.id) }}">Cancel</a></form>
+{% endblock %}

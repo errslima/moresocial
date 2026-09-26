@@ -192,6 +192,31 @@ in the 1f517 repository with the same lines so a later shared deploy keeps the r
   This works for the final user too. Failed acknowledgment is retried safely. An empty
   database without explicit cleanup records still does not authorize deleting sessions.
 
+## Event identity repair
+
+`scripts/reconcile-events.py` runs `python -m app.event_reconcile` in `moresocial-web-1` over
+operator SSH (`--local` runs it against `DATABASE_URL`). Every command is a **rolled-back dry run**
+unless `--apply` is given; changes go through `app.event_identity` (the same service as the web
+UI), never hand-written SQL. Output is JSON with IDs, counts, times and digests, never source text.
+
+```bash
+R="python3 scripts/reconcile-events.py"
+$R report                                            # mode, decisions, pair scans, resolver jobs
+$R list --email you@example.com --date 2026-09-27     # originals, representatives, source counts
+$R same --email you@example.com --events A,B,C        # dry run: before/after groups and source union
+$R same --email you@example.com --events A,B,C --apply
+$R separate --email you@example.com --events A,B --apply
+$R split --email you@example.com --parts "A|B,C" --apply
+$R undo --email you@example.com --decision D --apply
+$R candidates --email you@example.com                # resolver candidates and signals, no model call
+$R resolve --email you@example.com [--events A] --apply   # queue a (targeted) resolver run
+$R mode --value observe|apply|off --apply
+$R withdraw-automatic --email you@example.com [--events A,B] [--apply]   # rollback of automatic groups
+```
+
+Release with mode `observe`; review the Possible duplicates and `report` counts on a bounded sample
+before `mode --value apply`. Mode `off` stops new automatic decisions but keeps existing groups.
+
 ## Diagnostics
 
 Every service writes one sanitized JSON event per line (`app/diagnostics.py`; the connector and
@@ -269,6 +294,10 @@ that has newer user writes.
   forward fix over reverting to pre-review code, which contains the documented defects.
 - Migration `0003` (AI keys, admin settings) is additive: the previous release runs on it
   unchanged and simply ignores stored keys and admin settings.
+- Migration `0011` (event identity) is additive. Pre-identity images ignore group pointers and show
+  duplicate event cards; their `/ready` reports a migration mismatch although pages are served.
+  Prefer `reconcile-events.py mode --value off` / `withdraw-automatic` and a forward fix. Keep the
+  new tables; never drop them or delete evidence as an emergency rollback.
 - Application: `sudo /srv/moresocial/src/deploy/rollback.sh <previous-sha>` switches images and
   source back, keeping all data (first-release migrations are additive).
 - If a future migration is not backward compatible, the previous release cannot run on the new

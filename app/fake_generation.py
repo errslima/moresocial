@@ -29,11 +29,31 @@ def words(text: str) -> set[str]:
 def respond(ctx: dict) -> dict:
     if ctx['purpose'] == 'events':
         return {'events': []}
+    if ctx['purpose'] == 'event_identity':
+        return event_identity(ctx)
     if ctx['purpose'] == 'suggestions':
         return suggestion_review(ctx)
     if ctx['purpose'] == 'suggestion_draft':
         return {'text': f"Hi {ctx['person']}, [your answer here]."}
     return {'extract': extract, 'answer': answer, 'draft': draft, 'rewrite': rewrite, 'rsvp': rsvp, 'group_observations': group_observations}[ctx['purpose']](ctx)
+
+
+def event_identity(ctx):
+    """Narrow synthetic verdicts: a shared payment/booking reference is the same outing;
+    unrelated named activities are different; anything else stays uncertain."""
+    for r in ctx['references']:
+        if r['type'] in ('payment', 'booking', 'reference') and r['a'] and r['b']:
+            return {'verdict': 'same', 'evidence_a': r['a'][:2], 'evidence_b': r['b'][:2],
+                    'supporting': ['shared_payment_link' if r['type'] == 'payment' else 'shared_booking_reference'],
+                    'conflicting': [], 'explanation': 'Both records share one booking reference.'}
+    first = lambda side: [m['label'] for m in ctx['messages'] if m['label'][0] == side][:1]  # noqa: E731
+    from .events import tokens
+    ta, tb = (tokens(side['title'] + ' ' + side['activity']) for side in (ctx['a'], ctx['b']))
+    if ta and tb and not ta & tb and first('A') and first('B'):
+        return {'verdict': 'different', 'evidence_a': first('A'), 'evidence_b': first('B'), 'supporting': [],
+                'conflicting': ['different_activity'], 'explanation': 'The activities differ.'}
+    return {'verdict': 'uncertain', 'evidence_a': first('A'), 'evidence_b': first('B'), 'supporting': [],
+            'conflicting': [], 'explanation': 'The evidence does not settle it.'}
 
 
 def suggestion_review(ctx):

@@ -598,3 +598,60 @@ def test_automatic_events_page(live, chromium, viewport):
     response = page.goto(live + '/gatherings')
     assert response.status == 200 and page.url.endswith('/events')
     context.close()
+
+
+@pytest.mark.parametrize('viewport', [{'width':1440,'height':900}, {'width':390,'height':844}], ids=['desktop','mobile'])
+def test_event_identity_review_group_split_undo(live, chromium, viewport, monkeypatch):
+    from app import db, events, event_resolver
+    from app.repo import Scoped
+    from conftest import workspace_of
+    from test_event_identity import NOW, outing
+    monkeypatch.setattr(events, 'now', lambda: NOW)
+    context = chromium.new_context(viewport=viewport)
+    page = context.new_page()
+    sign_in(page, live)
+    wid = workspace_of('alex@example.test')
+    with db.session() as s:
+        outing(Scoped(s, wid))
+    event_resolver.run(wid)  # observe mode: suggestions only
+    no_overflow = lambda: page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')  # noqa: E731
+    nav_to(page, 'Events')
+    review = page.get_by_role('region', name='Possible duplicates')
+    playwright.expect(review).to_be_visible()
+    assert no_overflow()
+    page.screenshot(path=f".dev/identity-review-{viewport['width']}.png", full_page=True)
+    pair = review.locator('article').filter(has_text='Sunday reservation with Lumen').filter(has_text='Lasergame')
+    playwright.expect(pair).to_contain_text('Both mention the same payment request')
+    pair.get_by_role('button', name='Same event').click()
+    playwright.expect(page.get_by_role('status')).to_contain_text('Grouped as one event')
+    playwright.expect(page.get_by_role('heading', name='Is this one event?')).to_be_visible()
+    assert page.locator('.event-records li').count() == 3
+    assert no_overflow()
+    page.screenshot(path=f".dev/identity-group-{viewport['width']}.png", full_page=True)
+    # Separate the reservation again, after seeing which messages move.
+    page.locator('.event-records li').filter(has_text='Sunday reservation with Lumen').get_by_role('link', name='Separate…').click()
+    playwright.expect(page.get_by_role('heading', name='Becomes its own event')).to_be_visible()
+    assert no_overflow()
+    page.get_by_role('button', name='Separate', exact=True).click()
+    playwright.expect(page.get_by_role('status')).to_contain_text('Separated')
+    assert page.locator('.event-records li').count() == 2
+    # Undo the keep-separate correction from the grouping history: the preview shows the result.
+    page.locator('summary', has_text='Grouping history').click()
+    page.get_by_role('link', name='Undo…').first.click()
+    playwright.expect(page.get_by_role('heading', name='Undo this correction?')).to_be_visible()
+    assert no_overflow()
+    page.get_by_role('button', name='Undo correction').click()
+    playwright.expect(page.get_by_role('status')).to_contain_text('Correction undone')
+    # Keep separate from the review list, then dismiss and restore a group.
+    nav_to(page, 'Events')
+    review = page.get_by_role('region', name='Possible duplicates')
+    if review.count():
+        review.locator('article').first.get_by_role('button', name='Keep separate').click()
+        playwright.expect(page.get_by_role('status')).to_contain_text('Kept as separate events')
+    page.get_by_role('link', name='Lasergame – 2 rounds', exact=True).click()
+    page.get_by_role('button', name='Dismiss event', exact=True).click()
+    page.get_by_role('link', name='Dismissed 1').click()
+    page.get_by_role('link', name='Lasergame – 2 rounds', exact=True).click()
+    page.get_by_role('button', name='Restore event').click()
+    playwright.expect(page.get_by_role('heading', name='Lasergame – 2 rounds')).to_be_visible()
+    context.close()

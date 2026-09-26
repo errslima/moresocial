@@ -4,19 +4,25 @@
 {% block content %}
 <a class="small" href="{{ url('/events') }}">← Events</a>
 <header class="events-hero">
-  <div class="event-badges"><span class="tag">{{ 'Earlier plan' if event.origin == 'legacy' else 'Detected from your sources' }}</span>{% if event.dismissed %}<span class="tag">Dismissed</span>{% endif %}{% if event.status == 'cancelled' %}<span class="tag">Cancelled</span>{% endif %}</div>
+  <div class="event-badges"><span class="tag">{{ 'Earlier plan' if event.origin == 'legacy' else 'Detected from your sources' }}</span>{% if dismissed %}<span class="tag">Dismissed</span>{% endif %}{% if event.status == 'cancelled' %}<span class="tag">Cancelled</span>{% endif %}</div>
   <h1>{{ event.title }}</h1>
   <p class="events-intro">{{ roles.get(event.details.get('role'), 'Your event') }}</p>
 </header>
+{% if event.details.get('needs_clarification') %}<p class="event-warning" role="note"><strong>Needs checking:</strong> confirmations in your messages give different times. The most recent confirmation is shown.</p>{% endif %}
 <div class="event-facts">
   <div><span class="eyebrow">WHEN</span><p>{% if event.starts_at %}{{ event.starts_at.astimezone(tz).strftime('%A %d %B %Y') }}<br>{{ 'Time to be confirmed / all day' if event.details.get('all_day') else event.starts_at.astimezone(tz).strftime('%H:%M') }}{% if event.ends_at and not event.details.get('all_day') %} – {{ event.ends_at.astimezone(tz).strftime('%H:%M') }}{% endif %}{% else %}Date not recorded{% endif %}</p></div>
   <div><span class="eyebrow">WHERE</span><p>{{ event.details.get('place') or 'Place to be confirmed' }}</p></div>
 </div>
-{% if event.details.get('field_source') %}<p class="small muted">Details from <a href="{{ url('/sources/' ~ event.details.get('field_source')) }}">supporting evidence</a> · {{ event.timezone }}</p>{% endif %}
+{% set prov = event.details.get('provenance') or {} %}
+{% set when_src = (prov.get('schedule') or [event.details.get('field_source')])|select('in', visible)|list %}
+{% if when_src %}<p class="small muted">Time and details from <a href="{{ url('/sources/' ~ when_src[0]) }}">this message</a>{% if prov.get('role') and prov.get('role')[0] in visible and prov.get('role')[0] != when_src[0] %} · your role from <a href="{{ url('/sources/' ~ prov.get('role')[0]) }}">this message</a>{% endif %} · {{ event.timezone }}</p>{% endif %}
+{% if earlier %}<section aria-labelledby="changes"><h2 id="changes">Earlier times mentioned</h2>
+<ul class="event-history">{% for h in earlier %}{% set s = h.sources|select('in', visible)|list %}<li><span>{{ h.when.astimezone(tz).strftime('%a %d %b') }}{% if not h.all_day %} · {{ h.when.astimezone(tz).strftime('%H:%M') }}{% endif %}</span><span class="small muted">{{ {'booking':'booking','ticket':'ticket','invitation':'invitation','reschedule':'change','calendar':'calendar'}.get(h.kind, 'proposal') }}</span>{% if s %}<a class="small" href="{{ url('/sources/' ~ s[0]) }}">Message</a>{% endif %}</li>{% endfor %}</ul>
+<p class="small muted">Proposals and changes before the current plan. They are kept for reference.</p></section>{% endif %}
 {% if event.details.get('summary') %}<section><h2>The plan so far</h2><p class="event-context">{{ event.details.get('summary') }}</p></section>{% endif %}
 <section aria-labelledby="participants"><h2 id="participants">Who’s joining</h2>
 {% if event.details.get('participants') %}<ul class="event-participants">{% for p in event.details.get('participants') %}{% set person = people.get(p.person) %}
-{% if person %}<li><a href="{{ url('/people/' ~ person.id) }}">{{ person.display_name }}</a><span class="event-rsvp rsvp-{{ p.status }}">{{ statuses[p.status] }}</span><a class="small" href="{{ url('/sources/' ~ p.evidence) }}">Evidence</a></li>{% endif %}
+{% if person %}<li><a href="{{ url('/people/' ~ person.id) }}">{{ person.display_name }}</a><span class="event-rsvp rsvp-{{ p.status }}">{{ statuses[p.status] }}</span>{% if p.evidence in visible %}<a class="small" href="{{ url('/sources/' ~ p.evidence) }}">Evidence</a>{% endif %}</li>{% endif %}
 {% endfor %}</ul>{% else %}<p class="muted">No explicit attendance replies recognized yet.</p>{% endif %}
 <p class="small muted">Only explicit replies set attendance. A group invitation does not mean everyone is joining.</p></section>
 <section aria-labelledby="context"><div class="event-heading"><h2 id="context">Messages & context</h2><span class="small muted">{{ evidence|length }} {{ 'source' if evidence|length == 1 else 'sources' }}</span></div>
@@ -27,6 +33,27 @@
 <p>{{ source.body[:500] }}{{ '…' if source.body|length > 500 else '' }}</p><a class="small" href="{{ url('/sources/' ~ source.id) }}">Open source →</a>
 </article>{% else %}<p class="muted">No imported evidence is available for this event.</p>{% endfor %}
 </section>
+{% if event.origin != 'legacy' %}
+<section class="event-identity" aria-labelledby="identity"><h2 id="identity">Is this one event?</h2>
+{% if records|length > 1 %}<p class="small muted">Moresocial found this event in {{ records|length }} places and grouped them. If a part is a different plan, separate it.</p>
+<ul class="event-records">{% for r in records %}<li><div><strong>{{ r.fields.title if r.fields else 'Evidence removed' }}</strong>
+<span class="small muted">{% if r.fields and r.fields.starts_at %}{{ r.fields.starts_at.astimezone(tz).strftime('%a %d %b · %H:%M') }} · {% endif %}{{ r.sources|length }} {{ 'message' if r.sources|length == 1 else 'messages' }}{% if r.sources %} · {{ provider_name(r.sources[0].provider) }}{% if r.sources[0].conversation_title %}: {{ r.sources[0].conversation_title }}{% endif %}{% endif %}</span></div>
+<a class="small" href="{{ url('/events/' ~ event.id ~ '/split') }}?member={{ r.event.id }}">Separate…</a></li>{% endfor %}</ul>{% endif %}
+{% if choices %}<form class="event-merge" method="post" action="{{ url('/events/identity/same') }}">{{ csrf_field() }}
+<input type="hidden" name="a" value="{{ event.id }}"><input type="hidden" name="state" value="{{ state }}"><input type="hidden" name="back" value="detail">
+<label for="same-as">Same outing as another detected event</label>
+<select id="same-as" name="b" required><option value="">Choose an event…</option>{% for c in choices %}<option value="{{ c.id }}">{{ c.title }}{% if c.starts_at %} — {{ c.starts_at.astimezone(tz).strftime('%a %d %b %H:%M') }}{% endif %}</option>{% endfor %}</select>
+<button>Same event</button></form>
+<p class="small muted">This groups detected records and keeps all their messages. It does not create an event.</p>{% endif %}
+{% if history %}<details class="event-corrections"><summary>Grouping history ({{ history|length }})</summary><ul>
+{% for d in history %}{% set a = history_events.get(d.event_a) %}{% set b = history_events.get(d.event_b) %}<li>
+<span>{{ d.created_at.astimezone(tz).strftime('%d %b %H:%M') }}</span>
+<span>{{ 'You' if d.origin == 'user' else 'Automatically' }}: {{ {'same':'same event','different':'kept separate','uncertain':'possible duplicate'}[d.verdict] }}{% if d.origin == 'automatic' and d.verdict == 'same' and not d.applied %} (suggested){% endif %} — {{ a.title if a else '' }} / {{ b.title if b else '' }}</span>
+{% set why = reason_text(d.reasons) %}{% if why %}<span class="small muted">{{ why|join('; ') }}</span>{% endif %}
+{% if not d.active %}<span class="small muted">{{ {'undone':'undone','split':'replaced by a separation','replaced':'updated','source_changed':'withdrawn: messages changed','overruled_by_user':'overruled by you','operator_withdrawn':'withdrawn'}.get(d.superseded_reason, 'inactive') }}</span>{% elif d.origin == 'user' %}<a class="small" href="{{ url('/events/' ~ event.id ~ '/undo') }}?decision={{ d.id }}">Undo…</a>{% endif %}
+</li>{% endfor %}</ul></details>{% endif %}
+</section>
+{% endif %}
 <form class="event-dismiss" method="post" action="{{ url('/events/' ~ event.id ~ '/dismiss') }}">{{ csrf_field() }}
-{% if event.dismissed %}<button name="action" value="restore">Restore event</button>{% else %}<button name="action" value="dismiss">Dismiss event</button><span class="small muted">Future mentions will keep attaching, without returning it to Upcoming.</span>{% endif %}</form>
+{% if dismissed %}<button name="action" value="restore">Restore event</button>{% else %}<button name="action" value="dismiss">Dismiss event</button><span class="small muted">Future mentions will keep attaching, without returning it to Upcoming.</span>{% endif %}</form>
 {% endblock %}

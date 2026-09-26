@@ -48,6 +48,11 @@ NOTICES = {
     'ai-key-saved': 'Your API key works and is saved. The assistant now uses it.',
     'ai-key-removed': 'Your API key was removed from Moresocial. Revoke it in the provider console if you no longer need it.',
     'admin-saved': 'Global AI settings saved. The worker picks them up within a minute.',
+    'events-grouped': 'Grouped as one event. All messages from both are kept together.',
+    'events-separate': 'Kept as separate events. They will not be grouped automatically.',
+    'events-separated': 'Separated. Each part keeps its own messages and will not be regrouped automatically.',
+    'events-undone': 'Correction undone. The detected records are separate again.',
+    'events-undone-connected': 'Correction undone. Another correction still keeps these records together.',
 }
 
 

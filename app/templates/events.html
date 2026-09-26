@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% from 'icons.html' import icon %}
+{% from 'macros.html' import csrf_field with context %}
 {% block title %}Events{% endblock %}
 {% block content %}
 <header class="events-hero">
@@ -13,6 +14,15 @@
 {% for value, label in [('upcoming','Upcoming'),('past','Past'),('dismissed','Dismissed')] %}
 <a href="{{ url('/events') }}?view={{ value }}" {% if view == value %}aria-current="page"{% endif %}>{{ label }} <span>{{ counts[value] }}</span></a>
 {% endfor %}</nav>
+{% if review %}<section class="event-review" aria-labelledby="review-heading"><h2 id="review-heading">Possible duplicates</h2>
+<p class="small muted">These look like they could be one outing, but the messages don’t settle it. Nothing is merged until you choose.</p>
+{% for r in review %}<article class="event-review-pair">
+<div class="event-review-cards">{% for e in (r.a, r.b) %}<a class="event-review-card" href="{{ url('/events/' ~ e.id) }}"><strong>{{ e.title }}</strong>
+<span class="small muted">{% if e.starts_at %}{{ e.starts_at.astimezone(tz).strftime('%a %d %b') }} · {{ 'time to be confirmed' if e.details.get('all_day') else e.starts_at.astimezone(tz).strftime('%H:%M') }}{% endif %}{% if e.details.get('place') %} · {{ e.details.get('place') }}{% endif %}</span>
+<span class="small muted">{{ e.details.get('source_count') or 0 }} {{ 'message' if e.details.get('source_count') == 1 else 'messages' }}</span></a>{% endfor %}</div>
+<p class="small">{{ r.reasons|join(' · ') }}</p>
+<div class="event-review-actions">{% for action, label in [('same', 'Same event'), ('separate', 'Keep separate')] %}<form method="post" action="{{ url('/events/identity/' ~ action) }}">{{ csrf_field() }}<input type="hidden" name="a" value="{{ r.a.id }}"><input type="hidden" name="b" value="{{ r.b.id }}"><input type="hidden" name="state" value="{{ r.state }}"><button{% if action == 'same' %} class="primary"{% endif %}>{{ label }}</button></form>{% endfor %}</div>
+</article>{% endfor %}</section>{% endif %}
 {% if pending %}<p class="small muted" role="status">Reviewing imported conversations. New events will appear as they are recognized.</p>{% endif %}
 {% if events %}
 <div class="event-grid">

@@ -300,8 +300,10 @@ def events_page(request: Request, view: str = 'upcoming', ctx: Ctx = Depends(req
         view = 'upcoming'
     from zoneinfo import ZoneInfo
     from .models import Job
+    from . import event_resolver
     pending = ctx.ws.s.scalar(ctx.ws.q(Job, func.count()).where(Job.kind == 'detect_events', Job.status.in_(['queued', 'running'])))
-    return render(request, 'events.html', ctx, events=automatic_events.cards(ctx.ws, view), view=view,
+    review = event_resolver.review_pairs(ctx.ws) if view == 'upcoming' else []
+    return render(request, 'events.html', ctx, events=automatic_events.cards(ctx.ws, view), view=view, review=review,
                   counts={v: len(automatic_events.cards(ctx.ws, v)) for v in ('upcoming', 'past', 'dismissed')},
                   pending=pending, tz=ZoneInfo('Europe/Amsterdam'), roles=automatic_events.ROLES)
 
@@ -310,23 +312,152 @@ def events_page(request: Request, view: str = 'upcoming', ctx: Ctx = Depends(req
 def gathering(request: Request, eid: str, ctx: Ctx = Depends(require_user)):
     from .models import EventMention
     from zoneinfo import ZoneInfo
+    from . import event_identity, event_resolver
     e = found(ctx.ws.get(Event, eid), 'That event')
-    mentions = ctx.ws.all(ctx.ws.q(EventMention).where(EventMention.event_id == e.id))
+    if e.canonical_event_id:
+        # Temporary: a later split must be able to give this identity its own page again.
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(config.get().url('/events/' + str(e.canonical_event_id)), status_code=307)
+    members = event_identity.members(ctx.ws, e.id)
+    mentions = ctx.ws.all(ctx.ws.q(EventMention).where(EventMention.event_id.in_([m.id for m in members])))
     ids = {uuid.UUID(sid) for m in mentions for sid in m.evidence}
     evidence = ctx.ws.all(ctx.ws.q(Source).where(Source.id.in_(ids), Source.included.is_(True), Source.deleted_at.is_(None))
                           .order_by(Source.occurred_at, Source.id)) if ids else []
     people_ = {str(p.id): p for p in ctx.ws.all(ctx.ws.q(Person))}
     source_names = {i.value: people_[str(i.person_id)].display_name for i in ctx.ws.all(ctx.ws.q(PersonIdentifier))
                     if str(i.person_id) in people_}
+    visible = {str(x.id): x for x in evidence}
+    records = []
+    for m in members:
+        own = automatic_events.own_projection(ctx.ws, m)
+        sids = [x for x in event_identity.member_sources(ctx.ws, m.id) if x in visible]
+        records.append({'event': m, 'fields': own[0] if own else None, 'sources': [visible[x] for x in sids]})
+    names = {}
+    for d in event_identity.history(ctx.ws, e.id):
+        for x in (d.event_a, d.event_b):
+            if x not in names:
+                other = ctx.ws.get(Event, x)
+                names[x] = other
+    choices = [c for c in automatic_events.cards(ctx.ws) + automatic_events.cards(ctx.ws, 'past')
+               + automatic_events.cards(ctx.ws, 'dismissed') if c.id != e.id and c.origin != 'legacy'][:100]
     return render(request, 'event.html', ctx, event=e, evidence=evidence, people=people_,
-                  tz=ZoneInfo(e.timezone), roles=automatic_events.ROLES, statuses=automatic_events.LABELS, source_names=source_names)
+                  tz=ZoneInfo(e.timezone), roles=automatic_events.ROLES, statuses=automatic_events.LABELS, source_names=source_names,
+                  records=records, history=event_identity.history(ctx.ws, e.id), history_events=names,
+                  state=event_identity.state_token(ctx.ws, e.id), dismissed=automatic_events.group_dismissed(ctx.ws, e),
+                  choices=choices, visible=visible, reason_text=event_resolver.reason_text,
+                  earlier=[dict(h, when=automatic_events.dt(h['starts_at'])) for h in e.details.get('history', [])
+                           if automatic_events.dt(h.get('starts_at'))])
 
 
 @router.post('/events/{eid}/dismiss')
 def dismiss_event(eid: str, action: str = Form('dismiss'), ctx: Ctx = Depends(require_mutation)):
+    from . import event_identity
+    e = event_identity.representative(ctx.ws, found(ctx.ws.get(Event, eid), 'That event'))
+    automatic_events.set_dismissed(ctx.ws, e, action != 'restore')
+    return redirect('/events' if action != 'restore' else '/events/' + str(e.id))
+
+
+def _identity_errors(fn):
+    from . import event_identity
+    try:
+        return fn()
+    except event_identity.Stale as exc:
+        raise Problem(409, str(exc))
+    except event_identity.Conflict as exc:
+        raise Problem(409, str(exc))
+    except LookupError:
+        raise Problem(404, 'That event was not found.')
+    except ValueError as exc:
+        raise Problem(400, str(exc))
+
+
+@router.post('/events/identity/same')
+def events_same(a: str = Form(...), b: str = Form(...), state: str = Form(''), back: str = Form(''),
+                ctx: Ctx = Depends(require_mutation)):
+    """Same event: a correction of detected identities, never manual event creation."""
+    from . import event_identity
+    ea, eb = found(ctx.ws.get(Event, a), 'That event'), found(ctx.ws.get(Event, b), 'That event')
+    ra = event_identity.representative(ctx.ws, ea)
+    rb = event_identity.representative(ctx.ws, eb)
+    def run():
+        if back == 'detail':
+            return event_identity.same(ctx.ws, [ra.id, rb.id], state=state, rep_for_state=ra.id)
+        if state != event_identity.pair_token(ctx.ws, ra.id, rb.id):
+            raise event_identity.Stale('These events changed since the page was loaded. Review them again.')
+        return event_identity.same(ctx.ws, [ra.id, rb.id])
+    result = _identity_errors(run)
+    return redirect('/events/' + str(result.representative), notice='events-grouped')
+
+
+@router.post('/events/identity/separate')
+def events_separate(a: str = Form(...), b: str = Form(...), state: str = Form(''), ctx: Ctx = Depends(require_mutation)):
+    from . import event_identity
+    found(ctx.ws.get(Event, a), 'That event'), found(ctx.ws.get(Event, b), 'That event')
+    _identity_errors(lambda: event_identity.separate(ctx.ws, a, b, state=state))
+    return redirect('/events', notice='events-separate')
+
+
+@router.get('/events/{eid}/split')
+def split_preview(request: Request, eid: str, member: str = '', ctx: Ctx = Depends(require_user)):
+    from zoneinfo import ZoneInfo
+    from . import event_identity
     e = found(ctx.ws.get(Event, eid), 'That event')
-    e.dismissed = action != 'restore'
-    return redirect('/events' if e.dismissed else '/events/' + eid)
+    if e.canonical_event_id:
+        raise Problem(404, 'That event was not found.')
+    members = event_identity.members(ctx.ws, e.id)
+    moving = found(next((m for m in members if str(m.id) == member), None), 'That record')
+    if len(members) < 2:
+        raise Problem(400, 'This event has a single detected record.')
+    visible = {str(x.id): x for x in ctx.ws.all(ctx.ws.q(Source).where(Source.included.is_(True), Source.deleted_at.is_(None),
+        Source.id.in_([uuid.UUID(x) for x in event_identity.source_union(ctx.ws, e.id, visible_only=False)])))}
+    def part(ms):
+        ids = sorted({x for m in ms for x in event_identity.member_sources(ctx.ws, m.id) if x in visible},
+                     key=lambda x: (visible[x].occurred_at, x))
+        return {'records': ms, 'sources': [visible[x] for x in ids]}
+    parts = [part([moving]), part([m for m in members if m.id != moving.id])]
+    return render(request, 'event_split.html', ctx, event=e, moving=moving, parts=parts, tz=ZoneInfo(e.timezone),
+                  state=event_identity.state_token(ctx.ws, e.id))
+
+
+@router.post('/events/{eid}/split')
+def split_event(eid: str, member: str = Form(...), state: str = Form(''), ctx: Ctx = Depends(require_mutation)):
+    from . import event_identity
+    e = found(ctx.ws.get(Event, eid), 'That event')
+    members = [m.id for m in event_identity.members(ctx.ws, e.id)]
+    moving = [m for m in members if str(m) == member]
+    if not moving or e.canonical_event_id:
+        raise Problem(404, 'That record was not found.')
+    _identity_errors(lambda: event_identity.split(ctx.ws, e.id, [moving, [m for m in members if m not in moving]], state=state))
+    return redirect('/events/' + str(event_identity.representative(ctx.ws, e).id), notice='events-separated')
+
+
+@router.get('/events/{eid}/undo')
+def undo_preview(request: Request, eid: str, decision: str = '', ctx: Ctx = Depends(require_user)):
+    """Undoing one correction may leave another path connecting the group: show the result."""
+    from zoneinfo import ZoneInfo
+    from .models import EventIdentityDecision
+    from . import event_identity
+    e = found(ctx.ws.get(Event, eid), 'That event')
+    d = ctx.ws.get(EventIdentityDecision, decision)
+    if e.canonical_event_id or d is None or d.origin != 'user' or not d.active:
+        raise Problem(404, 'That correction is no longer active.')
+    plan = event_identity.preview(ctx.ws, undo_ids=[d.id])
+    groups = {}
+    for m in event_identity.members(ctx.ws, e.id):
+        groups.setdefault(plan.rep[m.id], []).append(m)
+    return render(request, 'event_undo.html', ctx, event=e, decision=d, a=ctx.ws.get(Event, d.event_a),
+                  b=ctx.ws.get(Event, d.event_b), groups=list(groups.values()), tz=ZoneInfo(e.timezone),
+                  state=event_identity.state_token(ctx.ws, e.id))
+
+
+@router.post('/events/{eid}/undo')
+def undo_correction(eid: str, decision: str = Form(...), state: str = Form(''), confirm: str = Form(''),
+                    ctx: Ctx = Depends(require_mutation)):
+    from . import event_identity
+    e = found(ctx.ws.get(Event, eid), 'That event')
+    result = _identity_errors(lambda: event_identity.undo(ctx.ws, decision, state=state, rep_for_state=e.id))
+    target = event_identity.representative(ctx.ws, e)
+    return redirect('/events/' + str(target.id), notice='events-undone-connected' if result.connected else 'events-undone')
 
 
 # ---------------- about me ----------------

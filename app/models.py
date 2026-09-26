@@ -7,7 +7,7 @@ from datetime import datetime, date
 import uuid
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import (Boolean, Computed, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, Numeric,
+from sqlalchemy import (Boolean, CheckConstraint, Computed, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, Numeric,
                         BigInteger, String, Text, UniqueConstraint, func, text)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -415,7 +415,11 @@ class SelfProfile(Base):
 
 class Event(Base):
     __tablename__ = 'events'
-    __table_args__ = (UniqueConstraint('workspace_id', 'id'),)
+    __table_args__ = (UniqueConstraint('workspace_id', 'id'),
+                      ForeignKeyConstraint(['workspace_id', 'canonical_event_id'], ['events.workspace_id', 'events.id'],
+                                           name='fk_events_canonical'),
+                      Index('ix_events_canonical', 'workspace_id', 'canonical_event_id'),
+                      CheckConstraint('canonical_event_id IS NULL OR canonical_event_id <> id', name='ck_events_canonical_not_self'))
     id: Mapped[uuid.UUID] = pk()
     workspace_id: Mapped[uuid.UUID] = ws_fk()
     title: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -430,6 +434,8 @@ class Event(Base):
     details: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     dismissed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     locked_fields: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    # Materialized group membership (see app/event_identity.py): NULL = represents its group.
+    canonical_event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
 
 class EventScan(Base):
@@ -450,6 +456,56 @@ class EventMention(Base):
     scan_key: Mapped[str] = mapped_column(String(64), nullable=False)
     evidence: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     data: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class EventIdentityDecision(Base):
+    """Audit history of same/different/uncertain verdicts between two original events.
+    Stores IDs, hashes and reason codes only, never copied message text or URLs."""
+    __tablename__ = 'event_identity_decisions'
+    __table_args__ = (CheckConstraint('event_a < event_b', name='ck_event_identity_pair_order'),
+                      CheckConstraint("verdict IN ('same', 'different', 'uncertain')", name='ck_event_identity_verdict'),
+                      CheckConstraint("origin IN ('user', 'automatic')", name='ck_event_identity_origin'),
+                      owned('events', 'event_a', ondelete='CASCADE'), owned('events', 'event_b', ondelete='CASCADE'),
+                      Index('ix_event_identity_a', 'workspace_id', 'event_a'),
+                      Index('ix_event_identity_b', 'workspace_id', 'event_b'),
+                      Index('uq_event_identity_current', 'workspace_id', 'event_a', 'event_b', 'origin',
+                            unique=True, postgresql_where=text('active')))
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    event_a: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    event_b: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    verdict: Mapped[str] = mapped_column(String(12), nullable=False)  # same | different | uncertain
+    origin: Mapped[str] = mapped_column(String(12), nullable=False)  # user | automatic
+    via: Mapped[str] = mapped_column(String(12), default='web', server_default='web', nullable=False)  # web|operator|resolver|lexical
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text('true'), nullable=False)
+    # Whether a same verdict participates in grouping (false: observe-mode resolver verdicts).
+    applied: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text('true'), nullable=False)
+    operation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[datetime] = now_col()
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    superseded_reason: Mapped[str | None] = mapped_column(String(40))
+    resolver_version: Mapped[str] = mapped_column(String(40), default='', server_default='', nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), default='', server_default='', nullable=False)
+    citations: Mapped[list] = mapped_column(JSONB, default=list, server_default='[]', nullable=False)  # [[source_id, hash]]
+    reasons: Mapped[list] = mapped_column(JSONB, default=list, server_default='[]', nullable=False)  # reason codes
+
+
+class EventPairScan(Base):
+    """Latest resolver evaluation per pair: unchanged inputs never repeat a paid call."""
+    __tablename__ = 'event_pair_scans'
+    __table_args__ = (CheckConstraint('event_a < event_b', name='ck_event_pair_scans_order'),
+                      UniqueConstraint('workspace_id', 'event_a', 'event_b'),
+                      owned('events', 'event_a', ondelete='CASCADE'), owned('events', 'event_b', ondelete='CASCADE'))
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    event_a: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    event_b: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    resolver_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # evaluated | rejected | stale
+    verdict: Mapped[str | None] = mapped_column(String(12))
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default='0', nullable=False)
+    updated_at: Mapped[datetime] = now_col(onupdate=func.now())
 
 
 class EventCandidate(Base):

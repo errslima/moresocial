@@ -49,7 +49,10 @@ def test_cross_channel_merge_booking_precedence_and_dismissal(browser):
         booking=item(b,kind='booking',starts_at=(events.dt(data['starts_at'])+timedelta(minutes=45)).isoformat(),
                      summary='Confirmed booking at 19:45.')
         events.persist(ws,'email',[b],[booking])
-        assert len(ws.all(ws.q(Event))) == 1
+        # Two original records, one reversible group represented by the first identity.
+        assert len(ws.all(ws.q(Event))) == 2
+        assert len(ws.all(ws.q(Event).where(Event.canonical_event_id.is_(None)))) == 1
+        assert e.canonical_event_id is None and events.group_dismissed(ws, e)
         assert e.dismissed and e.starts_at == events.dt(booking['starts_at'])
         assert e.details['source_count'] == 2
         assert e.details['providers'] == ['gmail','whatsapp']

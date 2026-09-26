@@ -114,6 +114,9 @@ FIELDS = {
     'updated': _int, 'unchanged': _int, 'skipped': _int, 'messages': _int, 'contacts': _int,
     'vector_results': _int, 'keyword_results': _int, 'results': _int, 'covered': _int, 'total': _int,
     'citations': _int, 'enqueued': _int,
+    # event identity resolution
+    'mode': _token, 'evaluated': _int, 'settled': _int, 'same': _int, 'different': _int, 'uncertain': _int,
+    'rejected': _int, 'invalid': _int, 'stale': _int, 'grouped': _int, 'continued': _int, 'cached_pairs': _int,
     # host / storage
     'bytes': _int, 'files': _int, 'deleted_files': _int, 'free_bytes': _int, 'dropped': _int,
     'suppressed': _int, 'exit_code': _int, 'window_s': _int, 'threshold': _int,
