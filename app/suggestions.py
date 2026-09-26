@@ -41,6 +41,8 @@ anchor. Both anchor and evidence MUST use exact message label strings such as "M
 Evidence is an array of labels, NEVER quotations, explanations, source UUIDs or combined label/text.
 Include the anchor label in evidence. Due dates must be explicit in the cited messages,
 interpreted using message timestamps and the supplied timezone; otherwise null.
+due_at must be null or a complete RFC 3339 date-time including its timezone offset,
+such as "2026-09-26T18:00:00+02:00". Never return a date-only or timezone-free string.
 Resolve an existing OPEN item only with cited evidence that it was answered, fulfilled, cancelled
 or is no longer applicable. An unrelated outgoing message does not resolve a commitment. Omission
 is NOT resolution. Never resolve an item just because history is incomplete. Return at most 8
@@ -68,6 +70,7 @@ def review_schema(ctx):
     item['anchor'] = deepcopy(label)
     # Replace these nodes: STR is shared by other fields in the base schema.
     item['evidence'] = {'type': 'array', 'minItems': 1, 'maxItems': 12, 'items': deepcopy(label)}
+    item['due_at'] = {'anyOf': [{'type': 'string', 'format': 'date-time'}, {'type': 'null'}]}
     schema['properties']['resolved']['items']['properties']['evidence'] = deepcopy(item['evidence'])
     return schema
 

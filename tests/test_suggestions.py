@@ -317,6 +317,7 @@ def test_model_contract_cites_only_snapshot_labels(browser, setup, monkeypatch):
         item = properties['items']['items']['properties']
         assert item['anchor']['enum'] == labels
         assert item['evidence']['items']['enum'] == labels
+        assert item['due_at'] == {'anyOf': [{'type': 'string', 'format': 'date-time'}, {'type': 'null'}]}
         assert properties['resolved']['items']['properties']['evidence']['items']['enum'] == labels
         assert 'enum' not in item['title'] and 'enum' not in item['reason']
         return original(*args, **kw)
@@ -333,6 +334,18 @@ def test_quoted_evidence_still_rejected(browser, setup):
     data = copy.deepcopy(suggestion_review(ctx))
     data['items'][0]['evidence'] = [ctx['messages'][0]['text']]
     with pytest.raises(ai.InvalidOutput, match='suggestions_evidence'):
+        suggestions.validate(data, ctx)
+
+
+@pytest.mark.parametrize('due', ['2026-09-26', '2026-09-26T18:00:00', 'null'])
+def test_incomplete_model_due_dates_still_rejected(browser, setup, due):
+    wid, src, row = setup
+    with db.session() as s:
+        ctx = suggestions.snapshot(Scoped(s, wid), s.get(SuggestionReview, row.review_id))[0]
+    from app.fake_generation import suggestion_review
+    data = copy.deepcopy(suggestion_review(ctx))
+    data['items'][0]['due_at'] = due
+    with pytest.raises(ai.InvalidOutput, match='suggestions_date'):
         suggestions.validate(data, ctx)
 
 

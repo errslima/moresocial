@@ -27,7 +27,9 @@ release. Existing gathering workflows are unchanged.
   JSON, identity, direction, dates and citations are validated before publication.
   The generation schema restricts anchors and evidence to this snapshot's message
   labels. Internal source IDs/versions stay out of the model prompt; quoted text is
-  not accepted as a citation. Failure notices count conversations whose latest review
+  not accepted as a citation. Optional due dates must be full RFC 3339 timestamps with
+  a timezone offset, enforced in the model schema and server validation.
+  Failure notices count conversations whose latest review
   is still failed, rather than historical attempts that have since been retried.
 - Review input carries a conversation revision and fingerprint. Provider calls happen
   outside database transactions; publication rechecks both and the worker lease. A newer
