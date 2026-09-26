@@ -333,6 +333,13 @@ def register_contacts(ws: Scoped, contacts: list[dict], self_ids: set[str]) -> N
             if value not in owners and not ws.first(ws.q(PersonIdentifier).where(PersonIdentifier.kind == 'whatsapp',
                                                                                    PersonIdentifier.value == value)):
                 ws.add(PersonIdentifier(id=uuid.uuid4(), person_id=person.id, kind='whatsapp', value=value, label=label))
-        if label and person.name_source == 'provider' and (person.display_name in ids or '@' in person.display_name):
+        # Earlier chat titles could be a bare number instead of the full JID.
+        # A saved address-book name also upgrades the profile label we imported.
+        previous_labels = {i.label for i in ws.all(ws.q(PersonIdentifier).where(
+            PersonIdentifier.person_id == person.id, PersonIdentifier.kind == 'whatsapp')) if i.label}
+        placeholders = set(ids) | {x.split('@')[0] for x in ids}
+        if label and person.name_source == 'provider' and (
+                person.display_name in placeholders or '@' in person.display_name
+                or (c.get('saved_name') and person.display_name in previous_labels)):
             person.display_name = label
         ws.s.flush()

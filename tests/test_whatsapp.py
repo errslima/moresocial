@@ -341,3 +341,50 @@ def test_provisioner_never_deletes_when_api_fails_or_listing_is_suspicious(tmp_p
     assert (tmp_path / A).exists()
     p.reconcile()
     assert not (tmp_path / A).exists()
+
+
+@pytest.mark.parametrize('old_name', ['15550001111@c.us', '15550001111', '~'])
+def test_contact_only_sync_repairs_existing_names_without_reimport(browser, old_name):
+    from app.repo import Scoped
+    browser.login('alex')
+    wid = workspace_of('alex@example.test')
+    peer = '15550001111@c.us'
+    body = packet(chat=peer)
+    body['chat']['name'] = old_name
+    body['messages'][0]['sender'] = peer
+    whatsapp.ingest(wid, body, None)
+    update = {'chat': body['chat'], 'messages': [], 'contacts': [
+        {'id': peer, 'aliases': [peer, '123@lid'], 'saved_name': 'Saved Friend', 'profile_name': '~'}]}
+    whatsapp.ingest(wid, update, None)
+    whatsapp.ingest(wid, update, None)
+    with db.session() as s:
+        ws = Scoped(s, wid)
+        ident = ws.first(ws.q(PersonIdentifier).where(PersonIdentifier.value == peer))
+        person = ws.get(Person, ident.person_id)
+        assert person.display_name == 'Saved Friend'
+        assert len(ws.all(ws.q(PersonIdentifier).where(PersonIdentifier.person_id == person.id))) == 2
+        assert len(ws.all(ws.q(Source).where(Source.provider == 'whatsapp'))) == 1
+        person.display_name, person.name_source = 'My chosen name', 'user'
+    whatsapp.ingest(wid, update, None)
+    with db.session() as s:
+        assert s.get(Person, person.id).display_name == 'My chosen name'
+    assert 'My chosen name' in browser.get('/people').text
+
+
+def test_people_shows_phone_numbers_and_emails_but_no_whatsapp_ids(browser):
+    import uuid
+    from app.repo import Scoped
+    browser.login('alex')
+    with db.session() as s:
+        ws = Scoped(s, workspace_of('alex@example.test'))
+        person = ws.add(Person(id=uuid.uuid4(), display_name='Saved Friend', name_source='provider'))
+        for kind, value in [('whatsapp', '123@lid'), ('whatsapp', '15550001111@c.us'),
+                            ('whatsapp', '15550001111@s.whatsapp.net'), ('email', 'friend@example.test')]:
+            ws.add(PersonIdentifier(id=uuid.uuid4(), person_id=person.id, kind=kind, value=value))
+        other = ws.add(Person(id=uuid.uuid4(), display_name='LID only friend', name_source='provider'))
+        ws.add(PersonIdentifier(id=uuid.uuid4(), person_id=other.id, kind='whatsapp', value='999@lid'))
+    html = browser.get('/people').text
+    assert 'Saved Friend' in html and 'LID only friend' in html
+    assert html.count('+15550001111') == 1
+    assert 'friend@example.test' in html
+    assert '@lid' not in html and '@c.us' not in html and '@s.whatsapp.net' not in html

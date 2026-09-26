@@ -11,7 +11,7 @@
 <ul class="list">
   {% for p in people %}
   <li><a href="{{ url('/people/' ~ p.id) }}">{{ p.display_name }}</a>{% if p.pinned %} <span class="tag">pinned</span>{% endif %}
-    <span class="muted small">{% for i in idents.get(p.id, [])[:3] %}{{ i.value }}{% if not loop.last %}, {% endif %}{% endfor %}</span></li>
+    <span class="muted small">{% for i in idents.get(p.id, [])[:3] %}{{ i }}{% if not loop.last %}, {% endif %}{% endfor %}</span></li>
   {% endfor %}
 </ul>
 {% else %}

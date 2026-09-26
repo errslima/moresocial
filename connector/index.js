@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import wweb from 'whatsapp-web.js';
 import QRCode from 'qrcode';
-import {createContactResolver,contactRecord} from './contacts.js';
+import {createContactResolver,lookupContact,chatContactIds} from './contacts.js';
 import {normalizeRawMessage,normalizeWrapperMessage} from './normalize.js';
 import {LIMITS,selectChats,boundMessages} from './history.js';
 import {createQueue} from './queue.js';
@@ -33,12 +33,7 @@ const queue=createQueue(SESSION+'/pending.json',{post,onError:e=>{record('ingest
 
 const contactResolver=createContactResolver({lookup:async id=>{
   if(!client||status.state!=='ready')return null;
-  let contact=null;
-  try{contact=await client.getContactById(id);}catch{}
-  if(!contact)return null;
-  let mapping=null;
-  try{if(typeof client.getContactLidAndPhone==='function')mapping=await client.getContactLidAndPhone([id]);}catch{}
-  return contactRecord(contact,id,mapping);
+  return lookupContact(client,id);
 }});
 
 const me=()=>client?.info?.wid?._serialized||null;
@@ -62,7 +57,7 @@ async function event(m,revoked=false){
     const row=normalizeWrapperMessage(m,revoked,{mediaMarker:mediaMarker(m),selfId:me()});
     if(!row.id)row.id=canonical;
     if(!row.id||!Number.isFinite(row.ts))return;
-    const contacts=row.from_me?[]:await contactResolver.resolve([row.sender]);
+    const contacts=await contactResolver.resolve(chatContactIds(chat,[row]));
     queue.push({account:me(),chat,messages:boundMessages([row]),contacts});await queue.flush();
   }catch(e){record('message_event_failed',{},e);}
 }
@@ -102,7 +97,7 @@ async function sync(){
             hasMedia:!!(m.hasMedia||m.mediaData||m._data?.mediaData),mimetype:typeof m.mimetype==='string'?m.mimetype:null}));
         },c.id,me(),since);
         const messages=boundMessages(raw.map(m=>normalizeRawMessage(m,{sender:m.sender})));
-        const contacts=await contactResolver.resolve(messages.filter(m=>!m.from_me).map(m=>m.sender));
+        const contacts=await contactResolver.resolve(chatContactIds(c,messages));
         const {active,...chat}=c;
         queue.push({account:me(),chat,messages,contacts});await queue.flush();
         status.chats_synced++;

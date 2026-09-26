@@ -34,3 +34,37 @@ test('library mapping arrays resolve only the requested identity',()=>{
   assert.equal(row.phone_number,'15550001111');
   assert.deepEqual(row.aliases,['opaque@lid','15550001111@c.us']);
 });
+
+test('mapped address-book name wins over a LID profile name',async()=>{
+  const {lookupContact}=await import('./contacts.js');
+  const row=await lookupContact({
+    getContactById:async id=>id.endsWith('@lid')?{id,pushname:'~'}:{id,name:'Saved Friend'},
+    getContactLidAndPhone:async()=>[{lid:'123@lid',pn:'15550001111@c.us'}],
+  },'123@lid');
+  assert.equal(row.saved_name,'Saved Friend');
+  assert.deepEqual(row.aliases,['123@lid','15550001111@c.us']);
+});
+
+test('mapped lookup recovers from a failed original lookup; unrelated mappings never join',async()=>{
+  const {lookupContact}=await import('./contacts.js');
+  const client={getContactById:async id=>{if(id.endsWith('@lid'))throw Error();return {id,name:'Friend'};},
+    getContactLidAndPhone:async()=>[{lid:'123@lid',pn:'15550001111@c.us'}]};
+  assert.equal((await lookupContact(client,'123@lid')).saved_name,'Friend');
+  assert.equal(await lookupContact(client,'999@lid'),null);
+});
+
+test('unnamed successful lookups retry after the shorter TTL',async()=>{
+  let now=0,calls=0;
+  const resolver=createContactResolver({now:()=>now,lookup:async id=>({id,saved_name:++calls>1?'Friend':null})});
+  await resolver.resolve(['123@lid']);
+  now=NEGATIVE_TTL+1;
+  assert.equal((await resolver.resolve(['123@lid']))[0].saved_name,'Friend');
+});
+
+test('direct peers refresh without incoming messages, group IDs never become people',async()=>{
+  const {chatContactIds}=await import('./contacts.js');
+  const direct={id:'15550001111@c.us',is_group:false};
+  assert.deepEqual(chatContactIds(direct,[]),[direct.id]);
+  assert.deepEqual(chatContactIds(direct,[{from_me:true,sender:'self@c.us'}]),[direct.id]);
+  assert.deepEqual(chatContactIds({id:'group@g.us'},[{sender:'123@lid',from_me:false}]),['123@lid']);
+});

@@ -105,7 +105,15 @@ def people(request: Request, q: str = '', ctx: Ctx = Depends(require_user)):
     rows = ws.all(stmt.order_by(Person.pinned.desc(), Person.display_name).limit(200))
     idents = {}
     for i in ws.all(ws.q(PersonIdentifier).where(PersonIdentifier.person_id.in_([p.id for p in rows]))):
-        idents.setdefault(i.person_id, []).append(i)
+        label = i.value
+        if i.kind == 'whatsapp':
+            number, _, domain = i.value.partition('@')
+            if domain not in ('c.us', 's.whatsapp.net') or not number.isascii() or not number.isdigit():
+                continue  # LIDs are opaque identities, never phone numbers.
+            label = '+' + number
+        labels = idents.setdefault(i.person_id, [])
+        if label not in labels:
+            labels.append(label)
     return render(request, 'people.html', ctx, people=rows, idents=idents, q=q)
 
 

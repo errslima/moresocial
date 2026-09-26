@@ -10,7 +10,7 @@ export function createContactResolver({lookup, now=()=>Date.now(), concurrency=5
     async function worker(){
       while(next<unique.length){
         const id=unique[next++], hit=cache.get(id), time=now();
-        if(hit&&time-hit.time<(hit.value?CONTACT_TTL:NEGATIVE_TTL)){if(hit.value)output.push(hit.value);continue;}
+        if(hit&&time-hit.time<(hit.value?.saved_name||hit.value?.profile_name?CONTACT_TTL:NEGATIVE_TTL)){if(hit.value)output.push(hit.value);continue;}
         try{
           const value=await lookup(id);
           if(value){
@@ -41,4 +41,27 @@ export function contactRecord(contact,requestedId,mapping=null){
   const text=x=>typeof x==='string'&&x.trim()?x.trim().slice(0,200):null;
   return {id,aliases:[...new Set(aliases)].slice(0,20),saved_name:text(contact.name),
     profile_name:text(contact.pushname)||text(contact.shortName),phone_identity:phoneIdentity,phone_number:phoneNumber};
+}
+
+// A LID contact may have only a profile name while the explicitly mapped phone
+// contact holds the address-book name. Keep lookup failures independent.
+export async function lookupContact(client,id){
+  const get=async value=>{try{return await client.getContactById(value);}catch{return null;}};
+  const contact=await get(id);
+  let mapping=null;
+  try{mapping=await client.getContactLidAndPhone([id]);}catch{}
+  const row=contactRecord(contact||{id},id,mapping);
+  for(const alias of row.aliases){
+    if(alias===id)continue;
+    const other=contactRecord(await get(alias),alias);
+    if(other){row.saved_name ||= other.saved_name;row.profile_name ||= other.profile_name;}
+  }
+  return contact||row.saved_name||row.profile_name||row.phone_identity?row:null;
+}
+
+export function chatContactIds(chat,messages){
+  // Refresh the peer even when all messages are outgoing or the history cursor
+  // yields no new messages. Group titles must never become participant names.
+  return [...new Set([...(chat.is_group||chat.id.endsWith('@g.us')?[]:[chat.id]),
+    ...messages.filter(m=>!m.from_me).map(m=>m.sender)].filter(Boolean))];
 }
