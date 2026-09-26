@@ -3,6 +3,7 @@
 {% block title %}Home{% endblock %}
 {% block content %}
 <h1>Hi {{ ctx.account.display_name or ctx.account.email }}</h1>
+<p><a href="{{ url('/suggestions') }}">Open Suggestions</a> for replies, promises and follow-ups from your WhatsApp conversations.</p>
 {% if conn and conn.state != 'active' %}
 <p class="warn">Google access needs attention. <a href="{{ url('/connections') }}">Open Connections</a> to reconnect.</p>
 {% endif %}

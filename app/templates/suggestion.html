@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field with context %}
+{% block title %}{{ row.title }}{% endblock %}
+{% block content %}
+<p><a href="{{ url('/suggestions') }}">← Suggestions</a></p>
+<div class="row"><span class="tag">{{ kinds[row.kind] }}</span><a href="{{ url('/people/' ~ person.id) }}">{{ person.display_name }}</a><span class="tag">{{ row.state }}</span></div>
+<h1>{{ row.title }}</h1><p>{{ row.reason }}</p>
+{% if error %}<p class="warn" role="alert">{{ error }}</p>{% endif %}
+{% if review.paused %}<p class="warn">Suggestions for this conversation are paused.</p>{% elif row.stale %}<p class="warn">The conversation changed. A fresh review is needed before drafting.</p>{% endif %}
+{% if row.due_at %}<p>Due {{ row.due_at|suggestion_time(timezone) }}</p>{% endif %}
+<h2>Why this appeared</h2>
+{% for src in evidence %}<blockquote class="excerpt">{{ src.body[:1500] }}{% if src.body|length > 1500 %}…{% endif %}</blockquote><p class="small"><a href="{{ url('/sources/' ~ src.id) }}">{{ 'You' if src.from_me else person.display_name }} · {{ src.occurred_at|suggestion_time(timezone) }} · WhatsApp</a></p>{% else %}<p class="muted">The original evidence is no longer available.</p>{% endfor %}
+{% if row.state in ['active','snoozed'] and not row.stale and not review.paused and evidence %}
+<h2>Your message</h2>
+{% if row.draft %}
+{% if row.draft_review_revision != review.revision %}<p class="warn">This draft predates the latest conversation update. Check the context, edit and save before copying.</p>{% endif %}
+<form method="post" action="{{ url('/suggestions/' ~ row.id ~ '/draft/save') }}">
+{{ csrf_field() }}<input type="hidden" name="revision" value="{{ row.draft_revision }}"><input type="hidden" name="review_revision" value="{{ review.revision }}">
+<label for="suggestion-draft">Edit your message</label><textarea id="suggestion-draft" name="text" rows="6" maxlength="4000" required>{{ row.draft }}</textarea>
+<div class="row"><button>Save edits</button>{% if row.draft_review_revision == review.revision %}<button type="button" data-copy="suggestion-draft">Copy message</button>{% endif %}</div>
+<p data-copy-status="suggestion-draft" role="status" class="small muted">Copying does not send anything or mark this suggestion done. Check any [placeholders] before sending it yourself.</p>
+</form>
+{% else %}<form method="post" action="{{ url('/suggestions/' ~ row.id ~ '/draft') }}" data-busy="Drafting…">{{ csrf_field() }}<button class="primary">Draft a reply</button></form>{% endif %}
+{% endif %}
+{% if row.state in ['active','snoozed','invalidated'] %}
+<h2>Handle this suggestion</h2><form class="row" method="post" action="{{ url('/suggestions/' ~ row.id ~ '/state') }}">{{ csrf_field() }}<button name="action" value="done">Done</button><button name="action" value="already_handled">Already handled</button><button name="action" value="no_reply_needed">No reply needed</button><button name="action" value="dismiss">Don't suggest this again</button></form>
+<form class="row" method="post" action="{{ url('/suggestions/' ~ row.id ~ '/state') }}">{{ csrf_field() }}<label for="days">Remind me in</label><select name="days" id="days"><option value="1">1 day</option><option value="3">3 days</option><option value="7">1 week</option></select><button name="action" value="snooze">Remind me later</button></form>
+{% endif %}
+<details class="card"><summary>Recent conversation context</summary><p class="small muted">Up to 30 of the messages used for review. Available history may be incomplete.</p>{% for message in messages %}<p class="small muted">{{ 'You' if message.from_me else person.display_name }} · {{ message.at }}</p><p class="excerpt">{{ message.text }}</p>{% if message.partial %}<p class="small muted">Some text or media content is unavailable.</p>{% endif %}<a class="small" href="{{ url('/sources/' ~ message.id) }}">Open source</a>{% endfor %}</details>
+{% endblock %}

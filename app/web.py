@@ -25,6 +25,10 @@ templates = Jinja2Templates(directory=str(HERE / 'templates'))
 # Fail loudly on a missing template variable (e.g. a macro imported without context).
 import jinja2 as _jinja2
 templates.env.undefined = _jinja2.StrictUndefined
+def suggestion_time(value, timezone_name):
+    from zoneinfo import ZoneInfo
+    return value.astimezone(ZoneInfo(timezone_name)).strftime('%d %b %Y, %H:%M') if value else ''
+templates.env.filters['suggestion_time'] = suggestion_time
 SESSION_COOKIE = 'moresocial_session'
 SAFE_METHODS = ('GET', 'HEAD', 'OPTIONS')
 
@@ -236,10 +240,11 @@ def create_app() -> FastAPI:
             security.emit('readiness_failed', level='error', check=failed)
         return JSONResponse({'status': 'ready' if ok else 'not_ready', 'checks': checks}, status_code=200 if ok else 503)
 
-    from . import admin, auth_routes, pages
+    from . import admin, auth_routes, pages, suggestion_pages
     app.include_router(auth_routes.router)
     app.include_router(pages.router)
     app.include_router(admin.router)
+    app.include_router(suggestion_pages.router)
     if settings.synthetic_providers:
         from . import dev_routes
         app.include_router(dev_routes.router)

@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field with context %}
+{% block title %}Suggestions{% endblock %}
+{% block content %}
+<h1>Suggestions</h1>
+<p class="muted">Who might you want to contact, and why now? Replies, promises and follow-ups from recent one-to-one WhatsApp chats.</p>
+{% if not ai_ready %}<p class="warn">Suggestions are waiting for AI to be configured. Your saved suggestions remain available.</p>{% endif %}
+{% if stale_sync %}<p class="warn">WhatsApp is not currently syncing or its status is stale. New replies may be missing. <a href="{{ url('/connections') }}">Check Connections</a>.</p>{% endif %}
+<p class="small muted">Based on available synced history, which may be incomplete. Reviews use the last 30 days, up to 80 recent messages plus open commitments. Times shown in {{ timezone }}.</p>
+<div class="row">
+<form method="post" action="{{ url('/suggestions/review') }}" data-busy="Queuing…">{{ csrf_field() }}<button>Review conversations</button></form>
+{% if pending %}<span class="muted" role="status">{{ pending }} review(s) queued or running. Refresh to see results.</span>{% endif %}
+{% if last_checked %}<span class="small muted">Last reviewed {{ last_checked|suggestion_time(timezone) }}</span>{% endif %}
+</div>
+{% if failures %}<p class="warn">{{ failures }} review(s) could not finish in the last day. You can retry with Review conversations; existing items may be out of date.</p>{% endif %}
+<nav aria-label="Suggestion views"><ul>
+{% for key, label in [('active','Needs attention'),('snoozed','Snoozed'),('history','History')] %}
+<li><a href="{{ url('/suggestions?tab=' ~ key) }}" {% if tab == key %}aria-current="page"{% endif %}>{{ label }}</a></li>
+{% endfor %}</ul></nav>
+{% for card in cards %}{% set s = card.row %}
+<article class="card suggestion-card">
+<div class="row"><span class="tag">{{ kinds[s.kind] }}</span><a href="{{ url('/people/' ~ s.person_id) }}">{{ card.person.display_name }}</a>{% if tab == 'history' %}<span class="tag">{{ s.state }}</span>{% endif %}</div>
+<h2><a href="{{ url('/suggestions/' ~ s.id) }}">{{ s.title }}</a></h2>
+<p>{{ s.reason }}</p>
+{% if s.due_at %}<p class="small">Due {{ s.due_at|suggestion_time(timezone) }}</p>{% endif %}
+{% if s.state == 'snoozed' %}<p class="small muted">Remind me {{ s.snoozed_until|suggestion_time(timezone) }}</p>{% endif %}
+{% if s.stale %}<p class="warn">Conversation changed. Waiting for a fresh review.</p>{% endif %}
+{% if card.evidence %}<details><summary>Why this appeared</summary>{% for src in card.evidence %}
+<blockquote class="excerpt">{{ src.body[:500] }}{% if src.body|length > 500 %}…{% endif %}</blockquote>
+<p class="small"><a href="{{ url('/sources/' ~ src.id) }}">{{ 'You' if src.from_me else card.person.display_name }} · {{ src.occurred_at|suggestion_time(timezone) }} · WhatsApp</a></p>
+{% endfor %}</details>{% endif %}
+<div class="row"><a href="{{ url('/suggestions/' ~ s.id) }}">View context{% if s.draft %} & draft{% endif %}</a>
+{% if s.state in ['active','snoozed'] %}
+{% if not s.stale and card.evidence and not s.draft %}<form method="post" action="{{ url('/suggestions/' ~ s.id ~ '/draft') }}" data-busy="Drafting…">{{ csrf_field() }}<button class="primary">Draft a reply</button></form>{% endif %}
+<form method="post" action="{{ url('/suggestions/' ~ s.id ~ '/state') }}">{{ csrf_field() }}<button name="action" value="done">Done</button><button name="action" value="dismiss">Dismiss</button></form>
+{% endif %}</div>
+{% if s.state in ['active','snoozed'] %}<form class="row" method="post" action="{{ url('/suggestions/' ~ s.id ~ '/state') }}">{{ csrf_field() }}
+<label for="snooze-{{ s.id }}">Remind me in</label><select id="snooze-{{ s.id }}" name="days"><option value="1">1 day</option><option value="3">3 days</option><option value="7">1 week</option></select><button name="action" value="snooze">Remind me later</button>
+</form>{% endif %}
+</article>
+{% else %}
+<div class="card"><h2>{{ 'No suggestions to show' if tab == 'active' else 'Nothing here yet' }}</h2>
+<p class="muted">{% if pending %}Your conversations are being reviewed.{% elif tab == 'active' %}There are no active recommendations in the reviewed history. You can check again after new messages arrive.{% else %}Snoozed and completed suggestions stay here for reference.{% endif %}</p></div>
+{% endfor %}
+<div class="row">{% if page > 1 %}<a href="{{ url('/suggestions?tab=' ~ tab ~ '&page=' ~ (page - 1)) }}">Previous</a>{% endif %}{% if more %}<a href="{{ url('/suggestions?tab=' ~ tab ~ '&page=' ~ (page + 1)) }}">More suggestions</a>{% endif %}</div>
+{% if chats %}<details class="card"><summary>Conversation preferences</summary><p class="muted">Pause suggestions for someone when you want to give them space. Paused chats are hidden and are not reviewed until you resume them.</p>
+{% for chat in chats %}<form class="row" method="post" action="{{ url('/suggestions/conversations/' ~ chat.review.id) }}">{{ csrf_field() }}<span>{{ chat.name }}</span><button name="action" value="{{ 'resume' if chat.review.paused else 'pause' }}">{{ 'Resume suggestions' if chat.review.paused else 'Pause suggestions' }}</button></form>{% endfor %}
+</details>{% endif %}
+{% endblock %}

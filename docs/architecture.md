@@ -16,6 +16,7 @@ revision, deployment evidence and outstanding checks, read
 | Gatherings | Invitees, candidate dates, conflicts with the user's calendar, manual drafts, RSVP tracking and optional next steps | `app/gatherings.py`, `app/pages.py` |
 | Admin | `ADMIN_EMAILS` only: encrypted OpenRouter key, pinned reasoning/embedding models, test/save, disable and rebuild status | `app/admin.py`, `app/operator_settings.py`, `app/templates/admin.html` |
 | AI assistance | Claim extraction, embeddings, hybrid retrieval, cited answers, invitation drafts, rewrites and RSVP suggestions | `app/memory.py`, `app/retrieval.py`, `app/ai.py`, `app/gatherings.py` |
+| Suggestions | Evidence-backed replies, promises and follow-ups from one-to-one WhatsApp; drafts, snooze, dismissal, resolution and per-chat pause | `app/suggestions.py`, `app/suggestion_pages.py`, [feature details](suggestions.md) |
 
 AI assistance is implemented but **disabled in the deployed configuration**
 (`AI_PROVIDER=none`); live provider behavior and quality remain unverified.

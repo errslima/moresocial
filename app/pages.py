@@ -160,12 +160,16 @@ def add_note(pid: str, body: str = Form(...), kind: str = Form('note'), ctx: Ctx
     if kind not in ('note', 'preference', 'shared_history') or not body.strip():
         raise Problem(400, 'Enter a note.')
     ws.add(RelationshipNote(id=uuid.uuid4(), person_id=p.id, kind=kind, body=body.strip()[:4000]))
+    from . import suggestions
+    suggestions.person_changed(ws, p.id)
     return redirect(f'/people/{p.id}')
 
 
 @router.post('/people/{pid}/notes/{nid}/delete')
 def delete_note(pid: str, nid: str, ctx: Ctx = Depends(require_mutation)):
     note = found(ctx.ws.get(RelationshipNote, nid), 'That note')
+    from . import suggestions
+    suggestions.person_changed(ctx.ws, note.person_id)
     ctx.s.delete(note)
     return redirect(f'/people/{note.person_id}')
 

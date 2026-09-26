@@ -251,3 +251,41 @@ def test_diary_flow(live, chromium, viewport):
     page.get_by_role('button', name='Delete entry').click()
     assert page.locator('article.card').count() == 0
     ctx.close()
+
+
+@pytest.mark.parametrize('viewport', [{'width': 1280, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])
+def test_suggestions_browser(live, chromium, viewport):
+    from conftest import workspace_of
+    from test_suggestions import add, review
+    from app import db
+    from app.models import Suggestion
+    ctx = chromium.new_context(viewport=viewport)
+    ctx.grant_permissions(['clipboard-read', 'clipboard-write'], origin=live.rsplit('/moresocial', 1)[0])
+    page = ctx.new_page()
+    page.goto(live + '/')
+    page.get_by_role('button', name='Continue with Google').click()
+    page.get_by_role('button', name='Allow').click()
+    page.wait_for_url(live + '/home')
+    wid = workspace_of('alex@example.test')
+    add(wid, 'Can you join dinner on Friday?')
+    row = review(wid)[0]
+    page.get_by_role('link', name='Suggestions', exact=True).click()
+    page.get_by_text('Why this appeared', exact=True).click()
+    assert page.get_by_text('Can you join dinner on Friday?', exact=True).is_visible()
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
+    page.screenshot(path=f'/tmp/moresocial-suggestions-{viewport["width"]}.png', full_page=True)
+    page.get_by_role('button', name='Draft a reply').click()
+    page.wait_for_url(live + f'/suggestions/{row.id}')
+    page.get_by_label('Edit your message').fill('Yes, Friday works!')
+    page.get_by_role('button', name='Save edits').click()
+    page.get_by_role('button', name='Copy message').click()
+    playwright.expect(page.locator('[data-copy-status]')).to_contain_text('Copied the text shown above')
+    assert page.evaluate('navigator.clipboard.readText()') == 'Yes, Friday works!'
+    with db.session() as s:
+        assert s.get(Suggestion, row.id).state == 'active'
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
+    page.screenshot(path=f'/tmp/moresocial-suggestion-draft-{viewport["width"]}.png', full_page=True)
+    page.get_by_role('button', name='No reply needed').click()
+    page.get_by_role('link', name='History', exact=True).click()
+    assert page.get_by_role('link', name='Reply about dinner').is_visible()
+    ctx.close()

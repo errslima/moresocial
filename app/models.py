@@ -213,6 +213,58 @@ class Source(Base):
     updated_at: Mapped[datetime] = now_col(onupdate=func.now())
 
 
+class SuggestionReview(Base):
+    __tablename__ = 'suggestion_reviews'
+    __table_args__ = (UniqueConstraint('workspace_id', 'id'),
+                     UniqueConstraint('workspace_id', 'conversation_id'))
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    conversation_id: Mapped[str] = mapped_column(String(400), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Suggestion(Base):
+    __tablename__ = 'suggestions'
+    __table_args__ = (UniqueConstraint('workspace_id', 'id'),
+                     UniqueConstraint('workspace_id', 'review_id', 'anchor_id', 'kind'),
+                     owned('suggestion_reviews', 'review_id', ondelete='CASCADE'),
+                     owned('sources', 'anchor_id', ondelete='CASCADE'),
+                     owned('people', 'person_id', ondelete='CASCADE'))
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    review_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    anchor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    person_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(String(20), default='active', nullable=False)
+    disposition: Mapped[str | None] = mapped_column(String(30))
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    snoozed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    draft: Mapped[str] = mapped_column(Text, default='', nullable=False)
+    draft_revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    draft_review_revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = now_col()
+    updated_at: Mapped[datetime] = now_col(onupdate=func.now())
+
+
+class SuggestionSource(Base):
+    __tablename__ = 'suggestion_sources'
+    __table_args__ = (owned('suggestions', 'suggestion_id', ondelete='CASCADE'),
+                     owned('sources', 'source_id', ondelete='CASCADE'),
+                     UniqueConstraint('workspace_id', 'suggestion_id', 'source_id'))
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    suggestion_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(200), nullable=False)
+
+
 class SourceParticipant(Base):
     __tablename__ = 'source_participants'
     __table_args__ = (owned('sources', 'source_id', ondelete='CASCADE'),

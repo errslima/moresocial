@@ -16,7 +16,7 @@ import uuid
 
 from sqlalchemy import and_, exists, func, select, text
 
-from app import accounts, ai, config, db, diagnostics, google_sync, jobs, memory, observation_groups, operator_settings, security
+from app import accounts, ai, config, db, diagnostics, google_sync, jobs, memory, observation_groups, operator_settings, security, suggestions
 from app.google import GoogleError
 from app.models import Chunk, Claim, Connection, Embedding, Job, SyncStream, Workspace, PIPELINE_VERSION
 
@@ -57,6 +57,8 @@ def handle(job: Job):
         return observation_groups.consolidate(wid, uuid.UUID(p['claim_id']), job.id, beat)
     elif job.kind == 'extract_chunk':
         return memory.extract_chunk(wid, uuid.UUID(p['chunk_id']), job.id)
+    elif job.kind == 'review_suggestions':
+        return suggestions.review_conversation(wid, uuid.UUID(p['review_id']), beat)
     else:
         raise ValueError('unknown job kind')
 
@@ -189,6 +191,7 @@ def schedule() -> int:
             key = f'sync:{stream.id}:{stream.next_run_at.isoformat()}'
             n += jobs.enqueue(s, stream.workspace_id, 'sync_' + stream.stream, key, {'stream_id': str(stream.id)},
                               max_attempts=3)
+        n += suggestions.schedule(s)
     return n
 
 
@@ -199,6 +202,7 @@ def reconcile_ai(batch: int = 200) -> int:
     generation_ready = ai.provider().can_generate()
     n = 0
     with db.session() as s:
+        suggestions.bootstrap(s, batch)
         legacy = s.execute(select(Chunk.workspace_id, Chunk.provider, Chunk.conversation_id).where(
             Chunk.pipeline_version != PIPELINE_VERSION).distinct().limit(batch)).all()
         for wid, provider, conversation in legacy:

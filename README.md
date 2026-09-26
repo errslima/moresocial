@@ -11,6 +11,7 @@ Interactive Google consent/sync and WhatsApp pairing remain unverified. AI featu
 disabled until provider keys are configured. See [implementation status](docs/implementation-status.md).
 
 - [Current architecture and feature map](docs/architecture.md)
+- [Suggestions: behavior and background reviews](docs/suggestions.md)
 - [Implementation status and pending live checks](docs/implementation-status.md)
 - [Operator setup, deployment and runbook](docs/operator-setup.md)
 - [Implementation execution plan](EXECUTION-PLAN.md)

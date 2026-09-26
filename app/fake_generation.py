@@ -27,7 +27,32 @@ def words(text: str) -> set[str]:
 
 
 def respond(ctx: dict) -> dict:
+    if ctx['purpose'] == 'suggestions':
+        return suggestion_review(ctx)
+    if ctx['purpose'] == 'suggestion_draft':
+        return {'text': f"Hi {ctx['person']}, [your answer here]."}
     return {'extract': extract, 'answer': answer, 'draft': draft, 'rewrite': rewrite, 'rsvp': rsvp, 'group_observations': group_observations}[ctx['purpose']](ctx)
+
+
+def suggestion_review(ctx):
+    """Intentionally narrow synthetic fixtures, not a production heuristic."""
+    items, resolved = [], []
+    for m in ctx['messages']:
+        kind = ('reply' if not m['from_me'] and m['text'].startswith('Can you join dinner') else
+                'promise' if m['from_me'] and m['text'].startswith("I'll send you the photos") else None)
+        if not kind:
+            continue
+        old = next((x for x in ctx['existing'] if x['anchor'] == m['label'] and x['kind'] == kind), None)
+        later = [x for x in ctx['messages'] if x['at'] > m['at'] and x['from_me'] and
+                 x['text'].startswith(('Yes, Friday works', 'Here are the photos'))]
+        if later:
+            if old and old['state'] in ('active', 'snoozed'):
+                resolved.append({'id': old['id'], 'evidence': [later[0]['label']]})
+            continue
+        items.append({'id': old['id'] if old else None, 'kind': kind, 'anchor': m['label'],
+            'title': 'Reply about dinner' if kind == 'reply' else 'Send the photos',
+            'reason': "I couldn't find this handled in the synced messages.", 'evidence': [m['label']], 'due_at': None})
+    return {'items': items[:8], 'resolved': resolved[:30]}
 
 
 def extract(ctx: dict) -> dict:

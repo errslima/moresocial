@@ -192,6 +192,9 @@ def schedule_rebuilds(ws: Scoped, result: IngestResult, token: str = '') -> None
     retried page is a no-op and a later change always gets its own job."""
     changes = token + '|' + '|'.join(f'{a}:{b}' for a, b in sorted(result.changes))
     for provider, conv in sorted(result.conversations, key=lambda x: (x[0], x[1] or '')):
+        if provider == 'whatsapp':
+            from . import suggestions
+            suggestions.changed(ws, conv)
         key = 'rebuild:' + hashlib.sha256(f'{provider}|{conv}|{changes}'.encode()).hexdigest()[:40]
         jobs.enqueue(ws.s, ws.wid, 'rebuild_conversation', key, {'provider': provider, 'conversation_id': conv})
 
@@ -203,6 +206,10 @@ def invalidate(ws: Scoped, source_ids: list[uuid.UUID], rebuild: bool = True) ->
         return
     chunk_ids = list(ws.s.scalars(ws.q(ChunkSource, ChunkSource.chunk_id).where(ChunkSource.source_id.in_(source_ids))))
     convs = set(ws.s.execute(ws.q(Source, Source.provider, Source.conversation_id).where(Source.id.in_(source_ids))).all())
+    from . import suggestions
+    for provider, conv in convs:
+        if provider == 'whatsapp':
+            suggestions.changed(ws, conv, erase=True)
     if chunk_ids:
         ws.delete(Chunk, Chunk.id.in_(chunk_ids))
     claim_ids = list(ws.s.scalars(ws.q(ClaimSource, ClaimSource.claim_id).where(ClaimSource.source_id.in_(source_ids))))
@@ -281,6 +288,8 @@ def link_people(ws: Scoped, keep: Person, other: Person) -> None:
     ws.update(Claim, Claim.person_id == other.id, person_id=keep.id)
     ws.update(RelationshipNote, RelationshipNote.person_id == other.id, person_id=keep.id)
     ws.update(Draft, Draft.person_id == other.id, person_id=keep.id)
+    from .models import Suggestion
+    ws.update(Suggestion, Suggestion.person_id == other.id, person_id=keep.id)
     kept_events = set(ws.s.scalars(ws.q(EventPerson, EventPerson.event_id).where(EventPerson.person_id == keep.id)))
     for ep in ws.all(ws.q(EventPerson).where(EventPerson.person_id == other.id)):
         if ep.event_id in kept_events:
@@ -308,6 +317,10 @@ def unlink_identifier(ws: Scoped, ident: PersonIdentifier) -> Person | None:
     authored = select(Source.id).where(Source.workspace_id == ws.wid, Source.author == ident.value)
     moved = select(ClaimSource.claim_id).where(ClaimSource.workspace_id == ws.wid, ClaimSource.source_id.in_(authored))
     ws.update(Claim, Claim.person_id == old_person, Claim.id.in_(moved), person_id=new.id)
+    if ident.kind == 'whatsapp':
+        from .models import Suggestion, SuggestionReview
+        reviews = ws.q(SuggestionReview, SuggestionReview.id).where(SuggestionReview.conversation_id == ident.value)
+        ws.update(Suggestion, Suggestion.review_id.in_(reviews), person_id=new.id)
     return new
 
 
