@@ -810,6 +810,7 @@ def test_operator_tool_dry_run_then_apply(ws_id, capsys):
         ws = Scoped(s, ws_id)
         assert rep(ws, ids['invite']) == rep(ws, ids['booking'])
         assert {d.via for d in ws.all(ws.q(EventIdentityDecision).where(EventIdentityDecision.origin == 'user'))} == {'operator'}
+    assert event_reconcile.main(['recompute', '--email', ME])['changed'] == []  # already current
     report = event_reconcile.main(['report', '--email', ME])['report']
     assert report['mode'] == 'observe' and report['multi_member_groups'] == 1
     cands = event_reconcile.main(['candidates', '--email', ME])
@@ -860,3 +861,19 @@ def test_pairs_with_separate_plan_evidence_are_not_suggested():
     assert not er.reviewable(['signal:shared_payment_link', 'model:separate_bookings'])
     assert not er.reviewable(['signal:compatible_activity', 'signal:near_time'])
     assert er.reviewable(['signal:compatible_activity', 'signal:near_time', 'model:same_activity'])
+
+
+def test_history_compares_instants_and_lists_grouping_decisions_only(ws_id):
+    from types import SimpleNamespace as M
+    base = {'title': 'Lasergame', 'activity': 'Lasergame', 'provider': 'gmail', 'rank': 4, 'kind': 'booking'}
+    a = M(event_id=1, evidence=['s1'], data=dict(base, starts_at=local(18, 16, 15).isoformat(), at='2031-05-15T10:00'))
+    b = M(event_id=1, evidence=['s2'], data=dict(base, rank=2, starts_at=local(18, 16, 15).astimezone(timezone.utc).isoformat(),
+                                                  at='2031-05-15T11:00'))
+    assert events.project([a, b])[1]['history'] == []
+    with db.session() as s:
+        ws = Scoped(s, ws_id)
+        ids = outing(ws)
+        ei.record_automatic(ws, ids['invite'], ids['booking'], 'uncertain', via='resolver', applied=False)
+        r = ei.same(ws, [ids['invite'], ids['reservation']])
+        verdicts = {(d.origin, d.verdict) for d in ei.history(ws, r.representative)}
+        assert ('user', 'same') in verdicts and ('automatic', 'uncertain') not in verdicts

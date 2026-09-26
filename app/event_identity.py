@@ -435,10 +435,13 @@ def withdraw_automatic(ws: Scoped, event_ids=None, dry_run=True) -> list:
 # ---------------- read models for pages and reports
 
 def history(ws: Scoped, rep_id) -> list[EventIdentityDecision]:
+    """Grouping history: your corrections and automatic same/separate decisions. Uncertain
+    verdicts are review suggestions, and replaced automatic rows are superseded bookkeeping."""
     ids = [m.id for m in members(ws, rep_id)]
-    return ws.all(ws.q(EventIdentityDecision).where(
+    rows = ws.all(ws.q(EventIdentityDecision).where(
         or_(EventIdentityDecision.event_a.in_(ids), EventIdentityDecision.event_b.in_(ids)))
         .order_by(EventIdentityDecision.created_at.desc(), EventIdentityDecision.id))
+    return [d for d in rows if d.origin == 'user' or (d.verdict != 'uncertain' and d.superseded_reason != 'replaced')]
 
 
 def source_union(ws: Scoped, rep_id, visible_only=True) -> list[str]:

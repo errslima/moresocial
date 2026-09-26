@@ -193,12 +193,13 @@ def project(mentions, person_map=None):
            and dt(m.data.get('starts_at')) and start and abs((dt(m.data['starts_at']) - start).total_seconds()) > 60]
     if top and best.data.get('kind') in KINDS_CONFIRMED and best.data.get('kind') != 'reschedule':
         details['needs_clarification'] = True
-    history, seen = [], {start.isoformat() if start else ''}
+    # Compare instants, not strings: one time can be written with different UTC offsets.
+    history, seen = [], {start} if start else set()
     for m in sorted(mentions, key=lambda m: (m.data.get('at', ''), m.evidence[0])):
         s_ = dt(m.data.get('starts_at'))
-        if m is best or not s_ or s_.isoformat() in seen or m.data.get('kind') == 'cancellation':
+        if m is best or not s_ or s_ in seen or m.data.get('kind') == 'cancellation':
             continue
-        seen.add(s_.isoformat())
+        seen.add(s_)
         history.append({'starts_at': s_.isoformat(), 'ends_at': m.data.get('ends_at') or '', 'kind': m.data.get('kind'),
                         'all_day': bool(m.data.get('all_day')), 'at': m.data.get('at', ''), 'sources': list(m.evidence[:3])})
     details['history'] = history[-8:]

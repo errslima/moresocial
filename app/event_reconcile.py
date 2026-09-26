@@ -92,7 +92,7 @@ def report(s, wid=None) -> dict:
 def main(argv=None):
     p = argparse.ArgumentParser(prog='python -m app.event_reconcile', description=__doc__)
     p.add_argument('command', choices=['list', 'same', 'separate', 'split', 'undo', 'mode', 'withdraw-automatic',
-                                       'candidates', 'resolve', 'report'])
+                                       'candidates', 'resolve', 'report', 'recompute'])
     p.add_argument('--email')
     p.add_argument('--workspace')
     p.add_argument('--date', help='YYYY-MM-DD in Europe/Amsterdam (list)')
@@ -153,6 +153,17 @@ def main(argv=None):
                 out['operation'] = str(r.operation)
                 out['decisions_written'] = [str(x) for x in r.decisions]
             out['after'] = [group(ws, x) for x in touched]
+        elif args.command == 'recompute':
+            # Re-project group cards after a projection change; decisions and evidence are untouched.
+            ev.lock(ws)
+            reps = ws.all(ws.q(Event).where(Event.canonical_event_id.is_(None), Event.origin != 'legacy'))
+            before = {e.id: ev.digest([e.title, e.activity, e.starts_at, e.ends_at, e.status, e.details]) for e in reps}
+            for e in reps:
+                ev.recompute_group(ws, e)
+            ws.s.flush()
+            out['groups'] = len(reps)
+            out['changed'] = [str(e.id) for e in reps
+                              if before[e.id] != ev.digest([e.title, e.activity, e.starts_at, e.ends_at, e.status, e.details])]
         elif args.command in ('candidates', 'resolve'):
             todo, stats = er.candidates(ws, selected)
             out['stats'] = stats

@@ -210,6 +210,7 @@ $R split --email you@example.com --parts "A|B,C" --apply
 $R undo --email you@example.com --decision D --apply
 $R candidates --email you@example.com                # resolver candidates and signals, no model call
 $R resolve --email you@example.com [--events A] --apply   # queue a (targeted) resolver run
+$R recompute --email you@example.com [--apply]      # re-project cards after a projection fix
 $R mode --value observe|apply|off --apply
 $R withdraw-automatic --email you@example.com [--events A,B] [--apply]   # rollback of automatic groups
 ```
