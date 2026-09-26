@@ -268,8 +268,17 @@ def extract_chunk(workspace_id: uuid.UUID, chunk_id, job_id=None) -> str:
     body = '\n'.join(f"[{l['label']}] {l['date']} {l['speaker'] or 'unidentified'} ({l['speaker_name']}): {l['text']}" for l in lines)
     prompt = (f'Participants:\n{roster}\nME: the user\n\n<conversation untrusted="true">\n{body}\n</conversation>\n\n'
               'Extract claims as specified.')
-    out = ai.generate(workspace_id, system=EXTRACT_SYSTEM, prompt=prompt, schema=EXTRACT_SCHEMA, max_tokens=2000,
-                      effort='low', job_id=job_id, context={'purpose': 'extract', 'lines': lines, 'people': names})
+    for max_tokens in (2000, 8000):
+        try:
+            out = ai.generate(workspace_id, system=EXTRACT_SYSTEM, prompt=prompt, schema=EXTRACT_SCHEMA,
+                              max_tokens=max_tokens, effort='low', job_id=job_id,
+                              context={'purpose': 'extract', 'lines': lines, 'people': names})
+            break
+        except ai.InvalidOutput as exc:
+            # Reasoning and JSON share the output budget. Retry truncation once with
+            # room for both; never publish partial JSON or retry refusals here.
+            if str(exc) != 'truncated' or max_tokens == 8000:
+                raise
     claims = validate_claims(out.data, set(dates), subjects)
     with db.session() as s:
         ws = Scoped(s, workspace_id)

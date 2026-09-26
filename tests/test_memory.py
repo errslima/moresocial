@@ -356,3 +356,33 @@ def test_message_trace_is_scoped_and_omits_text_by_default(browser):
         assert trace(Scoped(s, wid), source.id, True)['source']['text'] == source.body
         with pytest.raises(ValueError, match='not found'):
             trace(Scoped(s, uuid.uuid4()), source.id)
+
+
+def test_extraction_retries_truncation_with_bounded_larger_output(browser, monkeypatch):
+    setup_user(browser, whatsapp=False)
+    wid = workspace_of('alex@example.test')
+    with db.session() as s:
+        chunk = s.scalar(select(Chunk).where(Chunk.provider == 'gmail'))
+        chunk.extracted_at = None
+        cid = chunk.id
+    calls = []
+    def generate(*args, **kwargs):
+        calls.append(kwargs['max_tokens'])
+        if len(calls) == 1:
+            raise ai.InvalidOutput('truncated')
+        return ai.Generated(data={'claims': []}, input_tokens=10, output_tokens=10, model='fake')
+    monkeypatch.setattr(ai, 'generate', generate)
+    assert memory.extract_chunk(wid, cid) == 'extracted'
+    assert calls == [2000, 8000]
+    with db.session() as s:
+        s.get(Chunk, cid).extracted_at = None
+    calls.clear()
+    def truncated(*args, **kwargs):
+        calls.append(kwargs['max_tokens'])
+        raise ai.InvalidOutput('truncated')
+    monkeypatch.setattr(ai, 'generate', truncated)
+    with pytest.raises(ai.InvalidOutput, match='truncated'):
+        memory.extract_chunk(wid, cid)
+    assert calls == [2000, 8000]
+    with db.session() as s:
+        assert s.get(Chunk, cid).extracted_at is None
