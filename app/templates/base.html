@@ -9,7 +9,7 @@
 <script type="module" src="{{ url('/static/app.js') }}?v={{ asset_version }}"></script>
 </head>
 {% from 'icons.html' import icon %}
-{# Child templates may `{% set layout = 'wide' %}`: "page" keeps the ~860px reading column,
+{# Child templates may `{% set layout = 'wide' %}`: "page" uses a bounded content column,
    "wide" gives the content area's full width and height. #}
 {% set shell_layout = layout|default('page') %}
 <body class="{{ 'app' if ctx else 'public' }} layout-{{ shell_layout }}">

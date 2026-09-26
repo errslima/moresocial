@@ -350,7 +350,7 @@ def test_sidebar_and_whatsapp_browser(live, chromium, viewport):
     assert page.get_by_role('link', name='Admin').count() == 0  # not an administrator
     assert page.get_by_role('link', name='Home', exact=True).get_attribute('aria-current') == 'page'
     home_main = page.locator('main').bounding_box()
-    assert home_main['width'] <= 861
+    assert home_main['width'] <= 1121
     page.screenshot(path=f'/tmp/moresocial-home-{viewport["width"]}.png', full_page=True)
     no_horizontal_scroll()
 
@@ -522,4 +522,9 @@ def test_long_chat_list_and_main_page_bounds(live, chromium, viewport):
         response = page.goto(live + '/' + route)
         assert response.status == 200
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), route
+        main = page.locator('main').bounding_box()
+        if viewport['width'] > 900:
+            sidebar = page.locator('.sidebar').bounding_box()
+            assert main['x'] == sidebar['x'] + sidebar['width'], route
+            assert main['width'] == min(1120, viewport['width'] - sidebar['width']), route
     context.close()

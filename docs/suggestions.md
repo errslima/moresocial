@@ -29,6 +29,8 @@ release. Existing gathering workflows are unchanged.
   labels. Internal source IDs/versions stay out of the model prompt; quoted text is
   not accepted as a citation. Optional due dates must be full RFC 3339 timestamps with
   a timezone offset, enforced in the model schema and server validation.
+  Kind-specific schema branches restrict reply anchors to incoming messages and promise
+  anchors to the user's own messages; server-side direction validation remains mandatory.
   Failure notices count conversations whose latest review
   is still failed, rather than historical attempts that have since been retried.
 - Review input carries a conversation revision and fingerprint. Provider calls happen

@@ -32,8 +32,10 @@ user, and the app does not send messages, write Gmail drafts or change calendars
 It does not know invitees' calendars merely because it can read the user's calendar.
 
 Authenticated pages share a left sidebar (`app/templates/base.html`); below 900px it collapses
-into a native `<details>` menu, so navigation needs no JavaScript. Ordinary pages keep an
-~860px reading column; a template sets `layout = 'wide'` to fill the content area instead.
+into a native `<details>` menu, so navigation needs no JavaScript. Ordinary signed-in pages
+start 24px beside the sidebar in a column up to 1120px wide (16px gutters on mobile);
+a template sets `layout = 'wide'` to fill the content area instead. Public pages retain
+their centered 860px reading column.
 
 ### WhatsApp conversation browser
 

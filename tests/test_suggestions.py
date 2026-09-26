@@ -314,16 +314,42 @@ def test_model_contract_cites_only_snapshot_labels(browser, setup, monkeypatch):
         assert all('id' not in m and 'version' not in m for m in prompt['messages'])
         assert 'person_id' not in prompt
         properties = kw['schema']['properties']
-        item = properties['items']['items']['properties']
-        assert item['anchor']['enum'] == labels
-        assert item['evidence']['items']['enum'] == labels
-        assert item['due_at'] == {'anyOf': [{'type': 'string', 'format': 'date-time'}, {'type': 'null'}]}
+        for variant in properties['items']['items']['anyOf']:
+            item = variant['properties']
+            kind = item['kind']['enum'][0]
+            anchors = [m['label'] for m in kw['context']['messages'] if kind == 'follow_up' or
+                       (kind == 'promise') == m['from_me']]
+            assert item['anchor']['enum'] == anchors
+            assert item['evidence']['items']['enum'] == labels
+            assert item['due_at'] == {'anyOf': [{'type': 'string', 'format': 'date-time'}, {'type': 'null'}]}
+            assert 'enum' not in item['title'] and 'enum' not in item['reason']
         assert properties['resolved']['items']['properties']['evidence']['items']['enum'] == labels
-        assert 'enum' not in item['title'] and 'enum' not in item['reason']
         return original(*args, **kw)
     monkeypatch.setattr(ai, 'generate', check)
     assert review(wid)[0].state == 'active'
     assert suggestions.SCHEMA == base
+
+
+@pytest.mark.parametrize('directions,expected', [
+    ([False], {'reply': ['M1'], 'follow_up': ['M1']}),
+    ([True], {'promise': ['M1'], 'follow_up': ['M1']}),
+    ([False, True], {'reply': ['M1'], 'promise': ['M2'], 'follow_up': ['M1', 'M2']}),
+])
+def test_review_schema_restricts_direction(directions, expected):
+    ctx = {'messages': [{'label': f'M{i+1}', 'from_me': mine} for i, mine in enumerate(directions)]}
+    variants = suggestions.review_schema(ctx)['properties']['items']['items']['anyOf']
+    assert {v['properties']['kind']['enum'][0]: v['properties']['anchor']['enum'] for v in variants} == expected
+
+
+def test_incoming_promise_still_rejected(browser, setup):
+    wid, src, row = setup
+    with db.session() as s:
+        ctx = suggestions.snapshot(Scoped(s, wid), s.get(SuggestionReview, row.review_id))[0]
+    from app.fake_generation import suggestion_review
+    data = copy.deepcopy(suggestion_review(ctx))
+    data['items'][0].update(kind='promise', id=None)
+    with pytest.raises(ai.InvalidOutput, match='suggestions_direction'):
+        suggestions.validate(data, ctx)
 
 
 def test_quoted_evidence_still_rejected(browser, setup):

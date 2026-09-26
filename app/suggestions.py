@@ -41,6 +41,9 @@ anchor. Both anchor and evidence MUST use exact message label strings such as "M
 Evidence is an array of labels, NEVER quotations, explanations, source UUIDs or combined label/text.
 Include the anchor label in evidence. Due dates must be explicit in the cited messages,
 interpreted using message timestamps and the supplied timezone; otherwise null.
+from_me=true means the user sent the message. A reply must anchor an incoming message
+(from_me=false); a promise must anchor the user's own explicit commitment (from_me=true).
+The other person's promise is not the user's promise. Omit actions without a valid anchor.
 due_at must be null or a complete RFC 3339 date-time including its timezone offset,
 such as "2026-09-26T18:00:00+02:00". Never return a date-only or timezone-free string.
 Resolve an existing OPEN item only with cited evidence that it was answered, fulfilled, cancelled
@@ -72,6 +75,18 @@ def review_schema(ctx):
     item['evidence'] = {'type': 'array', 'minItems': 1, 'maxItems': 12, 'items': deepcopy(label)}
     item['due_at'] = {'anyOf': [{'type': 'string', 'format': 'date-time'}, {'type': 'null'}]}
     schema['properties']['resolved']['items']['properties']['evidence'] = deepcopy(item['evidence'])
+    # Each kind can only anchor messages with the direction validation requires.
+    # Omit impossible branches rather than emitting an empty enum for one-sided chats.
+    variants = []
+    for kind in KINDS:
+        anchors = [m['label'] for m in ctx['messages'] if kind == 'follow_up' or
+                   (kind == 'promise') == m['from_me']]
+        if anchors:
+            variant = deepcopy(schema['properties']['items']['items'])
+            variant['properties']['kind'] = {'type': 'string', 'enum': [kind]}
+            variant['properties']['anchor'] = {'type': 'string', 'enum': anchors}
+            variants.append(variant)
+    schema['properties']['items']['items'] = {'anyOf': variants}
     return schema
 
 

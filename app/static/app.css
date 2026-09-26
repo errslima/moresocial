@@ -29,7 +29,8 @@ main{min-width:0}
 .logout{margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
 button.navbutton{background:none;border:none;min-height:0;cursor:pointer;text-align:left}
 .content{min-width:0;display:flex;flex-direction:column}
-.content>.main-page{width:100%;flex:1}
+.content>.main-page{width:100%;max-width:1120px;margin:0;padding:16px 24px;flex:1}
+.layout-page .content>.foot{width:100%;max-width:1120px;margin:24px 0;padding:0 24px}
 /* Wide pages (WhatsApp) fill the content area exactly; their panes scroll inside it. */
 .layout-wide .shell{height:100vh;height:100dvh}
 .layout-wide .content{min-height:0;height:100vh;height:100dvh}
@@ -48,6 +49,8 @@ button.navbutton{background:none;border:none;min-height:0;cursor:pointer;text-al
   .appnav[open]>summary{background:var(--active-bg)}
   .appnav-panel{padding:10px 0 4px}
   .logout{margin-top:4px}
+  .content>.main-page{padding:16px}
+  .layout-page .content>.foot{padding:0 16px}
   .layout-wide .shell{display:flex;flex-direction:column}
   .layout-wide .sidebar{flex:none}
   .layout-wide .content{flex:1;height:auto}
