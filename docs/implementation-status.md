@@ -448,4 +448,25 @@ screenshots inspected. A broad run also exposed legacy AI-key/budget/config test
 features removed by the earlier OpenRouter migration; representative failures reproduced on
 unchanged 7b643cc. These are separate from the Events release checks.
 
-Live deployment and recognition verification pending below.
+Live deployment and recognition verification recorded below.
+
+Deployment completed at revision `90384f2` (migration `0010`). Readiness checks pass for
+DB, migrations, Google configuration, encryption, generation and embeddings. Authenticated
+live reviews pass at 1440px and 390px: Events navigation, permanent legacy redirect, absence
+of manual creation, detail/timeline/source links, Home Upcoming and no browser errors or
+horizontal overflow. The temporary review session was revoked.
+
+The reference booking is automatically assembled across email and WhatsApp; the final check
+found 49 supporting sources and six attendance replies. Comparing against the booking exposed
+whitespace-heavy email truncation: input now compacts email whitespace and preserves the whole
+booking table, recognizes consecutive sessions as one outing, and prioritizes booking email
+over conversational estimates. Its full booked time range now matches the source.
+
+Verification after live fixes: 82 combined release checks passed, followed by 12 booking/UI
+checks and 74 final Events/auth/sync/exclusion/diagnostic checks. Initial recognition backfill
+continues in the normal worker; new imports also schedule reviews automatically. Recognition
+has the documented recent-history and ambiguity limits; source context remains available for
+review. No source-message content or private screenshots are committed.
+
+The requested review notification was sent to the owner’s linked WhatsApp self-chat with a
+confirmed message receipt. It includes the Events URL and notes the ongoing initial history scan.

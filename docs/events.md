@@ -21,6 +21,7 @@ backfills recent imported conversations and recovers missed jobs. Unchanged wind
 fingerprinted and skip model calls. Calendar events are deterministic and need no AI.
 WhatsApp and qualifying email threads use the configured generation provider with structured
 output. Context is bounded to 80 messages / about 24,000 characters per overlapping window;
+email whitespace is compacted before truncation so full booking tables remain in context;
 all windows of the last 30 days of imported messages are reviewed. Earlier messages already
 attached to an event remain in its timeline. Import coverage and clipped source bodies limit
 what can be recognized; recognition is not a guarantee that every related message is found.
@@ -34,7 +35,7 @@ events. A concrete date is required; undated ideas are omitted.
 Resolution is serialized per workspace. Explicit model matches are constrained to the same
 local day; conservative title/activity, time and place matching joins unambiguous candidates.
 A source-linked identity preserves dismissal through corrections. Calendar object identity
-survives rescheduling. Booking/ticket/calendar fields outrank conversational proposals;
+survives rescheduling. Booking/ticket emails outrank Calendar and conversational booking reports; those outrank proposals;
 explicit cancellations outrank other mentions. The latest explicit participant statement wins.
 
 Exclusion/deletion immediately clears dependent summaries, attendance and evidence. Unsupported
@@ -45,7 +46,7 @@ send, Calendar write or tool execution.
 ## Operations
 
 Migration `0010` adds event fields, `event_mentions` and `event_scans`; it is additive.
-Worker job: `detect_events`. Normal queue retry/defer and diagnostics apply. Recognition jobs
+Worker job: `detect_events`, with lease renewal during slow provider responses. Normal queue retry/defer and diagnostics apply. Recognition jobs
 are queued automatically after release. The original source imports remain unchanged.
 
 Limitations: ambiguous event matches may remain separate; an event explicitly moved to a

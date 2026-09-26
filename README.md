@@ -1,7 +1,7 @@
 # moresocial
 A vectorized approach to social life
 
-Private relationship memory and assistance with planning gatherings and conversations.
+Private relationship memory, automatically recognized events, and conversation assistance.
 Deployment target: **https://1f517.com/moresocial/** on the existing 1f517 server,
 with independent application files and state under `/srv/moresocial`.
 

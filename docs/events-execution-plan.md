@@ -1,6 +1,10 @@
 # Automatic events — execution plan
 
-Status: E0 implemented 2026-09-25 (see `docs/implementation-status.md`); E1–E6 not
+Current implementation: see [Events](events.md) and the 2026-09-26 entry in
+[implementation status](implementation-status.md). The new user instruction removes manual
+event creation and supersedes the manual-planning portions of this historical plan.
+
+Historical status: E0 implemented 2026-09-25 (see `docs/implementation-status.md`); E1–E6 not
 started. Prepared 2026-09-25 from a review of the code and of
 the production data (aggregates plus one real upcoming event, used only to shape this plan;
 no real message content belongs in the repository or tests).
