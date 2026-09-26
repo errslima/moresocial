@@ -685,10 +685,13 @@ def reviewable(reasons) -> bool:
     """Only pairs with more than a shared date are offered as possible duplicates: a shared
     reference or message, or date-based candidates where the model found positive support."""
     codes = {r.split(':', 1)[-1] for r in reasons}
+    model = {r.split(':', 1)[1] for r in reasons if r.startswith('model:')}
+    if model & HARD_CONFLICTS or ('different_date' in model and 'explicit_reschedule' not in model):
+        return False  # the model found evidence of separate plans; not a possible duplicate
     if codes & {'shared_payment_link', 'shared_booking_link', 'shared_booking_reference', 'shared_link',
                 'shared_source', 'copied_text', 'extraction_hint'}:
         return True
-    support = {r.split(':', 1)[1] for r in reasons if r.startswith('model:')} & set(SUPPORT)
+    support = model & set(SUPPORT)
     return bool(codes & {'compatible_activity', 'shared_people'}) and 'near_time' in codes and bool(support)
 
 

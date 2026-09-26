@@ -851,3 +851,12 @@ def test_template_text_and_date_only_pairs_are_not_suggested(ws_id, monkeypatch)
         ws = Scoped(s, ws_id)
         assert ws.first(ws.q(EventIdentityDecision).where(EventIdentityDecision.via == 'resolver'))  # evaluated...
         assert not er.review_pairs(ws)  # ...but not offered as a possible duplicate
+
+
+def test_pairs_with_separate_plan_evidence_are_not_suggested():
+    assert er.reviewable(['signal:shared_link', 'model:shared_link'])
+    assert not er.reviewable(['signal:shared_link', 'model:shared_link', 'model:different_date'])
+    assert er.reviewable(['signal:shared_link', 'model:explicit_reschedule', 'model:different_date'])
+    assert not er.reviewable(['signal:shared_payment_link', 'model:separate_bookings'])
+    assert not er.reviewable(['signal:compatible_activity', 'signal:near_time'])
+    assert er.reviewable(['signal:compatible_activity', 'signal:near_time', 'model:same_activity'])
