@@ -282,6 +282,11 @@ that has newer user writes.
 
 ## 8. Local development and tests
 
+For signed-in browser checks against the live site without Google interaction, see
+[temporary agent browser login](agent-browser-login.md). The operator SSH helper issues
+a private, expiring Playwright session file for one existing account; no public login
+endpoint or application redeployment is needed.
+
 ```bash
 bash scripts/test.sh                 # everything, synthetic only (needs uv, node 22)
 bash scripts/dev.sh                  # http://localhost:8772/moresocial/ with synthetic Google/WhatsApp/AI

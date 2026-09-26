@@ -7,6 +7,32 @@
 
 Last updated 2026-09-26. This is the resume point for any agent or operator.
 
+## Temporary agent browser access — 2026-09-26
+
+Live source and images remain at `d667d92` (sidebar and WhatsApp release), confirmed
+through `/srv/moresocial/src` and `release.env`. No application deployment, restart or
+schema migration was needed for the operator-only session helper.
+
+- Added `app/agent_session.py` and workstation wrapper `scripts/agent-session.py`.
+  The wrapper executes the helper through the existing operator SSH connection in
+  the web container; creates a normal session for one existing allowlisted account;
+  and privately downloads Playwright storage state. Default TTL: two hours, maximum
+  one day. No public authentication endpoint or Google grant changes.
+- Private files live under ignored `.dev/` with mode 0600. The revoke command removes
+  them and revokes only that session. See [agent browser login](agent-browser-login.md)
+  for commands and a prompt future agents can use.
+- Targeted verification: **28 passed** across the new session tests and existing
+  Google authentication tests. No full-suite rerun for this operator-tool change.
+- Live revocation verified on a separate one-minute session: Home returned 200 before
+  revocation and a 303 sign-in redirect afterward. Its local files were removed; the
+  main two-hour session was retained for development work.
+- Live Chromium checks using the session passed on Home, WhatsApp list (50 rows),
+  and an open chat at 1440×900 and 390×844. Mobile back navigation works; no horizontal
+  overflow or page JavaScript errors. Mutation requests were blocked during review.
+- Visual follow-up: full-page screenshots expose substantial blank space below the
+  WhatsApp layout on desktop and mobile. This session-tool change does not fix that
+  existing layout behavior. Private screenshots are under `.dev/agent-live-*.png`.
+
 ## Suggestions release — 2026-09-26
 
 Production revision: `c89c164` (previous: `6c762e3`). Migration `0008` adds

@@ -14,6 +14,7 @@ The Suggestions inbox is deployed at `/moresocial/suggestions`. See [implementat
 - [Suggestions: behavior and background reviews](docs/suggestions.md)
 - [Implementation status and pending live checks](docs/implementation-status.md)
 - [Operator setup, deployment and runbook](docs/operator-setup.md)
+- [Temporary agent browser login for live UI checks](docs/agent-browser-login.md)
 - [Implementation execution plan](EXECUTION-PLAN.md)
 - [OpenRouter consolidation execution plan](docs/openrouter-execution-plan.md)
 - [OpenRouter deployment runbook](docs/openrouter-rollout.md)
