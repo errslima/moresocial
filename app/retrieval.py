@@ -9,11 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import re
+import time
 import uuid
 
 from sqlalchemy import text
 
-from . import ai, db
+from . import ai, db, diagnostics
 from .models import Answer, AnswerSource, Chunk, ChunkSource, Source, PIPELINE_VERSION
 from .repo import Scoped
 
@@ -49,6 +50,7 @@ def fts_query(question: str) -> str | None:
 def search_chunks(ws: Scoped, question: str, person_id: uuid.UUID | None = None, since: datetime | None = None,
                   until: datetime | None = None, limit: int = EVIDENCE_CHUNKS, job_id=None) -> list[uuid.UUID]:
     p = ai.embedder()
+    started = time.monotonic()
     filters, params = ['c.workspace_id = :w', 'c.pipeline_version = :pipeline'], {
         'w': ws.wid, 'k': CANDIDATES, 'pipeline': PIPELINE_VERSION}
     if person_id:
@@ -83,7 +85,11 @@ def search_chunks(ws: Scoped, question: str, person_id: uuid.UUID | None = None,
     for rows in (vector_rows, text_rows):  # reciprocal rank fusion
         for rank, (cid,) in enumerate(rows):
             ranked[cid] = ranked.get(cid, 0.0) + 1.0 / (60 + rank)
-    return [cid for cid, _ in sorted(ranked.items(), key=lambda kv: -kv[1])[:limit]]
+    result = [cid for cid, _ in sorted(ranked.items(), key=lambda kv: -kv[1])[:limit]]
+    diagnostics.emit('retrieval_completed', route='/hybrid' if p.embedding_dimension else '/keyword',
+                     space=p.embedding_space if p.embedding_dimension else None, vector_results=len(vector_rows),
+                     keyword_results=len(text_rows), results=len(result), duration_ms=int((time.monotonic() - started) * 1000))
+    return result
 
 
 def evidence_for(ws: Scoped, chunk_ids: list[uuid.UUID], max_items: int = 40) -> list[Evidence]:
@@ -148,6 +154,9 @@ def ask(ws: Scoped, question: str, person_id: uuid.UUID | None = None) -> Answer
     text_ = re.sub(r'\[(S\d+)\]', lambda m: m.group(0) if m.group(1) in labels else '', text_)
     cited = list(dict.fromkeys(cited + [c for c in sorted(inline) if c in labels]))
     insufficient = bool(data.get('insufficient')) or not cited
+    diagnostics.emit('answer_validated', purpose='answer', citations=len(cited), count=len(inline),
+                     outcome='insufficient' if insufficient else 'cited',
+                     code='citations_missing' if insufficient and not data.get('insufficient') else None)
     if insufficient and not data.get('insufficient'):
         text_ = 'I could not find evidence that supports an answer to this question.'
         cited = []

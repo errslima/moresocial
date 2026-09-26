@@ -7,6 +7,7 @@ Roles, checked at every endpoint:
 from __future__ import annotations
 
 import re
+import time
 import uuid
 
 from fastapi import FastAPI, Request
@@ -14,7 +15,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from starlette.concurrency import run_in_threadpool
 
-from . import config, db, security, whatsapp
+from . import config, db, diagnostics, security, whatsapp
 from .models import WhatsAppConnector, Workspace, ConnectorCleanup
 
 WORKSPACE_HEX = re.compile(r'^[0-9a-f]{32}$')
@@ -44,6 +45,7 @@ async def body(request: Request, limit: int) -> dict:
 
 def create_internal_app() -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    app.middleware('http')(diagnostics.request_middleware(trust_incoming=True))
 
     @app.get('/internal/health')
     def health():
@@ -63,15 +65,23 @@ def create_internal_app() -> FastAPI:
 
         access = await run_in_threadpool(authenticate)
         if access is None:
+            security.emit('connector_auth_failed', level='warn', route='/internal/connector/ingest')
             return JSONResponse({'error': 'unauthorized'}, status_code=401)
         workspace_id, account = access
+        started = time.monotonic()
         try:
             packet = await body(request, 2_000_000)
             # Any workspace field in the payload is ignored: the key determines the workspace.
             result = await run_in_threadpool(whatsapp.ingest, workspace_id, packet,
                                             packet.get('account') if account is None else account)
-        except ValueError:
+        except ValueError as exc:
+            security.emit('whatsapp_ingest_refused', exc, level='warn', code='invalid_packet', workspace_id=workspace_id)
             return JSONResponse({'error': 'invalid packet'}, status_code=400)
+        messages = packet.get('messages')
+        security.emit('whatsapp_ingest', level='debug', workspace_id=workspace_id,
+                      messages=len(messages) if isinstance(messages, list) else 0, created=result.created,
+                      updated=result.updated, unchanged=result.unchanged, skipped=result.skipped,
+                      duration_ms=int((time.monotonic() - started) * 1000))
         return {'ok': True, 'created': result.created, 'updated': result.updated, 'unchanged': result.unchanged,
                 'skipped': result.skipped}
 
@@ -109,6 +119,7 @@ def create_internal_app() -> FastAPI:
                 if cleanup is not None:
                     if state == 'removed' and s.get(Workspace, cleanup.workspace_id) is None:
                         s.delete(cleanup)
+                        security.emit('connector_cleanup_completed', audit=True, workspace_id=cleanup.workspace_id)
                         return {'ok': True, 'deleted': True}
                     return {'ok': True, 'pending_cleanup': True}
                 row = s.scalars(select(WhatsAppConnector).where(WhatsAppConnector.workspace_id == uuid.UUID(workspace))
@@ -120,6 +131,9 @@ def create_internal_app() -> FastAPI:
                     return {'ok': True, 'deleted': True}
                 if row.desired == 'running' and state in ('stopped', 'removed'):
                     return {'ok': True}  # stale report; desired state wins
+                if row.observed != state:
+                    security.emit('connector_state_changed', level='warn' if state in ('error', 'auth_failure') else 'info',
+                                  workspace_id=row.workspace_id, state=state, previous_state=row.observed)
                 row.observed = state
                 detail = data.get('detail')
                 row.detail = detail[:300] if isinstance(detail, str) and state == 'error' else row.detail

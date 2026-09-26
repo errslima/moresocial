@@ -10,15 +10,17 @@ from __future__ import annotations
 
 import base64
 import codecs
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from email.utils import getaddresses, parseaddr
 from html.parser import HTMLParser
 import re
+import time
 from typing import Callable
 
 from sqlalchemy import select
 
-from . import accounts, config, db, security
+from . import accounts, config, db, diagnostics, security
 from .google import GoogleError, provider
 from .ingest import IngestResult, Participant, SourceRecord, schedule_rebuilds, self_identifiers, upsert
 from .models import Connection, Source, SyncStream
@@ -223,6 +225,9 @@ def _token(workspace_id, stream_id) -> str:
         return accounts.access_token(s, conn)
 
 
+_tally: ContextVar[dict | None] = ContextVar('sync_tally', default=None)  # per-run page/item counters
+
+
 def _apply(workspace_id, stream_id, records: list[SourceRecord], token: str, update: Callable[[SyncStream], None]) -> None:
     """Upsert one page and advance progress in a single transaction; stop if revoked meanwhile."""
     with db.session() as s:
@@ -233,22 +238,44 @@ def _apply(workspace_id, stream_id, records: list[SourceRecord], token: str, upd
             upsert(ws, rec, self_ids, result)
         schedule_rebuilds(ws, result, token)
         update(stream)
+        kind = stream.stream
+    tally = _tally.get()
+    if tally is not None:
+        for key, value in (('pages', 1), ('items', len(records)), ('created', result.created), ('updated', result.updated)):
+            tally[key] = tally.get(key, 0) + value
+    diagnostics.emit('sync_page', level='debug', stream=kind, items=len(records), created=result.created,
+                     updated=result.updated, unchanged=result.unchanged)
 
 
 def run(workspace_id, stream_id, heartbeat: Callable[[], None] = lambda: None) -> str:
     """Run one sync pass. Returns an outcome code; raises GoogleError on provider failures."""
-    with db.session() as s:
-        ws, stream, conn = _load(s, workspace_id, stream_id)
-        kind = stream.stream
-        stream.status = 'syncing'
-        stream.last_attempt_at = utcnow()
+    try:
+        with db.session() as s:
+            ws, stream, conn = _load(s, workspace_id, stream_id)
+            kind = stream.stream
+            lag = int((utcnow() - stream.next_run_at).total_seconds() * 1000) if stream.next_run_at else None
+            stream.status = 'syncing'
+            stream.last_attempt_at = utcnow()
+    except StreamStopped:
+        diagnostics.emit('sync_completed', outcome='stopped')
+        return 'stopped'
+    started, tally = time.monotonic(), {}
+    token = _tally.set(tally)
+    diagnostics.emit('sync_started', stream=kind, lag_ms=lag)
     try:
         outcome = (_gmail if kind == 'gmail' else _calendar)(workspace_id, stream_id, heartbeat)
     except StreamStopped:
+        diagnostics.emit('sync_completed', stream=kind, outcome='stopped', **tally)
         return 'stopped'
     except GoogleError as exc:
+        diagnostics.emit('sync_failed', stream=kind, code=exc.kind, reason=exc.reason,
+                         duration_ms=int((time.monotonic() - started) * 1000), **tally)
         _record_failure(workspace_id, stream_id, exc)
         raise
+    finally:
+        _tally.reset(token)
+    diagnostics.emit('sync_completed', stream=kind, outcome=outcome, duration_ms=int((time.monotonic() - started) * 1000),
+                     **tally)
     with db.session() as s:
         ws = Scoped(s, workspace_id)
         stream = ws.get(SyncStream, stream_id)
@@ -270,10 +297,14 @@ def _record_failure(workspace_id, stream_id, exc: GoogleError) -> None:
         if exc.kind == 'auth' and conn is not None:
             accounts.mark_reconnect(s, conn, 'grant_revoked_or_expired')
             stream.status, stream.last_error = 'paused', 'Google access needs to be reconnected.'
+            diagnostics.emit('google_auth_state_changed', level='warn', stream=stream.stream, state='needs_reconnect',
+                             code='grant_revoked_or_expired')
             return
         if exc.kind == 'forbidden' and exc.reason in ('insufficientPermissions', 'PERMISSION_DENIED'):
             stream.status, stream.next_run_at = 'disabled', None
             stream.last_error = 'Permission for this data was not granted.'
+            diagnostics.emit('google_auth_state_changed', level='warn', stream=stream.stream, state='scope_missing',
+                             code=exc.reason)
             return
         stream.status = 'error'
         stream.last_error = {'throttled': 'Google asked us to slow down; retrying later.',

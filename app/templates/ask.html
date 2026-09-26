@@ -3,7 +3,7 @@
 {% block title %}Ask{% endblock %}
 {% block content %}
 <h1>Ask about your people</h1>
-{% if error %}<p class="warn" role="alert">{{ error }}</p>{% endif %}
+{% if error %}<p class="warn" role="alert">{{ error }}{% if reference %} <span class="muted">Reference: <code>{{ reference }}</code></span>{% endif %}</p>{% endif %}
 <form method="post" action="{{ url('/ask') }}" class="stack" data-busy="Searching your sources…">
   {{ csrf_field() }}
   <label for="question">Question</label>

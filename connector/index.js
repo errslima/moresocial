@@ -2,7 +2,7 @@
 // (whatsapp-web.js LocalAuth), read-only. Adapted from EnzoSocial's connector (GPL-3.0);
 // sending, photo download and repair routes were removed. It holds only its own session
 // and a key scoped to its workspace; it has no database or model credentials.
-import {record,current} from './diagnostics.js';
+import {record,current,withOperation} from './diagnostics.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import wweb from 'whatsapp-web.js';
@@ -116,7 +116,7 @@ async function sync(){
     status.last_sync=new Date().toISOString();
     status.error=errors?`${errors} chats could not be synced; will retry`:queue.length?'Messages pending storage':null;
   }catch(e){record('history_sync_failed',{},e);status.error='History sync failed; will retry';}
-  finally{syncing=false;}
+  finally{syncing=false;record('history_sync_completed',{count:status.chats_synced,outcome:errors?'partial':'ok'});}
 }
 
 async function connect(){
@@ -133,12 +133,12 @@ async function connect(){
   client=instance;
   instance.on('qr',async qr=>{status.qr=await QRCode.toDataURL(qr);status.state='pairing';});
   instance.on('authenticated',()=>{status.state='loading';status.qr=null;});
-  instance.on('ready',()=>{status.state='ready';status.qr=null;status.error=null;void sync();});
+  instance.on('ready',()=>{status.state='ready';status.qr=null;status.error=null;void withOperation(sync);});
   instance.on('auth_failure',()=>{record('whatsapp_auth_failed');status.state='auth_failure';status.qr=null;});
   instance.on('disconnected',()=>{record('whatsapp_disconnected');status.state='disconnected';status.qr=null;});
-  instance.on('message_create',m=>void event(m));
-  instance.on('message_revoke_everyone',(after,before)=>void event(before||after,true));
-  instance.on('message_edit',m=>void event(m));
+  instance.on('message_create',m=>void withOperation(()=>event(m)));
+  instance.on('message_revoke_everyone',(after,before)=>void withOperation(()=>event(before||after,true)));
+  instance.on('message_edit',m=>void withOperation(()=>event(m)));
   try{await instance.initialize();}
   catch(e){record('browser_connection_failed',{},e);status.state='error';status.error='Browser connection failed';
     try{await instance.destroy();}catch{}client=null;}
@@ -156,8 +156,8 @@ listen(createHandler({key,
   status:()=>({...status,syncing,pending:queue.length,account:status.state==='ready'?me():null}),
   connect:async()=>{desired=true;if(client){try{await client.destroy();}catch{}client=null;}await connect();},
   sync,disconnect}));
-setInterval(()=>void queue.flush(),10000);
-setInterval(()=>void sync(),15*60*1000);
+setInterval(()=>void withOperation(()=>queue.flush()),10000);
+setInterval(()=>void withOperation(sync),15*60*1000);
 setInterval(()=>{if(desired&&!starting&&['disconnected','error'].includes(status.state)){client=null;void connect();}},60000);
 void connect();
 process.on('unhandledRejection',error=>{record('unhandled_rejection',{},error);process.exit(1);});

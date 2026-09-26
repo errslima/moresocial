@@ -138,6 +138,8 @@ def reserve(workspace_id: uuid.UUID, operation: str, model: str, tokens: int, jo
         for scope, limit in scopes:
             if s.execute(TAKE_SQL, {'scope': scope, 'day': day, 'n': tokens, 'limit': limit}).first() is None:
                 s.rollback()
+                security.emit('ai_budget_exhausted', level='warn', scope=scope.split(':', 1)[0], operation=operation,
+                              tokens=tokens, workspace_id=workspace_id)
                 raise BudgetExhausted(scope.split(':', 1)[0])
         usage = ProviderUsage(id=uuid.uuid4(), workspace_id=workspace_id, job_id=job_id, day=day, operation=operation,
                               model=model, provider=provider_name, billing=billing, reserved_tokens=tokens, status='reserved')

@@ -3,7 +3,7 @@
 {% block title %}{{ event.title }}{% endblock %}
 {% block content %}
 <h1>{{ event.title }}</h1>
-{% if error %}<p class="warn" role="alert">{{ error }}</p>{% endif %}
+{% if error %}<p class="warn" role="alert">{{ error }}{% if reference %} <span class="muted">Reference: <code>{{ reference }}</code></span>{% endif %}</p>{% endif %}
 <details><summary>Edit details</summary>
 <form method="post" action="{{ url('/gatherings/' ~ event.id ~ '/edit') }}" class="stack">
   {{ csrf_field() }}

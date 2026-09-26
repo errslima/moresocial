@@ -157,7 +157,9 @@ def disconnect_google(s: DB, workspace_id: uuid.UUID) -> bool:
     conn.state = 'disconnected'
     conn.detail = None
     s.flush()
-    return provider().revoke(refresh) if refresh else True
+    revoked = provider().revoke(refresh) if refresh else True
+    security.emit('google_disconnected', audit=True, workspace_id=workspace_id, outcome='revoked' if revoked else 'revoke_failed')
+    return revoked
 
 
 def delete_account(s: DB, workspace_id: uuid.UUID) -> None:
@@ -168,6 +170,7 @@ def delete_account(s: DB, workspace_id: uuid.UUID) -> None:
     if ws_row is None:
         return
     ws_row.status = 'deleting'
+    security.emit('account_deletion', audit=True, stage='started', workspace_id=workspace_id)
     if s.scalar(select(WhatsAppConnector.id).where(WhatsAppConnector.workspace_id == workspace_id)):
         # Commit the cleanup instruction atomically with the cascade; it must survive
         # even when this is the final account and the connector row disappears.
@@ -178,5 +181,6 @@ def delete_account(s: DB, workspace_id: uuid.UUID) -> None:
     try:
         disconnect_google(s, workspace_id)
     except Exception as exc:  # revocation is best effort; deletion must proceed
-        security.emit('account_delete_revoke_failed', exc)
+        security.emit('account_delete_revoke_failed', exc, workspace_id=workspace_id)
     s.execute(delete(Workspace).where(Workspace.id == workspace_id))
+    security.emit('account_deletion', audit=True, stage='rows_deleted', workspace_id=workspace_id)

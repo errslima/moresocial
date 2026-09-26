@@ -341,3 +341,56 @@ def emit(event: str, exc: BaseException | None = None, *, level: str | None = No
     except Exception:
         pass
     return ref
+
+
+# ---------------- HTTP ingress ----------------
+
+QUIET_PATHS = ('/health', '/ready', '/internal/health')
+
+
+def http_sample_rate() -> float:
+    try:
+        return min(1.0, max(0.0, float(os.environ.get('HTTP_LOG_SAMPLE', '0.1'))))
+    except ValueError:
+        return 0.1
+
+
+def request_middleware(trust_incoming: bool):
+    """ASGI-level HTTP middleware: assign a request ID, bind it for the request, return it
+    as ``X-Request-ID`` and emit one sampled ``http_request`` event with the route template.
+
+    The public app never trusts a client-supplied ID; the private internal app accepts a
+    well-formed one from connectors so a connector request and its ingestion correlate.
+    """
+    import random
+
+    async def middleware(request, call_next):
+        incoming = request.headers.get('x-request-id') if trust_incoming else None
+        request_id = valid_id(incoming) or new_id()
+        request.scope['moresocial.request_id'] = request_id
+        started = time.monotonic()
+        status = 500
+        with bind(request_id=request_id):
+            try:
+                response = await call_next(request)
+                status = response.status_code
+                response.headers['X-Request-ID'] = request_id
+                return response
+            finally:
+                path = request.scope.get('path', '')
+                route = getattr(request.scope.get('route'), 'path', None)
+                duration = int((time.monotonic() - started) * 1000)
+                quiet = path in QUIET_PATHS or path.startswith('/static/')
+                if not quiet or status >= 500:
+                    sampled = status < 400 and duration < 2000
+                    if not sampled or random.random() < http_sample_rate():
+                        emit('http_request', level='error' if status >= 500 else 'info', method=request.method,
+                             route=route or ('/unmatched' if status == 404 else '/other'), status=status,
+                             duration_ms=duration, sampled=sampled,
+                             error_category=None if status < 400 else ('server' if status >= 500 else 'client'))
+
+    return middleware
+
+
+def request_id_of(request) -> str | None:
+    return valid_id(request.scope.get('moresocial.request_id'))

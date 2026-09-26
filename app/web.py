@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session as DB
 
-from . import accounts, config, db, security
+from . import accounts, config, db, diagnostics, security
 from .models import Account, Session
 from .repo import Scoped
 
@@ -173,6 +173,9 @@ def create_app() -> FastAPI:
             response.headers.setdefault('Cache-Control', 'no-store')
         return response
 
+    # Registered last, so it is outermost: every response, including refusals, gets an ID.
+    app.middleware('http')(diagnostics.request_middleware(trust_incoming=False))
+
     @app.exception_handler(LoginRequired)
     async def login_required(request: Request, exc: LoginRequired):
         if request.url.path.endswith('.json') or request.headers.get('accept', '').startswith('application/json'):
@@ -181,9 +184,11 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Problem)
     async def problem(request: Request, exc: Problem):
+        ref = diagnostics.request_id_of(request)
         if request.headers.get('accept', '').startswith('application/json'):
-            return JSONResponse({'error': exc.message}, status_code=exc.status)
-        return render(request, 'error.html', None, status=exc.status, message=exc.message, reference=None)
+            return JSONResponse({'error': exc.message, 'reference': ref}, status_code=exc.status)
+        return render(request, 'error.html', None, status=exc.status, message=exc.message,
+                      reference=ref if exc.status not in (404, 405) else None)
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
@@ -192,8 +197,17 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def unexpected(request: Request, exc: Exception):
-        ref = security.emit('request_failed', exc, route=request.url.path.split('/')[1][:40] if '/' in request.url.path else None)
-        return render(request, 'error.html', None, status=500, message='Something went wrong.', reference=ref)
+        # Runs outside the request middleware's context, so bind the request ID again.
+        ref = diagnostics.request_id_of(request) or diagnostics.new_id()
+        with diagnostics.bind(request_id=ref):
+            security.emit('request_failed', exc, method=request.method,
+                          route=getattr(request.scope.get('route'), 'path', None))
+        if request.headers.get('accept', '').startswith('application/json'):
+            response = JSONResponse({'error': 'Something went wrong.', 'reference': ref}, status_code=500)
+        else:
+            response = render(request, 'error.html', None, status=500, message='Something went wrong.', reference=ref)
+        response.headers['X-Request-ID'] = ref
+        return response
 
     @app.get('/health')
     def health():
@@ -214,9 +228,12 @@ def create_app() -> FastAPI:
                 checks['ai_generation'] = operator.can_generate()
                 checks['ai_embeddings'] = bool(operator.embedding_dimension)
         except Exception as exc:
-            security.emit('readiness_failed', exc)
+            security.emit('readiness_failed', exc, check='database')
         # External providers (Google, AI) are reported but do not make the app unready.
         ok = checks['database'] and checks['migrations'] and checks['encryption_key']
+        if not ok:
+            failed = next(name for name in ('database', 'migrations', 'encryption_key') if not checks[name])
+            security.emit('readiness_failed', level='error', check=failed)
         return JSONResponse({'status': 'ready' if ok else 'not_ready', 'checks': checks}, status_code=200 if ok else 503)
 
     from . import admin, auth_routes, pages

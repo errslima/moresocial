@@ -13,15 +13,18 @@ Safety rules:
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import subprocess
 import sys
 import time
 import urllib.request
+import uuid
 
 WORKSPACE = re.compile(r'^[0-9a-f]{32}$')
 IMAGE = re.compile(r'^[a-z0-9][a-z0-9._/-]{0,127}(:[A-Za-z0-9._-]{1,128})?(@sha256:[0-9a-f]{64})?$')
@@ -34,9 +37,29 @@ LIMITS = {'memory': os.environ.get('CONNECTOR_MEMORY', '1536m'), 'pids': os.envi
           'shm': '256m', 'cpus': os.environ.get('CONNECTOR_CPUS', '1.0')}
 
 
-def log(event: str, **fields) -> None:
-    safe = {k: v for k, v in fields.items() if isinstance(v, (int, float)) or (isinstance(v, str) and len(v) < 120)}
-    print(json.dumps({'ts': round(time.time(), 3), 'service': 'provisioner', 'event': event, **safe}), flush=True)
+LOG_FIELDS = {'count': int, 'running': int, 'stopped': int, 'deleted': int, 'orphans': int, 'status': int,
+              'error_type': str, 'code': str, 'outcome': str, 'workspace': str, 'release': str}
+
+
+def log(event: str, level: str = 'info', **fields) -> None:
+    """One JSON event in the schema shared with the app (app/diagnostics.py); journald keeps it."""
+    row = {'schema': 1, 'ts': datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
+           'level': level, 'service': 'provisioner', 'event': event, 'reference': secrets.token_hex(8)}
+    for key, value in fields.items():
+        kind = LOG_FIELDS.get(key)
+        if kind is int and isinstance(value, int) and not isinstance(value, bool):
+            row[key] = value
+        elif kind is str and isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,80}', value):
+            if key == 'workspace' and WORKSPACE.match(value):
+                row['workspace_id'] = str(uuid.UUID(value))  # the app's opaque workspace UUID
+            elif key != 'workspace':
+                row[key] = value
+    print(json.dumps(row, separators=(',', ':')), flush=True)
+
+
+def image_release(image: str) -> str | None:
+    tag = image.rsplit(':', 1)[-1] if ':' in image.split('/')[-1] else ''
+    return tag if re.fullmatch(r'[0-9a-f]{7,40}', tag) else None
 
 
 class Docker:
@@ -126,6 +149,7 @@ class Provisioner:
             if actual_image != wanted_image:
                 self.docker.run('stop', '--time', '30', container)
                 self.docker.run('rm', container)
+                log('connector_replaced', workspace=ws, release=image_release(image))
                 current = None
         if current is None:
             self.docker.run('run', '-d', '--name', container, '--network', network, '--restart', 'unless-stopped',
@@ -137,11 +161,14 @@ class Provisioner:
                             '--cpus', LIMITS['cpus'], '--shm-size', LIMITS['shm'],
                             '--log-opt', 'max-size=10m', '--log-opt', 'max-file=3',
                             '-e', 'WEB_INTERNAL_URL=http://web:8001', '-e', 'XDG_CONFIG_HOME=/tmp/chromium-config',
+                            '-e', 'MORESOCIAL_RELEASE=' + (image_release(image) or ''),
                             '-e', 'XDG_CACHE_HOME=/tmp/chromium-cache',
                             '-v', f'{session}:/session', '-v', f'{key_file}:/run/secrets/connector_key:ro', image)
+            log('connector_started', workspace=ws, release=image_release(image), outcome='created')
             return 'starting'
         if current != 'running':
             self.docker.run('start', container)
+            log('connector_started', workspace=ws, outcome='restarted', code=current)
             return 'starting'
         return 'running'
 
@@ -149,6 +176,7 @@ class Provisioner:
         container, network = names(ws)
         if self.state(container) is not None:
             self.docker.run('rm', '-f', container)
+            log('connector_stopped', workspace=ws)
         self._detach_web(network)
         self.docker.run('network', 'rm', network, check=False)
 
@@ -157,6 +185,7 @@ class Provisioner:
         root = workspace_dir(ws)
         if root.exists():
             shutil.rmtree(root)
+            log('connector_session_deleted', workspace=ws)
 
     def _attach_web(self, network: str) -> None:
         nets = self.docker.run('inspect', '--format', '{{json .NetworkSettings.Networks}}', WEB_CONTAINER, check=False)
@@ -176,7 +205,7 @@ class Provisioner:
         try:
             data = self.fetch()
         except Exception as exc:
-            log('management_api_unavailable', error_type=type(exc).__name__)
+            log('management_api_unavailable', 'warn', error_type=type(exc).__name__)
             return {'skipped': True}
         rows = [r for r in data.get('connectors', []) if isinstance(r, dict) and WORKSPACE.match(str(r.get('workspace', '')))]
         wanted = {r['workspace']: r for r in rows}
@@ -198,7 +227,7 @@ class Provisioner:
                     outcome['deleted'] += 1
                     self.report(ws, 'removed')
             except Exception as exc:
-                log('connector_reconcile_failed', workspace=ws, error_type=type(exc).__name__)
+                log('connector_reconcile_failed', 'error', workspace=ws, error_type=type(exc).__name__)
                 try:
                     self.report(ws, 'error', 'The WhatsApp connection could not be started; it will retry.')
                 except Exception:
@@ -210,7 +239,7 @@ class Provisioner:
         orphans = (self.managed() | dirs) - set(wanted)
         if not data.get('complete') or not data.get('workspace_count'):
             if orphans:
-                log('orphan_cleanup_skipped', count=len(orphans))
+                log('orphan_cleanup_skipped', 'warn', count=len(orphans))
             return outcome
         self.orphan_seen = {ws: self.orphan_seen.get(ws, 0) + 1 for ws in orphans}
         for ws in sorted(w for w, n in self.orphan_seen.items() if n >= 3):
@@ -219,7 +248,7 @@ class Provisioner:
                 outcome['orphans'] += 1
                 self.orphan_seen.pop(ws, None)
             except Exception as exc:
-                log('orphan_cleanup_failed', workspace=ws, error_type=type(exc).__name__)
+                log('orphan_cleanup_failed', 'error', workspace=ws, error_type=type(exc).__name__)
         return outcome
 
 

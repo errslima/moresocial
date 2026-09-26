@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, or_, select
 
-from . import accounts, ai, config, gatherings, ingest, memory, retrieval, whatsapp
+from . import accounts, ai, config, diagnostics, gatherings, ingest, memory, retrieval, security, whatsapp
 from .models import (Answer, AnswerSource, Claim, ClaimSource, Connection, Draft, Event, EventCandidate, EventPerson,
                      Exclusion, Job, Person, PersonIdentifier, RelationshipNote, SelfProfile, Source,
                      SourceParticipant, SyncStream, WhatsAppConnector)
@@ -42,6 +42,17 @@ def ai_error(exc: Exception) -> str:
     if isinstance(exc, ai.InvalidOutput):
         return 'The assistant returned something unusable. Please try again.'
     return 'The assistant is unavailable right now. Please try again later.'
+
+
+def ai_failure(purpose: str, exc: Exception) -> str | None:
+    """Record an expected AI failure the user sees; return the reference to show them."""
+    code = ('budget_exhausted' if isinstance(exc, ai.BudgetExhausted) else
+            'invalid_output' if isinstance(exc, ai.InvalidOutput) else
+            'key_rejected' if isinstance(exc, ai.KeyRejected) else 'unavailable')
+    detail = exc.scope if isinstance(exc, ai.BudgetExhausted) else str(exc).split(':')[-1]
+    security.emit('ai_action_failed', level='warn', purpose=purpose, code=code, reason=detail,
+                  http_status=getattr(exc, 'http_status', None))
+    return diagnostics.current().get('request_id')
 
 
 def claim_view(ws, claims: list[Claim]) -> list[dict]:
@@ -230,7 +241,7 @@ def remove_exclusion(eid: str, ctx: Ctx = Depends(require_mutation)):
 def ask_page(request: Request, ctx: Ctx = Depends(require_user)):
     recent = ctx.ws.all(ctx.ws.q(Answer).order_by(Answer.created_at.desc()).limit(10))
     people_ = ctx.ws.all(ctx.ws.q(Person).order_by(Person.display_name).limit(500))
-    return render(request, 'ask.html', ctx, recent=recent, people=people_, error=None)
+    return render(request, 'ask.html', ctx, recent=recent, people=people_, error=None, reference=None)
 
 
 @router.post('/ask')
@@ -242,9 +253,10 @@ def ask(request: Request, question: str = Form(...), person: str = Form(''), ctx
     try:
         answer = retrieval.ask(ws, question, p.id if p else None)
     except (ai.AIUnavailable, ai.BudgetExhausted, ai.InvalidOutput) as exc:
+        reference = ai_failure('answer', exc)
         recent = ws.all(ws.q(Answer).order_by(Answer.created_at.desc()).limit(10))
         return render(request, 'ask.html', ctx, recent=recent, people=ws.all(ws.q(Person).limit(500)), error=ai_error(exc),
-                      status=503)
+                      reference=reference, status=503)
     return redirect(f'/answers/{answer.id}')
 
 
@@ -278,7 +290,7 @@ def create_gathering(title: str = Form(...), activity: str = Form(''), notes: st
 
 
 @router.get('/gatherings/{eid}')
-def gathering(request: Request, eid: str, error: str = '', ctx: Ctx = Depends(require_user)):
+def gathering(request: Request, eid: str, error: str = '', ref: str = '', ctx: Ctx = Depends(require_user)):
     ws = ctx.ws
     e = found(ws.get(Event, eid), 'That gathering')
     cands = ws.all(ws.q(EventCandidate).where(EventCandidate.event_id == e.id).order_by(EventCandidate.starts_at))
@@ -296,7 +308,8 @@ def gathering(request: Request, eid: str, error: str = '', ctx: Ctx = Depends(re
                   invitees=invitees, people=people_, drafts=drafts, draft_cites=draft_cites, replies=replies,
                   suggestions=suggestions, all_people=all_people, statuses=gatherings.STATUS_LABELS, tz=ZoneInfo(e.timezone),
                   error={'ai': 'The assistant could not write a draft right now. You can still write one yourself.',
-                         'budget': "Today's AI budget is used up; drafting resumes tomorrow."}.get(error))
+                         'budget': "Today's AI budget is used up; drafting resumes tomorrow."}.get(error),
+                  reference=diagnostics.valid_id(ref) if error else None)
 
 
 @router.post('/gatherings/{eid}/edit')
@@ -371,7 +384,8 @@ def check_replies(eid: str, ctx: Ctx = Depends(require_mutation)):
                                                  EventPerson.status.in_(['awaiting_reply', 'maybe']))):
             gatherings.suggest_rsvp(ws, e, ep)
     except (ai.AIUnavailable, ai.BudgetExhausted, ai.InvalidOutput) as exc:
-        return redirect(f'/gatherings/{e.id}', error='budget' if isinstance(exc, ai.BudgetExhausted) else 'ai')
+        return redirect(f'/gatherings/{e.id}', error='budget' if isinstance(exc, ai.BudgetExhausted) else 'ai',
+                        ref=ai_failure('rsvp', exc))
     return redirect(f'/gatherings/{e.id}')
 
 
@@ -388,7 +402,8 @@ def draft_for(eid: str, epid: str, ctx: Ctx = Depends(require_mutation)):
         gatherings.create_draft(ws, e, ep)
     except (ai.AIUnavailable, ai.BudgetExhausted, ai.InvalidOutput) as exc:
         ctx.s.rollback()
-        return redirect(f'/gatherings/{e.id}', error='budget' if isinstance(exc, ai.BudgetExhausted) else 'ai')
+        return redirect(f'/gatherings/{e.id}', error='budget' if isinstance(exc, ai.BudgetExhausted) else 'ai',
+                        ref=ai_failure('draft', exc))
     return redirect(f'/gatherings/{e.id}')
 
 
@@ -403,7 +418,8 @@ def edit_draft(did: str, text: str = Form(''), action: str = Form('save'), ctx: 
         try:
             gatherings.rewrite_draft(ws, d, action)
         except (ai.AIUnavailable, ai.BudgetExhausted, ai.InvalidOutput) as exc:
-            return redirect(f'/gatherings/{d.event_id}', error='budget' if isinstance(exc, ai.BudgetExhausted) else 'ai')
+            return redirect(f'/gatherings/{d.event_id}', error='budget' if isinstance(exc, ai.BudgetExhausted) else 'ai',
+                            ref=ai_failure('rewrite', exc))
     elif action == 'blank':
         d.text, d.edited = text.strip()[:2000] or d.text, True
     else:

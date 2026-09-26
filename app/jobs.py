@@ -13,6 +13,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from . import diagnostics
 from .models import Job
 
 LEASE_SECONDS = 120
@@ -24,12 +25,21 @@ def utcnow() -> datetime:
 
 def enqueue(s: Session, workspace_id: uuid.UUID, kind: str, key: str, payload: dict | None = None,
             run_after: datetime | None = None, max_attempts: int = 5) -> bool:
-    """Insert a job unless one with the same (workspace, idempotency key) exists. Returns True if new."""
+    """Insert a job unless one with the same (workspace, idempotency key) exists. Returns True if new.
+
+    The initiating request/operation ID travels in ``payload['_trace']`` so the worker's
+    events link back to it (see `diagnostics.trace_payload`)."""
+    payload = dict(payload or {})
+    trace = diagnostics.trace_payload()
+    if trace:
+        payload['_trace'] = trace
     values = dict(id=uuid.uuid4(), workspace_id=workspace_id, kind=kind, idempotency_key=key[:200],
-                  payload=payload or {}, status='queued', attempts=0, max_attempts=max_attempts,
+                  payload=payload, status='queued', attempts=0, max_attempts=max_attempts,
                   run_after=run_after or utcnow())
     result = s.execute(insert(Job).values(**values).on_conflict_do_nothing(
         index_elements=['workspace_id', 'idempotency_key']))
+    if result.rowcount:
+        diagnostics.emit('job_enqueued', level='debug', kind=kind, job_id=values['id'])
     return bool(result.rowcount)
 
 
@@ -52,8 +62,11 @@ RETURNING id
 
 def claim(s: Session, owner: str, kinds: list[str] | None = None, lease: int = LEASE_SECONDS) -> Job | None:
     # Expired leases whose attempts are exhausted become failed, not silently retried forever.
-    s.execute(text("""UPDATE jobs SET status='failed', last_error='Lease expired after final attempt', updated_at=now()
-                      WHERE status='running' AND lease_expires_at < now() AND attempts >= max_attempts"""))
+    expired = s.execute(text("""UPDATE jobs SET status='failed', last_error='Lease expired after final attempt', updated_at=now()
+                      WHERE status='running' AND lease_expires_at < now() AND attempts >= max_attempts
+                      RETURNING id, kind""")).all()
+    for job_id, kind in expired:
+        diagnostics.emit('job_failed_terminal', level='error', job_id=job_id, kind=kind, code='lease_expired')
     row = s.execute(CLAIM_SQL, {'owner': owner, 'lease': lease, 'kinds': kinds}).first()
     if not row:
         return None
@@ -76,10 +89,11 @@ def retry_delay(attempts: int) -> int:
     return min(3600, 30 * 2 ** max(0, attempts - 1))
 
 
-def fail(s: Session, job_id: uuid.UUID, owner: str, error: str, retry: bool = True, delay: int | None = None) -> None:
+def fail(s: Session, job_id: uuid.UUID, owner: str, error: str, retry: bool = True, delay: int | None = None) -> str | None:
+    """Record a failed attempt. Returns 'failed' (terminal), 'queued' (retry) or None (lease lost)."""
     job = s.get(Job, job_id, populate_existing=True)
     if job is None or job.lease_owner != owner:
-        return
+        return None
     final = not retry or job.attempts >= job.max_attempts
     job.status = 'failed' if final else 'queued'
     job.last_error = error[:300]
@@ -87,6 +101,7 @@ def fail(s: Session, job_id: uuid.UUID, owner: str, error: str, retry: bool = Tr
     job.lease_expires_at = None
     if not final:
         job.run_after = utcnow() + timedelta(seconds=delay if delay is not None else retry_delay(job.attempts))
+    return job.status
 
 
 def defer(s: Session, job_id: uuid.UUID, owner: str, until: datetime, reason: str) -> None:

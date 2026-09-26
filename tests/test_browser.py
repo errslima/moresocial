@@ -191,20 +191,34 @@ def test_ai_key_rejection_add_and_remove(live, chromium, viewport):
 
 
 @pytest.mark.parametrize('viewport', [{'width': 1280, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])
-def test_admin_sets_global_provider(live, chromium, viewport):
+def test_admin_openrouter_failure_keeps_choices_and_shows_reference(live, chromium, viewport):
+    import httpx
+    from app import admin
+    from test_admin import ALIAS, CANONICAL, KEY, FakeOpenRouter
     config.override(dataclasses.replace(config.get(), admin_emails=frozenset({'alex@example.test'})))
-    page = chromium.new_context(viewport=viewport).new_page()
-    page.goto(live + '/')
-    page.get_by_role('button', name='Continue with Google').click()
-    page.get_by_role('button', name='Allow').click()
-    page.wait_for_url(live + '/home')
-    page.get_by_role('link', name='Admin').click()
-    section = page.locator('.ai-key', has_text='OpenAI')
-    section.get_by_label('API key').fill('sk-proj-SyntheticAdminSecret-0003-wxyz')
-    section.get_by_role('button', name='Save key').click()
-    assert 'Global AI settings saved' in page.content()
-    page.get_by_label('OpenAI').check()
-    page.get_by_role('button', name='Save provider').click()
-    playwright.expect(page.locator('section', has_text='Generation:')).to_contain_text('OpenAI')
-    assert 'SyntheticAdminSecret' not in page.content()
-    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
+    admin.set_transport(httpx.MockTransport(FakeOpenRouter(embedding_models=('openai/text-embedding-3-small', 'other/model'))))
+    try:
+        page = chromium.new_context(viewport=viewport).new_page()
+        page.goto(live + '/')
+        page.get_by_role('button', name='Continue with Google').click()
+        page.get_by_role('button', name='Allow').click()
+        page.wait_for_url(live + '/home')
+        page.get_by_role('link', name='Admin').click()
+        page.get_by_label('OpenRouter API key').fill(KEY)
+        page.get_by_label('Embedding model').select_option('openai/text-embedding-3-small')
+        page.get_by_role('button', name='Test and save').click()
+        alert = page.get_by_role('alert')
+        playwright.expect(alert).to_contain_text('query embedding test (embedding_model)')
+        playwright.expect(alert).to_contain_text('Reference:')
+        assert page.get_by_label('Embedding model').input_value() == 'openai/text-embedding-3-small'
+        assert page.get_by_label('OpenRouter API key').input_value() == ''
+        assert KEY not in page.content()
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
+        admin.set_transport(httpx.MockTransport(FakeOpenRouter(embedding_models=(CANONICAL, CANONICAL))))
+        page.get_by_label('OpenRouter API key').fill(KEY)
+        page.get_by_label('Embedding model').select_option(ALIAS)
+        page.get_by_role('button', name='Test and save').click()
+        assert 'Global AI settings saved' in page.content()
+        playwright.expect(page.locator('section', has_text='Current operation')).to_contain_text(CANONICAL)
+    finally:
+        admin.set_transport(None)

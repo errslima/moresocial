@@ -38,6 +38,11 @@ if (wa && wa.dataset.active === 'yes') {
         const h = s.history || {};
         hist.textContent = h.history_chats != null ? `History: ${h.history_done ?? 0} of ${h.history_chats} recent chats loaded.` : '';
         delay = s.state === 'ready' ? 15000 : 3000;
+      } else {
+        // Show only the server's opaque request ID; nothing from the page is reported anywhere.
+        const ref = r.headers.get('X-Request-ID') || '';
+        state.textContent = 'Status is temporarily unavailable.' + (/^[0-9a-f]{32}$/.test(ref) ? ` Reference: ${ref}` : '');
+        delay = Math.min(delay * 2, 30000);
       }
     } catch { delay = Math.min(delay * 2, 30000); }
     setTimeout(poll, delay);

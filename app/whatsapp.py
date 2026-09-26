@@ -15,7 +15,7 @@ import uuid
 import httpx
 from sqlalchemy import func, select
 
-from . import config, db, jobs, security
+from . import config, db, diagnostics, jobs, security
 from .ingest import IngestResult, Participant, SourceRecord, register_contacts, schedule_rebuilds, self_identifiers, upsert
 from .models import WhatsAppConnector, Account
 from .repo import Scoped
@@ -55,9 +55,11 @@ def request_connect(ws: Scoped) -> WhatsAppConnector:
     if row.desired != 'running':
         if active_count(ws.s) >= config.get().connector_cap:
             row.observed, row.detail = 'capacity', 'All WhatsApp connection slots are in use. Try again later.'
+            security.emit('connector_capacity_reached', level='warn', workspace_id=ws.wid, count=config.get().connector_cap)
             return row
         row.desired, row.observed, row.detail = 'running', 'pending', None
         row.requested_at = utcnow()
+        security.emit('connector_requested', audit=True, workspace_id=ws.wid, state='running')
     return row
 
 
@@ -74,7 +76,9 @@ def stop(ws: Scoped, remove_session: bool) -> WhatsAppConnector | None:
             pass
     if config.get().synthetic_providers:
         FAKE.pop(ws.wid, None)
+    previous = row.desired
     row.desired = 'deleted' if remove_session else 'stopped'
+    security.emit('connector_stop_requested', audit=True, workspace_id=ws.wid, state=row.desired, previous_state=previous)
     row.observed = 'stopped'
     row.detail = None
     row.status = {}
@@ -91,13 +95,21 @@ def call(row: WhatsAppConnector, method: str, path: str, timeout: float = 8) -> 
     key = security.decrypt(row.key_enc)
     if not key:
         raise ConnectorUnavailable()
+    ctx = diagnostics.current()
+    headers = {'Authorization': 'Bearer ' + key}
+    correlation = ctx.get('operation_id') or ctx.get('request_id')
+    if correlation:
+        headers['X-Request-ID'] = correlation  # the connector adopts it for its own events
+    route = path if path in ('/status', '/sync', '/connect', '/disconnect') else '/other'
     try:
         with httpx.Client(timeout=timeout, follow_redirects=False) as h:
-            r = h.request(method, connector_url(row.workspace_id) + path, headers={'Authorization': 'Bearer ' + key})
+            r = h.request(method, connector_url(row.workspace_id) + path, headers=headers)
     except httpx.HTTPError as exc:
-        security.emit('connector_unreachable', exc)
+        security.emit('connector_unreachable', exc, level='warn', route=route, workspace_id=row.workspace_id,
+                      error_category='timeout' if isinstance(exc, httpx.TimeoutException) else 'connection')
         raise ConnectorUnavailable() from None
     if not r.is_success:
+        security.emit('connector_request_failed', route=route, status=r.status_code, workspace_id=row.workspace_id)
         raise ConnectorUnavailable()
     try:
         return r.json()
@@ -123,6 +135,9 @@ def status(ws: Scoped) -> dict:
     account = live.get('account') if isinstance(live.get('account'), str) and CHAT_RE.match(live['account']) else None
     history = {k: live.get(k) for k in ('chats_total', 'history_chats', 'history_done', 'chats_synced', 'last_sync')
                if isinstance(live.get(k), (int, str))}
+    if row.observed != state:
+        security.emit('connector_state_changed', level='warn' if state in ('error', 'auth_failure') else 'info',
+                      workspace_id=row.workspace_id, state=state, previous_state=row.observed)
     row.observed = state
     if account:
         row.account_wid = account
