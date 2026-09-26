@@ -424,13 +424,29 @@ class VoyageEmbedder(Provider):
 
 
 def identity_accepted(returned: str | None, requested: str, identity: str | None) -> bool:
-    """The one embedding/generation identity policy, shared by setup, runtime and storage.
+    """Exact catalog identity policy for generation and the baseline for embeddings.
 
     A response is accepted only when it names exactly the requested catalog ID or the
     canonical identity that the OpenRouter catalog documented for that ID when an
     administrator tested it. No prefix stripping, aliasing or other normalization.
     """
     return isinstance(returned, str) and returned in {requested, identity or requested}
+
+
+# Observed on the production OpenRouter /embeddings response, 2026-09-26,
+# operation 876cc6ebfa91c61019f1dfe196103133. OpenRouter passes through Voyage's
+# native model name. Keep this exception scoped to the verified catalog revision:
+# never strip arbitrary provider prefixes or accept a future revision implicitly.
+_EMBEDDING_RESPONSE_ALIASES = {
+    ('voyageai/voyage-4', 'voyageai/voyage-4-20260727'): 'voyage-4',
+}
+
+
+def embedding_identity_accepted(returned: str | None, requested: str, identity: str | None) -> bool:
+    return identity_accepted(returned, requested, identity) or (
+        isinstance(returned, str) and
+        returned == _EMBEDDING_RESPONSE_ALIASES.get((requested, identity))
+    )
 
 
 class OpenRouterProvider(Provider):
@@ -473,7 +489,7 @@ class OpenRouterProvider(Provider):
         return f'v2:openrouter:{self.embedding_identity}:{self.embedding_dimension}:{self.embedding_contract}'
 
     def accepts_embedding_model(self, returned: str | None) -> bool:
-        return identity_accepted(returned, self.embedding_model, self.embedding_identity)
+        return embedding_identity_accepted(returned, self.embedding_model, self.embedding_identity)
 
     def _call_event(self, operation: str, model, attempt: int, started: float, outcome: str, *, status=None,
                     category=None, payload=None, delay=None, exc=None) -> None:

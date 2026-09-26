@@ -158,10 +158,10 @@ EXPLANATIONS = {
     'embedding_shape': 'The embedding response did not contain one well-formed vector of the expected size.',
     'embedding_index': 'The embedding response had inconsistent row indices.',
     'embedding_values': 'The embedding response contained invalid numbers.',
-    ('embedding_probe', 'embedding_model'): 'The embedding request was answered as a model that is neither the selected ID '
-                                            'nor its documented canonical ID.',
-    ('query_probe', 'embedding_model'): 'The second (query) embedding request was answered as a model that is neither the '
-                                        'selected ID nor its documented canonical ID.',
+    ('embedding_probe', 'embedding_model'): 'The embedding response does not match the selected model, its catalog identity, '
+                                            'or a verified provider response alias.',
+    ('query_probe', 'embedding_model'): 'The second (query) embedding response does not match the selected model, its catalog '
+                                        'identity, or a verified provider response alias.',
     ('commit', 'stale_revision'): 'Settings changed while the candidate was tested. Reload and try again.',
 }
 STAGE_LABELS = {'catalog': 'catalog check', 'reasoning_probe': 'reasoning test', 'embedding_probe': 'embedding test',
@@ -231,9 +231,10 @@ def setup_test(key: str, reasoning_model: str, embedding_model: str, *, reasonin
     """Tiny paid synthetic calls that verify both models and learn the embedding dimension.
 
     Stages: catalog -> reasoning_probe -> embedding_probe -> query_probe -> validation.
-    Identity policy: `ai.identity_accepted` (selected catalog ID or its documented
-    canonical ID; nothing else). A missing catalog is reported as such, never as an
-    identity mismatch.
+    Identity policies: `ai.identity_accepted` for generation and
+    `ai.embedding_identity_accepted` for embeddings (catalog IDs plus explicitly
+    verified provider response aliases). A missing catalog is reported as such,
+    never as an identity mismatch.
     """
     saved_embedding = saved.get(operator_settings.EMBEDDING_MODEL)
     saved_identity = saved.get(operator_settings.EMBEDDING_IDENTITY) or saved_embedding
@@ -290,7 +291,7 @@ def setup_test(key: str, reasoning_model: str, embedding_model: str, *, reasonin
         stage.facts['actual_dimension'] = len(vector)
         returned = raw.get('model')
         stage.facts['returned_model'] = returned
-        if returned is not None and not ai.identity_accepted(returned, embedding_model, identity):
+        if returned is not None and not ai.embedding_identity_accepted(returned, embedding_model, identity):
             raise SetupFailed('embedding_probe', 'embedding_model')
 
     candidate = ai.OpenRouterProvider(key, reasoning_model, embedding_model, len(vector), transport=_transport,

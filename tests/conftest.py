@@ -86,7 +86,7 @@ def _with_user(url: str, user: str, password: str) -> str:
 
 @pytest.fixture(autouse=True)
 def clean(database):
-    from app import ai, db, google, synthetic, whatsapp, security
+    from app import ai, db, diagnostics, google, synthetic, whatsapp, security
     from app.models import Base
     with db.engine().begin() as c:
         tables = ', '.join(t.name for t in Base.metadata.sorted_tables)
@@ -97,7 +97,10 @@ def clean(database):
     whatsapp.FAKE.clear()
     from app import auth_routes
     auth_routes._hits.clear()
+    # Each test gets its own logging quota; prior tests must not suppress its events.
+    diagnostics._buckets.clear()
     yield
+    diagnostics._buckets.clear()
 
 
 @pytest.fixture

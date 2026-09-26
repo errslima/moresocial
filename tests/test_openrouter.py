@@ -92,3 +92,18 @@ def test_rejections_carry_http_status_and_rate_limit_delay(capsys):
     with pytest.raises(ai.KeyRejected) as exc:
         p.embed(['a'], 'document')
     assert (exc.value.reason, exc.value.http_status) == ('invalid_key', 401)
+
+
+def test_embedding_response_alias_is_scoped_to_verified_model_and_revision():
+    requested, identity = 'voyageai/voyage-4', 'voyageai/voyage-4-20260727'
+    assert ai.embedding_identity_accepted('voyage-4', requested, identity)
+    assert not ai.identity_accepted('voyage-4', requested, identity)  # Generation policy stays exact.
+    for returned, model, canonical in [
+        ('voyage-4-large', requested, identity),
+        ('voyage-4', 'other/voyage-4', identity),
+        ('voyage-4', requested, 'voyageai/voyage-4-20270101'),
+        ('voyage-4', requested, None),
+        ('voyage-4', requested, requested),
+        (None, requested, identity),
+    ]:
+        assert not ai.embedding_identity_accepted(returned, model, canonical)

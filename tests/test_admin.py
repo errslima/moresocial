@@ -132,7 +132,7 @@ def test_documented_canonical_response_is_accepted_and_reload_is_consistent(brow
     assert runtime.embedding_space == f'v2:openrouter:{CANONICAL}:4:v1:plain-text:document-query'
     # Runtime validation uses the same policy as setup (the previously confirmed defect:
     # the tested identity was discarded, so a canonical response failed after saving).
-    for returned, ok in [(ALIAS, True), (CANONICAL, True), ('voyage-4', False), ('voyageai/voyage-4-20270101', False)]:
+    for returned, ok in [(ALIAS, True), (CANONICAL, True), ('voyage-4', True), ('voyageai/voyage-4-20270101', False)]:
         runtime._transport = httpx.MockTransport(lambda r, m=returned: httpx.Response(
             200, json={'model': m, 'data': [{'index': 0, 'embedding': [1.0, 0.0, 0.0, 0.0]}]}))
         if ok:
@@ -179,14 +179,14 @@ def test_catalog_outage_allows_retesting_an_unchanged_verified_configuration(bro
 
 
 def test_first_probe_mismatch_names_all_three_models(browser, admin_on, capsys):
-    use(FakeOpenRouter(embedding_models=('voyage-4',)))
+    use(FakeOpenRouter(embedding_models=('voyage-4-large',)))
     browser.login('alex')
     r = save(browser)
     assert r.status_code == 400
     assert 'embedding test (embedding_model)' in r.text
-    assert f'Requested {ALIAS}; catalog canonical {CANONICAL}; returned voyage-4.' in r.text
+    assert f'Requested {ALIAS}; catalog canonical {CANONICAL}; returned voyage-4-large.' in r.text
     failed = events(capsys.readouterr().err, 'admin_openrouter_test_failed')[0]
-    assert (failed['stage'], failed['returned_model'], failed['catalog_model']) == ('embedding_probe', 'voyage-4', CANONICAL)
+    assert (failed['stage'], failed['returned_model'], failed['catalog_model']) == ('embedding_probe', 'voyage-4-large', CANONICAL)
 
 
 def test_second_probe_mismatch_keeps_settings_and_preserves_the_form(browser, admin_on, capsys):
@@ -330,3 +330,23 @@ def test_setup_truncation_explains_limit_and_preserves_settings(browser, admin_o
     assert failed['code'] == 'truncated'
     assert failed['max_tokens'] == 4096 and failed['finish_reason'] == 'length'
     assert 'PRIVATE_PARTIAL_OUTPUT' not in err and KEY not in err
+
+
+@pytest.mark.parametrize('responses', [('voyage-4', 'voyage-4'), ('voyage-4', CANONICAL), (ALIAS, 'voyage-4')])
+def test_verified_voyage_response_alias_survives_setup_and_reload(browser, admin_on, capsys, responses):
+    fake = use(FakeOpenRouter(embedding_models=responses, dimension=1024))
+    browser.login('alex')
+    assert save(browser).status_code == 303
+    with db.session() as s:
+        saved = operator_settings.values(s)
+    assert saved[operator_settings.EMBEDDING_MODEL] == ALIAS
+    assert saved[operator_settings.EMBEDDING_IDENTITY] == CANONICAL
+    assert saved[operator_settings.EMBEDDING_DIMENSION] == '1024'
+    assert [p['model'] for p in fake.posts] == [REASONING, ALIAS, ALIAS]
+    ai.reload_operator()
+    runtime = ai.provider()
+    runtime._transport = httpx.MockTransport(FakeOpenRouter(embedding_models=('voyage-4',), dimension=1024))
+    assert runtime.embed(['Synthetic query'], 'query').model == 'voyage-4'
+    assert runtime.embedding_space == f'v2:openrouter:{CANONICAL}:1024:v1:plain-text:document-query'
+    stages = events(capsys.readouterr().err, 'admin_openrouter_stage')
+    assert next(e for e in stages if e['stage'] == 'embedding_probe')['returned_model'] == responses[0]

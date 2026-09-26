@@ -13,13 +13,19 @@
    canonical and returned model IDs. The catalog check runs first: an outage or an
    unlisted model fails before any paid call.
 
-   Identity policy (`ai.identity_accepted`, shared by setup, runtime and storage): a
-   response is accepted only if it names the selected catalog ID or the canonical slug
+   Baseline identity policy (`ai.identity_accepted`): a
+   response is accepted if it names the selected catalog ID or the canonical slug
    the catalog documented for it at setup (for example `voyageai/voyage-4` ->
    `voyageai/voyage-4-20260727`). Requests always send the selected ID; the canonical
-   identity is saved as `openrouter_embedding_identity` and names the vector space, so an
-   alias later re-pointed to a new dated model fails loudly instead of mixing spaces.
-   No prefix stripping or other normalization is applied.
+   identity is saved as `openrouter_embedding_identity` and names the vector space.
+   Responses naming a different dated revision are rejected. A native response name
+   does not independently attest the upstream revision; the mapping relies on the
+   verified catalog relationship.
+   The embedding-only compatibility policy (`ai.embedding_identity_accepted`) also
+   accepts the observed native response `voyage-4` for exactly that selected ID and
+   canonical revision. This was verified from production operation
+   `876cc6ebfa91c61019f1dfe196103133` on 2026-09-26. No prefix stripping or
+   acceptance of unverified revisions is applied; generation validation stays exact.
 3. Watch pending embedding progress while the worker rebuilds. New chunks are written
    to both spaces. Verify an extraction, a cited answer, an invitation draft and an
    older source retrieval. Do not send messages as part of this verification.
