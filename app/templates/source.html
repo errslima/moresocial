@@ -9,7 +9,7 @@
 {% if source.conversation_title and source.provider == 'whatsapp' %}<p class="small">Chat: {{ source.conversation_title }}{% if source.meta.is_group %} (group){% endif %}</p>{% endif %}
 <pre class="source-text">{{ source.body }}</pre>
 {% if source.body_truncated %}<p class="small muted">Long text was cut at 32 KiB.</p>{% endif %}
-{% if source.meta.attachments %}<p class="small muted">{{ source.meta.attachments }} attachment(s) not imported.</p>{% endif %}
+{% if source.meta.get('attachments') %}<p class="small muted">{{ source.meta.get('attachments') }} attachment(s) not imported.</p>{% endif %}
 <h2>Participants</h2>
 <ul>{% for p in participants %}<li>{{ p.role }}: {% if p.person_id and people.get(p.person_id) %}<a href="{{ url('/people/' ~ p.person_id) }}">{{ people[p.person_id].display_name }}</a>{% else %}{{ p.identifier }}{% endif %}</li>{% endfor %}</ul>
 <h2>Remove from Moresocial</h2>
@@ -17,6 +17,6 @@
 <form method="post" action="{{ url('/sources/' ~ source.id ~ '/exclude') }}" class="row">
   {{ csrf_field() }}
   <button name="scope" value="object" class="danger">Remove this item</button>
-  {% if source.conversation_id %}<button name="scope" value="conversation" class="danger">Remove the whole {{ 'chat' if source.provider == 'whatsapp' else ('thread' if source.provider == 'gmail' else 'event series') }}</button>{% endif %}
+  {% if source.conversation_id and source.provider != 'diary' %}<button name="scope" value="conversation" class="danger">Remove the whole {{ 'chat' if source.provider == 'whatsapp' else ('thread' if source.provider == 'gmail' else 'event series') }}</button>{% endif %}
 </form>
 {% endblock %}

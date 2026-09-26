@@ -16,6 +16,14 @@
         <blockquote class="excerpt">{{ s.body[:400] }}</blockquote></li>{% endfor %}</ul>
     </details>
     {% endif %}
+    {% if item.members|length > 1 %}
+    <details><summary>Grouped observations ({{ item.members|length }})</summary>
+      <ul>{% for member in item.members %}<li>{{ member.value }}</li>{% endfor %}</ul>
+      <form method="post" action="{{ url(base ~ '/claims/' ~ c.id) }}">
+        {{ csrf_field() }}<button name="action" value="ungroup" class="link">Ungroup</button>
+      </form>
+    </details>
+    {% endif %}
     {% if c.status != 'rejected' %}
     <form method="post" action="{{ url(base ~ '/claims/' ~ c.id) }}" class="inline">
       {{ csrf_field() }}

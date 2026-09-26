@@ -1,5 +1,6 @@
 """M5: the lasergame gathering workflow through the server-rendered screens."""
 import re
+import uuid
 from datetime import timedelta
 
 from sqlalchemy import select
@@ -120,7 +121,7 @@ def test_next_steps_dismiss_and_snooze(browser):
 def test_about_me_is_editable_and_observations_are_distinct(browser):
     setup(browser)
     csrf = browser.csrf('/me')
-    browser.post('/me', {'preferences': 'Small groups, active plans', 'goals': 'See friends monthly', 'csrf': csrf})
+    browser.post('/me', {'body': 'Small groups, active plans. See friends monthly.', 'entry_token': str(uuid.uuid4()), 'csrf': csrf})
     page = browser.get('/me').text
     assert 'Small groups, active plans' in page and 'See friends monthly' in page
     assert 'plan something for October' in page and 'unconfirmed' in page

@@ -16,9 +16,9 @@ import uuid
 
 from sqlalchemy import and_, exists, func, select, text
 
-from app import accounts, ai, config, db, diagnostics, google_sync, jobs, memory, operator_settings, security
+from app import accounts, ai, config, db, diagnostics, google_sync, jobs, memory, observation_groups, operator_settings, security
 from app.google import GoogleError
-from app.models import Chunk, Connection, Embedding, Job, SyncStream, Workspace, PIPELINE_VERSION
+from app.models import Chunk, Claim, Connection, Embedding, Job, SyncStream, Workspace, PIPELINE_VERSION
 
 OWNER = f'{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:6]}'
 STOP = threading.Event()
@@ -53,6 +53,8 @@ def handle(job: Job):
         return memory.rebuild_conversation(wid, p['provider'], p.get('conversation_id'))
     elif job.kind == 'embed_chunk':
         return memory.embed_chunk(wid, uuid.UUID(p['chunk_id']), job.id, p.get('space'))
+    elif job.kind == 'group_claim':
+        return observation_groups.consolidate(wid, uuid.UUID(p['claim_id']), job.id, beat)
     elif job.kind == 'extract_chunk':
         return memory.extract_chunk(wid, uuid.UUID(p['chunk_id']), job.id)
     else:
@@ -231,6 +233,14 @@ def reconcile_ai(batch: int = 200) -> int:
                                   code='ai_configuration_restored')
                     n += 1
             n += jobs.enqueue(s, wid, 'extract_chunk', f'extract:{key}', {'chunk_id': str(cid)})
+        if generation_ready and ai.embedder().embedding_dimension:
+            from app.repo import Scoped
+            rev = observation_groups.revision()
+            pending_claims = s.scalars(select(Claim).where(Claim.auto_group.is_(True),
+                (Claim.grouping_revision.is_(None)) | (Claim.grouping_revision != rev))
+                .order_by(Claim.created_at, Claim.id).limit(batch)).all()
+            for claim in pending_claims:
+                n += observation_groups.enqueue(Scoped(s, claim.workspace_id), claim)
         # Cut over only after the complete pending space is covered. Chunks are locked
         # before the final check so an ingestion commit cannot be missed.
         values = operator_settings.values(s)

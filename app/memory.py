@@ -24,7 +24,7 @@ CHUNK_CHARS = 6000          # ~1.7k tokens: well inside embedding and extraction
 SEGMENT_CHARS = 2500
 SINGLE_VALUED = {'location', 'job'}
 CATEGORIES = ['interest', 'life_update', 'preference', 'commitment']
-EXTRACT_PROVIDERS = {'gmail', 'whatsapp'}
+EXTRACT_PROVIDERS = {'gmail', 'whatsapp', 'diary'}
 
 EXTRACT_SCHEMA = {
     'type': 'object', 'additionalProperties': False, 'required': ['claims'],
@@ -47,7 +47,12 @@ location or job), preferences (e.g. diet, availability) and commitments. The sub
 participant label (P1, P2, ...) or ME for the user. Cite the line labels (S1, S2, ...) that support
 each claim. Use basis "explicit" only when the subject states it themselves. Do not infer emotions,
 psychological traits or health unless stated explicitly by the subject. Return an empty list when
-nothing qualifies."""
+nothing qualifies. Diary entries are authored by ME and can contain thoughts, temporary feelings,
+facts and wishes. Preserve temporal qualifiers and distinguish wishes from facts. Extract lasting
+interests only when the text actually states an interest; mentioning an object or doing a one-off
+action (e.g. picking up a cocktail shaker) is not evidence of an interest. Do not turn tonight's
+mood into a permanent preference. Keep each claim atomic and write it as a clear standalone
+statement with its original meaning and scope. It is fine for a diary entry to yield no claims."""
 
 
 def h(*parts) -> str:
@@ -312,6 +317,9 @@ def publish_claim(ws: Scoped, c: dict, person_id, evidence: list[tuple[ChunkSour
         if not ws.first(ws.q(ClaimSource).where(ClaimSource.claim_id == claim.id, ClaimSource.source_id == src.id)):
             ws.add(ClaimSource(id=uuid.uuid4(), claim_id=claim.id, source_id=src.id, source_version=src.version))
     ws.s.flush()
+    from . import observation_groups
+    claim.grouping_revision = None
+    observation_groups.enqueue(ws, claim)
     return claim
 
 
@@ -353,6 +361,10 @@ def edit_claim(ws: Scoped, claim: Claim, value: str) -> None:
     if existing:
         existing.status, existing.basis = 'confirmed', 'user'
         return
-    ws.add(Claim(id=uuid.uuid4(), subject=claim.subject, person_id=claim.person_id, category=claim.category,
+    corrected = ws.add(Claim(id=uuid.uuid4(), subject=claim.subject, person_id=claim.person_id, category=claim.category,
                  attribute=claim.attribute, value=value, basis='user', status='confirmed', origin='user',
                  valid_from=jobs.utcnow(), claim_key=key))
+
+    ws.s.flush()
+    from . import observation_groups
+    observation_groups.enqueue(ws, corrected)

@@ -37,10 +37,11 @@ def enqueue(s: Session, workspace_id: uuid.UUID, kind: str, key: str, payload: d
                   payload=payload, status='queued', attempts=0, max_attempts=max_attempts,
                   run_after=run_after or utcnow())
     result = s.execute(insert(Job).values(**values).on_conflict_do_nothing(
-        index_elements=['workspace_id', 'idempotency_key']))
-    if result.rowcount:
+        index_elements=['workspace_id', 'idempotency_key']).returning(Job.id))
+    inserted = result.scalar_one_or_none() is not None
+    if inserted:
         diagnostics.emit('job_enqueued', level='debug', kind=kind, job_id=values['id'])
-    return bool(result.rowcount)
+    return inserted
 
 
 CLAIM_SQL = text("""

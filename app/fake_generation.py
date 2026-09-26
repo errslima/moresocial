@@ -27,7 +27,7 @@ def words(text: str) -> set[str]:
 
 
 def respond(ctx: dict) -> dict:
-    return {'extract': extract, 'answer': answer, 'draft': draft, 'rewrite': rewrite, 'rsvp': rsvp}[ctx['purpose']](ctx)
+    return {'extract': extract, 'answer': answer, 'draft': draft, 'rewrite': rewrite, 'rsvp': rsvp, 'group_observations': group_observations}[ctx['purpose']](ctx)
 
 
 def extract(ctx: dict) -> dict:
@@ -88,3 +88,11 @@ def rsvp(ctx: dict) -> dict:
         if re.search(r"\b(i'm in|count me in|yes|sounds great|i'll be there|i'll come)\b", t):
             return {'status': 'accepted', 'evidence': [line['label']]}
     return {'status': 'unclear', 'evidence': []}
+
+
+def group_observations(ctx):
+    # Synthetic equivalence only. Real semantic quality is tested with adjudicated fixtures.
+    values = {c['value'].strip().lower().rstrip('.!') for c in ctx['incoming']['claims']}
+    return {'decisions': [{'candidate': key, 'relation': 'equivalent' if
+        values == {c['value'].strip().lower().rstrip('.!') for c in group['claims']} else 'uncertain'}
+        for key, group in ctx['candidates'].items()]}

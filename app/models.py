@@ -273,12 +273,24 @@ class Embedding(Base):
     created_at: Mapped[datetime] = now_col()
 
 
+class ObservationGroup(Base):
+    __tablename__ = 'observation_groups'
+    __table_args__ = (UniqueConstraint('workspace_id', 'id'),)
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    created_at: Mapped[datetime] = now_col()
+
+
 class Claim(Base):
     __tablename__ = 'claims'
     __table_args__ = (UniqueConstraint('workspace_id', 'id'), UniqueConstraint('workspace_id', 'claim_key'),
-                      owned('people', 'person_id', ondelete='CASCADE'))
+                      owned('people', 'person_id', ondelete='CASCADE'),
+                      owned('observation_groups', 'group_id'))
     id: Mapped[uuid.UUID] = pk()
     workspace_id: Mapped[uuid.UUID] = ws_fk()
+    group_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    auto_group: Mapped[bool] = mapped_column(Boolean, default=True, server_default='true', nullable=False)
+    grouping_revision: Mapped[str | None] = mapped_column(String(64))
     subject: Mapped[str] = mapped_column(String(10), nullable=False)  # person | self
     person_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
     category: Mapped[str] = mapped_column(String(20), nullable=False)  # interest|life_update|preference|commitment|note
@@ -293,6 +305,18 @@ class Claim(Base):
     claim_key: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = now_col()
     updated_at: Mapped[datetime] = now_col(onupdate=func.now())
+
+
+class ClaimEmbedding(Base):
+    __tablename__ = 'claim_embeddings'
+    __table_args__ = (owned('claims', 'claim_id', ondelete='CASCADE'),
+                      UniqueConstraint('workspace_id', 'claim_id', 'space'))
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    claim_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    space: Mapped[str] = mapped_column(String(180), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    vector = mapped_column(Vector(), nullable=False)
 
 
 class ClaimSource(Base):

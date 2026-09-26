@@ -222,3 +222,32 @@ def test_admin_openrouter_failure_keeps_choices_and_shows_reference(live, chromi
         playwright.expect(page.locator('section', has_text='Current operation')).to_contain_text(CANONICAL)
     finally:
         admin.set_transport(None)
+
+
+@pytest.mark.parametrize('viewport', [{'width': 1280, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])
+def test_diary_flow(live, chromium, viewport):
+    ctx = chromium.new_context(viewport=viewport)
+    page = ctx.new_page()
+    page.goto(live + '/')
+    page.get_by_role('button', name='Continue with Google').click()
+    page.get_by_role('button', name='Allow').click()
+    page.wait_for_url(live + '/home')
+    page.goto(live + '/me')
+    assert page.locator('textarea:visible').count() == 1
+    page.get_by_label('What’s on your mind?').fill('I enjoy sketching mountain landscapes.')
+    page.get_by_role('button', name='Add diary entry').click()
+    playwright.expect(page.get_by_role('status')).to_contain_text('Diary entry saved')
+    assert page.get_by_label('What’s on your mind?').input_value() == ''
+    drain()
+    page.reload()
+    playwright.expect(page.locator('article.card')).to_contain_text('Searchable · observations processed')
+    page.locator('article.card summary').click()
+    page.locator('article.card textarea').fill('Tonight I want a quiet evening.')
+    page.get_by_role('button', name='Save changes').click()
+    drain()
+    page.reload()
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
+    page.screenshot(path=f'/tmp/moresocial-diary-{viewport["width"]}.png', full_page=True)
+    page.get_by_role('button', name='Delete entry').click()
+    assert page.locator('article.card').count() == 0
+    ctx.close()

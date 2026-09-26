@@ -46,13 +46,14 @@ def person_identifiers(ws: Scoped, person_id) -> list[str]:
 
 def person_facts(ws: Scoped, person_id) -> list[dict]:
     claims = ws.all(ws.q(Claim).where(Claim.person_id == person_id, Claim.status.in_(['active', 'confirmed']))
-                    .order_by(Claim.created_at).limit(12))
+                    .order_by(Claim.created_at))
+    from .observation_groups import bundles
     facts = []
-    for n, c in enumerate(claims):
-        src = ws.s.execute(select(ClaimSource.source_id, ClaimSource.source_version).where(
-            ClaimSource.workspace_id == ws.wid, ClaimSource.claim_id == c.id)).first()
+    for n, item in enumerate(bundles(ws, claims)[:12]):
+        c = item['claim']
+        source = item['sources'][0] if item['sources'] else None
         facts.append({'label': f'F{n + 1}', 'category': c.category, 'attribute': c.attribute, 'value': c.value,
-                      'source': src})
+                      'source': (source.id, source.version) if source else None})
     return facts
 
 

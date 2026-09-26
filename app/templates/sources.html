@@ -2,11 +2,11 @@
 {% from 'macros.html' import when, provider_name with context %}
 {% block title %}Sources{% endblock %}
 {% block content %}
-<h1>Imported sources</h1>
+<h1>Sources</h1>
 <form method="get" action="{{ url('/sources') }}" class="row" role="search">
   <label for="provider">Source</label>
   <select id="provider" name="provider"><option value="">All</option>
-  {% for p in ['gmail','calendar','whatsapp'] %}<option value="{{ p }}" {% if provider == p %}selected{% endif %}>{{ provider_name(p) }}</option>{% endfor %}</select>
+  {% for p in ['gmail','calendar','whatsapp','diary'] %}<option value="{{ p }}" {% if provider == p %}selected{% endif %}>{{ provider_name(p) }}</option>{% endfor %}</select>
   <label for="q" class="sr">Search</label><input id="q" name="q" value="{{ q }}" placeholder="Search text">
   <button type="submit">Filter</button>
 </form>

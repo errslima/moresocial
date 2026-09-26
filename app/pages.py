@@ -56,14 +56,9 @@ def ai_failure(purpose: str, exc: Exception) -> str | None:
 
 
 def claim_view(ws, claims: list[Claim]) -> list[dict]:
-    out = []
-    for c in claims:
-        rows = ws.s.execute(select(Source).join(ClaimSource, (ClaimSource.source_id == Source.id) &
-                                                (ClaimSource.workspace_id == Source.workspace_id))
-                            .where(ClaimSource.workspace_id == ws.wid, ClaimSource.claim_id == c.id)
-                            .order_by(Source.occurred_at)).scalars().all()
-        out.append({'claim': c, 'label': CLAIM_LABELS.get(c.category, c.category), 'sources': rows})
-    return out
+    from .observation_groups import bundles
+    return [{**item, 'label': CLAIM_LABELS.get(item['claim'].category, item['claim'].category)}
+            for item in bundles(ws, claims)]
 
 
 # ---------------- welcome / home ----------------
@@ -137,14 +132,11 @@ def person_claim(pid: str, cid: str, action: str = Form(...), value: str = Form(
     ws = ctx.ws
     claim = found(ws.get(Claim, cid), 'That memory')
     back = f'/people/{claim.person_id}' if claim.person_id else '/me'
-    if action == 'confirm':
-        claim.status = 'confirmed'
-    elif action == 'reject':
-        memory.reject_claim(ws, claim)
-    elif action == 'edit':
-        memory.edit_claim(ws, claim, value)
-    else:
-        raise Problem(400, 'Unknown action.')
+    from . import observation_groups
+    try:
+        observation_groups.act(ws, claim, action, value)
+    except ValueError as exc:
+        raise Problem(400, str(exc))
     return redirect(back)
 
 
@@ -209,7 +201,7 @@ def unlink(pid: str, identifier: str = Form(...), ctx: Ctx = Depends(require_mut
 def sources(request: Request, provider: str = '', q: str = '', ctx: Ctx = Depends(require_user)):
     ws = ctx.ws
     stmt = ws.q(Source).where(Source.deleted_at.is_(None))
-    if provider in ('gmail', 'calendar', 'whatsapp'):
+    if provider in ('gmail', 'calendar', 'whatsapp', 'diary'):
         stmt = stmt.where(Source.provider == provider)
     if q.strip():
         like = '%' + q.strip()[:100].replace('%', '') + '%'
@@ -452,20 +444,49 @@ def manual_draft(eid: str, epid: str, text: str = Form(...), ctx: Ctx = Depends(
 # ---------------- about me ----------------
 
 @router.get('/me')
-def me(request: Request, ctx: Ctx = Depends(require_user)):
+def me(request: Request, page: int = 1, saved: str = '', ctx: Ctx = Depends(require_user)):
+    from . import diary
     ws = ctx.ws
-    profile = ws.s.get(SelfProfile, ws.wid)
+    page = max(1, page)
     observations = ws.all(ws.q(Claim).where(Claim.subject == 'self').order_by(Claim.status, Claim.created_at.desc()))
-    return render(request, 'me.html', ctx, profile=profile, observations=claim_view(ws, observations))
+    entries = diary.entries(ws, (page - 1) * 20, 21)
+    return render(request, 'me.html', ctx, observations=claim_view(ws, observations), entries=entries[:20],
+                  more=len(entries) > 20, page=page, entry_token=str(uuid.uuid4()), saved=saved == 'yes')
 
 
 @router.post('/me')
-def save_me(preferences: str = Form(''), goals: str = Form(''), ctx: Ctx = Depends(require_mutation)):
-    profile = ctx.s.get(SelfProfile, ctx.ws.wid)
-    if profile is None:
-        profile = SelfProfile(workspace_id=ctx.ws.wid)
-        ctx.s.add(profile)
-    profile.preferences, profile.goals = preferences.strip()[:8000], goals.strip()[:8000]
+def add_diary(body: str = Form(''), entry_token: str = Form(...), ctx: Ctx = Depends(require_mutation)):
+    from . import diary
+    from .repo import as_uuid
+    token = as_uuid(entry_token)
+    if token is None:
+        raise Problem(400, 'Reload the page and try again.')
+    try:
+        diary.save(ctx.ws, body, token=str(token))
+    except ValueError as exc:
+        raise Problem(400, str(exc))
+    return redirect('/me', saved='yes')
+
+
+@router.post('/me/diary/{sid}/edit')
+def edit_diary(sid: str, body: str = Form(''), ctx: Ctx = Depends(require_mutation)):
+    from . import diary
+    entry = found(ctx.ws.get(Source, sid), 'That diary entry')
+    if entry.provider != 'diary':
+        raise Problem(404, 'Diary entry not found.')
+    try:
+        diary.save(ctx.ws, body, entry=entry)
+    except ValueError as exc:
+        raise Problem(400, str(exc))
+    return redirect('/me', saved='yes')
+
+
+@router.post('/me/diary/{sid}/delete')
+def delete_diary(sid: str, ctx: Ctx = Depends(require_mutation)):
+    entry = found(ctx.ws.get(Source, sid), 'That diary entry')
+    if entry.provider != 'diary':
+        raise Problem(404, 'Diary entry not found.')
+    ingest.exclude(ctx.ws, entry, 'object')
     return redirect('/me')
 
 
