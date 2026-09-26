@@ -405,11 +405,13 @@ def test_sidebar_and_whatsapp_browser(live, chromium, viewport):
     assert page.locator('textarea').count() == 0 and page.get_by_role('button', name='Send').count() == 0
     page.screenshot(path=f'/tmp/moresocial-whatsapp-chat-{viewport["width"]}.png')
     no_horizontal_scroll()
+    assert page.evaluate('document.documentElement.scrollHeight <= innerHeight + 1')
 
     page.get_by_role('link', name='Older messages').click()
     page.wait_for_url('**&before=*')
     playwright.expect(history.locator('.wa-msg')).to_have_count(30)
     assert history.evaluate('e => e.scrollTop') == 0  # older history does not jump to the bottom
+    assert page.evaluate('document.documentElement.scrollHeight <= innerHeight + 1')
     playwright.expect(history.locator('.wa-msg').first).to_contain_text('Noor message 000')
     page.reload()
     playwright.expect(history.locator('.wa-msg')).to_have_count(30)
@@ -488,3 +490,36 @@ def test_navigation_without_javascript(live, chromium, viewport):
     link.click()
     page.wait_for_url(live + '/whatsapp')
     assert page.get_by_role('heading', name='WhatsApp', exact=True).is_visible()
+
+
+@pytest.mark.parametrize('viewport', [{'width': 1440, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])
+def test_long_chat_list_and_main_page_bounds(live, chromium, viewport):
+    from conftest import workspace_of
+    from test_whatsapp_pages import put
+    from app import db
+    from app.models import Person, PersonIdentifier
+    from sqlalchemy import select
+    config.override(dataclasses.replace(config.get(), admin_emails=frozenset({'alex@example.test'})))
+    context = chromium.new_context(viewport=viewport)
+    page = context.new_page()
+    sign_in(page, live)
+    for i in range(25):
+        put('alex@example.test', f'12036300000000{i:04d}@g.us',
+            [(f'g{i}', 60 + i, '31600000002@c.us', 'Group update')], name=f'Group {i}')
+    with db.session() as s:
+        person = s.scalar(select(Person))
+        s.add(PersonIdentifier(workspace_id=workspace_of('alex@example.test'), person_id=person.id,
+                               kind='email', value='long-address-' + 'x' * 200 + '@example.test'))
+    page.goto(live + '/whatsapp')
+    assert page.locator('.wa-conv').count() == 25
+    assert page.evaluate('document.documentElement.scrollHeight <= innerHeight + 1')
+    pane = page.locator('.wa-scroll')
+    assert pane.evaluate('e => e.scrollHeight > e.clientHeight')
+    pane.evaluate('e => e.scrollTop = e.scrollHeight')
+    assert page.locator('.wa-conv').last.is_visible()
+    assert page.evaluate('document.documentElement.scrollHeight <= innerHeight + 1')
+    for route in ('home', 'suggestions', 'people', 'ask', 'gatherings', 'me', 'connections', 'admin', 'sources'):
+        response = page.goto(live + '/' + route)
+        assert response.status == 200
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), route
+    context.close()

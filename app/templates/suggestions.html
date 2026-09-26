@@ -12,7 +12,7 @@
 {% if pending %}<span class="muted" role="status">{{ pending }} review(s) queued or running. Refresh to see results.</span>{% endif %}
 {% if last_checked %}<span class="small muted">Last reviewed {{ last_checked|suggestion_time(timezone) }}</span>{% endif %}
 </div>
-{% if failures %}<p class="warn">{{ failures }} review(s) could not finish in the last day. You can retry with Review conversations; existing items may be out of date.</p>{% endif %}
+{% if failures %}<p class="warn" role="status">{{ failures }} conversation review(s) still need a retry. Use Review conversations; existing items may be out of date.</p>{% endif %}
 <nav aria-label="Suggestion views"><ul>
 {% for key, label in [('active','Needs attention'),('snoozed','Snoozed'),('history','History')] %}
 <li><a href="{{ url('/suggestions?tab=' ~ key) }}" {% if tab == key %}aria-current="page"{% endif %}>{{ label }}</a></li>
@@ -40,7 +40,7 @@
 </article>
 {% else %}
 <div class="card"><h2>{{ 'No suggestions to show' if tab == 'active' else 'Nothing here yet' }}</h2>
-<p class="muted">{% if pending %}Your conversations are being reviewed.{% elif tab == 'active' %}There are no active recommendations in the reviewed history. You can check again after new messages arrive.{% else %}Snoozed and completed suggestions stay here for reference.{% endif %}</p></div>
+<p class="muted">{% if pending %}Your conversations are being reviewed.{% elif tab == 'active' and failures %}Some conversations could not be reviewed, so this inbox may be incomplete. Use Review conversations to try again.{% elif tab == 'active' %}There are no active recommendations in the reviewed history. You can check again after new messages arrive.{% else %}Snoozed and completed suggestions stay here for reference.{% endif %}</p></div>
 {% endfor %}
 <div class="row">{% if page > 1 %}<a href="{{ url('/suggestions?tab=' ~ tab ~ '&page=' ~ (page - 1)) }}">Previous</a>{% endif %}{% if more %}<a href="{{ url('/suggestions?tab=' ~ tab ~ '&page=' ~ (page + 1)) }}">More suggestions</a>{% endif %}</div>
 {% if chats %}<details class="card"><summary>Conversation preferences</summary><p class="muted">Pause suggestions for someone when you want to give them space. Paused chats are hidden and are not reviewed until you resume them.</p>

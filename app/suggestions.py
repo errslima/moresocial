@@ -7,6 +7,7 @@ Dismissed/done items keep their stable (conversation, anchor, kind) identity.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from copy import deepcopy
 import hashlib
 import json
 import uuid
@@ -36,7 +37,9 @@ synced messages" rather than claiming certainty about unseen conversations.
 Use an existing suggestion id whenever this is the same underlying action, even if reworded.
 Never recreate done/dismissed/resolved actions. For new actions, anchor is the message that first
 established the question, promise or prerequisite, NOT a later reminder. One action per kind and
-anchor. Cite exact message labels supporting every action. Due dates must be explicit in evidence,
+anchor. Both anchor and evidence MUST use exact message label strings such as "M1" or "M12".
+Evidence is an array of labels, NEVER quotations, explanations, source UUIDs or combined label/text.
+Include the anchor label in evidence. Due dates must be explicit in the cited messages,
 interpreted using message timestamps and the supplied timezone; otherwise null.
 Resolve an existing OPEN item only with cited evidence that it was answered, fulfilled, cancelled
 or is no longer applicable. An unrelated outgoing message does not resolve a commitment. Omission
@@ -55,6 +58,25 @@ SCHEMA = obj({'items': {'type': 'array', 'items': obj({
     'anchor': STR, 'title': STR, 'reason': STR, 'evidence': LABELS, 'due_at': {'type': ['string', 'null']}})},
     'resolved': {'type': 'array', 'items': obj({'id': STR, 'evidence': LABELS})}})
 DRAFT_SCHEMA = obj({'text': STR})
+
+
+def review_schema(ctx):
+    """Constrain citations to this snapshot before generation; validation remains mandatory."""
+    schema = deepcopy(SCHEMA)
+    label = {'type': 'string', 'enum': [m['label'] for m in ctx['messages']]}
+    item = schema['properties']['items']['items']['properties']
+    item['anchor'] = deepcopy(label)
+    # Replace these nodes: STR is shared by other fields in the base schema.
+    item['evidence'] = {'type': 'array', 'minItems': 1, 'maxItems': 12, 'items': deepcopy(label)}
+    schema['properties']['resolved']['items']['properties']['evidence'] = deepcopy(item['evidence'])
+    return schema
+
+
+def review_prompt(ctx):
+    # Internal source IDs/versions are for publication and race checks, not model citations.
+    public = {k: v for k, v in ctx.items() if k != 'person_id'}
+    public['messages'] = [{k: v for k, v in m.items() if k not in ('id', 'version')} for m in ctx['messages']]
+    return json.dumps({'now': utcnow().isoformat(), **public}, ensure_ascii=False)
 
 
 def utcnow():
@@ -220,8 +242,8 @@ def review_conversation(wid, rid, heartbeat=lambda: None):
     for max_tokens in (5000, 10000):
         heartbeat()
         try:
-            out = ai.generate(wid, system=SYSTEM, prompt=json.dumps({'now': utcnow().isoformat(), **ctx}, ensure_ascii=False),
-                schema=SCHEMA, max_tokens=max_tokens, effort='low', context=ctx)
+            out = ai.generate(wid, system=SYSTEM, prompt=review_prompt(ctx),
+                schema=review_schema(ctx), max_tokens=max_tokens, effort='low', context=ctx)
             break
         except ai.InvalidOutput as exc:
             if str(exc) != 'truncated' or max_tokens == 10000:

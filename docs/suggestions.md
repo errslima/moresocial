@@ -25,6 +25,10 @@ release. Existing gathering workflows are unchanged.
 - The model identifies actions, not merely unanswered last messages. It must cite actual
   source labels and resolve old actions explicitly; omission never means resolution.
   JSON, identity, direction, dates and citations are validated before publication.
+  The generation schema restricts anchors and evidence to this snapshot's message
+  labels. Internal source IDs/versions stay out of the model prompt; quoted text is
+  not accepted as a citation. Failure notices count conversations whose latest review
+  is still failed, rather than historical attempts that have since been retried.
 - Review input carries a conversation revision and fingerprint. Provider calls happen
   outside database transactions; publication rechecks both and the worker lease. A newer
   message, source change, preference or user disposition invalidates an in-flight result.

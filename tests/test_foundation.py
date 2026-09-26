@@ -1,5 +1,6 @@
 """M0: configuration guards, migrations, health/readiness, prefix routing."""
 import pytest
+import re
 
 from app import config
 
@@ -50,7 +51,8 @@ def test_health_ready_and_prefix(browser):
     assert r.status_code == 308 and r.headers['location'] == '/moresocial/'
     assert browser.c.get('/home').status_code == 404  # outside the prefix
     page = browser.get('/').text
-    assert 'href="/moresocial/static/app.css"' in page
+    assert re.search(r'href="/moresocial/static/app.css\?v=[0-9a-f]{12}"', page)
+    assert re.search(r'src="/moresocial/static/app.js\?v=[0-9a-f]{12}"', page)
     assert 'action="/moresocial/api/auth/google/start"' in page
     assert browser.get('/static/app.css').status_code == 200
 

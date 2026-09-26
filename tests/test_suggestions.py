@@ -301,3 +301,69 @@ def test_open_promise_keeps_context_after_thirty_days(browser, setup):
     with db.session() as s:
         s.get(Source, src).occurred_at = suggestions.utcnow() - timedelta(days=40)
     assert review(wid)[0].state == 'active'
+
+
+def test_model_contract_cites_only_snapshot_labels(browser, setup, monkeypatch):
+    import json
+    wid, src, row = setup
+    original = ai.generate
+    base = copy.deepcopy(suggestions.SCHEMA)
+    def check(*args, **kw):
+        prompt = json.loads(kw['prompt'])
+        labels = [m['label'] for m in kw['context']['messages']]
+        assert all('id' not in m and 'version' not in m for m in prompt['messages'])
+        assert 'person_id' not in prompt
+        properties = kw['schema']['properties']
+        item = properties['items']['items']['properties']
+        assert item['anchor']['enum'] == labels
+        assert item['evidence']['items']['enum'] == labels
+        assert properties['resolved']['items']['properties']['evidence']['items']['enum'] == labels
+        assert 'enum' not in item['title'] and 'enum' not in item['reason']
+        return original(*args, **kw)
+    monkeypatch.setattr(ai, 'generate', check)
+    assert review(wid)[0].state == 'active'
+    assert suggestions.SCHEMA == base
+
+
+def test_quoted_evidence_still_rejected(browser, setup):
+    wid, src, row = setup
+    with db.session() as s:
+        ctx = suggestions.snapshot(Scoped(s, wid), s.get(SuggestionReview, row.review_id))[0]
+    from app.fake_generation import suggestion_review
+    data = copy.deepcopy(suggestion_review(ctx))
+    data['items'][0]['evidence'] = [ctx['messages'][0]['text']]
+    with pytest.raises(ai.InvalidOutput, match='suggestions_evidence'):
+        suggestions.validate(data, ctx)
+
+
+def test_failure_notice_clears_when_review_is_retried(browser, setup):
+    wid, src, row = setup
+    now = suggestions.utcnow()
+    with db.session() as s:
+        # Two failed attempts for one conversation count once.
+        s.get(SuggestionReview, row.review_id).checked_at = now - timedelta(hours=1)
+        for i in range(2):
+            s.add(Job(workspace_id=wid, kind='review_suggestions', idempotency_key=f'failed-{i}',
+                      payload={'review_id': str(row.review_id)}, status='failed',
+                      created_at=now - timedelta(minutes=10-i), updated_at=now - timedelta(minutes=9-i)))
+    page = browser.get('/suggestions').text
+    assert '1 conversation review(s) still need a retry' in page
+    assert browser.post('/suggestions/review', {'csrf': browser.csrf()}).status_code == 303
+    page = browser.get('/suggestions').text
+    assert 'still need a retry' not in page and 'review(s) queued or running' in page
+    from worker.main import drain
+    drain(kinds=['review_suggestions'])
+    assert 'still need a retry' not in browser.get('/suggestions').text
+
+
+def test_failed_review_empty_state_is_not_all_clear(browser):
+    browser.login('alex')
+    wid = workspace_of('alex@example.test')
+    add(wid, 'Can you join dinner?')
+    with db.session() as s:
+        rid = s.scalar(select(SuggestionReview.id))
+        s.add(Job(workspace_id=wid, kind='review_suggestions', idempotency_key='failed',
+                  payload={'review_id': str(rid)}, status='failed'))
+    page = browser.get('/suggestions').text
+    assert 'this inbox may be incomplete' in page
+    assert 'There are no active recommendations in the reviewed history' not in page

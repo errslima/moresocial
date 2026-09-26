@@ -3,7 +3,7 @@ from datetime import timedelta
 import uuid
 
 from fastapi import APIRouter, Depends, Form, Request
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, cast, func, or_, select
 
 from . import ai, suggestions
 from .models import Job, Person, PersonIdentifier, Suggestion, SuggestionReview, WhatsAppConnector, Workspace
@@ -48,8 +48,17 @@ def inbox(request: Request, tab: str = 'active', page: int = 1, ctx: Ctx = Depen
     connector = ws.first(ws.q(WhatsAppConnector))
     stale_sync = not connector or connector.observed != 'ready' or connector.updated_at < now - timedelta(minutes=10)
     pending = ws.s.scalar(ws.q(Job, func.count()).where(Job.kind == 'review_suggestions', Job.status.in_(['queued', 'running'])))
-    failures = ws.s.scalar(ws.q(Job, func.count()).where(Job.kind == 'review_suggestions', Job.status == 'failed',
-        Job.updated_at > now - timedelta(days=1)))
+    # Count unresolved conversations, not every historical failed attempt. A later
+    # queued/successful review supersedes an old failure without erasing its audit trail.
+    latest = (ws.q(Job, Job.payload['review_id'].astext.label('review_id'), Job.status, Job.updated_at,
+        func.row_number().over(partition_by=Job.payload['review_id'].astext,
+                               order_by=(Job.created_at.desc(), Job.id.desc())).label('rank'))
+        .where(Job.kind == 'review_suggestions').subquery())
+    failures = ws.s.scalar(select(func.count()).select_from(latest).join(SuggestionReview,
+        (latest.c.review_id == cast(SuggestionReview.id, String)) &
+        (SuggestionReview.workspace_id == ws.wid)).where(latest.c.rank == 1, latest.c.status == 'failed',
+        latest.c.updated_at > now - timedelta(days=1), SuggestionReview.paused.is_(False),
+        or_(SuggestionReview.checked_at.is_(None), SuggestionReview.checked_at < latest.c.updated_at)))
     labels = dict(ws.s.execute(ws.q(PersonIdentifier, PersonIdentifier.value, Person.display_name)
         .join(Person, (Person.id == PersonIdentifier.person_id) & (Person.workspace_id == PersonIdentifier.workspace_id))
         .where(PersonIdentifier.kind == 'whatsapp')).all())

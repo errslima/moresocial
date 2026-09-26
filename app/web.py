@@ -6,6 +6,7 @@ with `settings.url()` so every link, asset, redirect and cookie keeps the prefix
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Iterator
 from urllib.parse import urlsplit
@@ -21,6 +22,8 @@ from .models import Account, Session
 from .repo import Scoped
 
 HERE = Path(__file__).parent
+ASSET_VERSION = sha256(b''.join((HERE / 'static' / name).read_bytes()
+                              for name in ('app.css', 'app.js'))).hexdigest()[:12]
 templates = Jinja2Templates(directory=str(HERE / 'templates'))
 # Fail loudly on a missing template variable (e.g. a macro imported without context).
 import jinja2 as _jinja2
@@ -131,7 +134,8 @@ def render(request: Request, name: str, ctx: Ctx | None = None, status: int = 20
     notice = NOTICES.get(request.query_params.get('notice', ''))
     return templates.TemplateResponse(request, name, {'ctx': ctx, 'url': settings.url, 'settings': settings,
                                                        'is_admin': is_admin(ctx),
-                                                       'notice': notice, 'csrf': ctx.csrf if ctx else '', **data},
+                                                       'notice': notice, 'csrf': ctx.csrf if ctx else '',
+                                                       'asset_version': ASSET_VERSION, **data},
                                       status_code=status)
 
 
