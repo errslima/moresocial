@@ -316,8 +316,10 @@ def gathering(request: Request, eid: str, ctx: Ctx = Depends(require_user)):
     evidence = ctx.ws.all(ctx.ws.q(Source).where(Source.id.in_(ids), Source.included.is_(True), Source.deleted_at.is_(None))
                           .order_by(Source.occurred_at, Source.id)) if ids else []
     people_ = {str(p.id): p for p in ctx.ws.all(ctx.ws.q(Person))}
+    source_names = {i.value: people_[str(i.person_id)].display_name for i in ctx.ws.all(ctx.ws.q(PersonIdentifier))
+                    if str(i.person_id) in people_}
     return render(request, 'event.html', ctx, event=e, evidence=evidence, people=people_,
-                  tz=ZoneInfo(e.timezone), roles=automatic_events.ROLES, statuses=automatic_events.LABELS)
+                  tz=ZoneInfo(e.timezone), roles=automatic_events.ROLES, statuses=automatic_events.LABELS, source_names=source_names)
 
 
 @router.post('/events/{eid}/dismiss')

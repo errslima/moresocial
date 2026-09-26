@@ -111,6 +111,7 @@ def is_excluded(ws: Scoped, provider: str, object_id: str, conversation_id: str 
 def content_hash(rec: SourceRecord) -> str:
     payload = json.dumps([rec.title, rec.body, rec.occurred_at.isoformat() if rec.occurred_at else None,
                           rec.ends_at.isoformat() if rec.ends_at else None, rec.deleted, rec.meta.get('status'),
+                          {key: rec.meta.get(key) for key in ('all_day', 'self_response', 'self_organizer', 'attendee_responses')},
                           sorted((p.kind, p.identifier, p.role) for p in rec.participants)], sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
 

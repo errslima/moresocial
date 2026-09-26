@@ -8,6 +8,8 @@ import hashlib
 import json
 import re
 import uuid
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from sqlalchemy import select, text, func
@@ -233,6 +235,28 @@ def invalidate(ws, source_ids):
     for eid in touched:
         recompute(ws, ws.get(Event, eid))
 
+@contextmanager
+def keep_lease(heartbeat, interval=30):
+    """Slow provider responses must not let another worker reclaim a live review."""
+    stopped, errors = threading.Event(), []
+    def renew():
+        while not stopped.wait(interval):
+            try:
+                heartbeat()
+            except Exception as exc:
+                errors.append(exc)
+                return
+    thread = threading.Thread(target=renew, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        thread.join()
+    if errors:
+        raise errors[0]
+
+
 def windows(rows):
     """Keep model inputs bounded while covering every imported message, with reply overlap."""
     offset = 0
@@ -286,8 +310,10 @@ def detect(wid, provider, conversation, heartbeat=lambda: None):
                 person_ids = {p.person_id for p in participants if p.person_id}
                 names = {str(p.id): p.display_name for p in ws.all(ws.q(Person).where(Person.id.in_(person_ids)))}
                 payload = {'messages': messages, 'existing': candidates, 'people': names}
-                out = ai.generate(wid, system=SYSTEM, prompt=json.dumps(payload, ensure_ascii=False), schema=SCHEMA,
-                    max_tokens=6500, effort='medium', context={'purpose': 'events', **payload})
+                s.commit()  # Release the read transaction while the provider works.
+                with keep_lease(heartbeat):
+                    out = ai.generate(wid, system=SYSTEM, prompt=json.dumps(payload, ensure_ascii=False), schema=SCHEMA,
+                        max_tokens=6500, effort='low', context={'purpose': 'events', **payload})
                 items = out.data.get('events', [])
             heartbeat()
             # Fresh transaction after model call; validate every source version under the lock.

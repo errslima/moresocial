@@ -132,3 +132,45 @@ def test_dismissal_survives_source_edit_and_redetection(browser):
         events.persist(ws,'a',[src],[dict(data,title='Dinner with a corrected title')])
         assert len(ws.all(ws.q(Event)))==1
         assert e.dismissed and not events.cards(ws)
+
+
+def test_calendar_rsvp_change_is_ingested_and_replaces_attendance(browser):
+    from app.google_sync import calendar_record
+    browser.login('alex'); wid=workspace_of('alex@example.test')
+    start=datetime.now(timezone.utc)+timedelta(days=2)
+    raw={'id':'calendar-rsvp','summary':'Dinner','start':{'dateTime':start.isoformat()},
+         'end':{'dateTime':(start+timedelta(hours=2)).isoformat()},
+         'organizer':{'email':'alex@example.test','self':True},
+         'attendees':[{'email':'sam@example.test','displayName':'Sam','responseStatus':'accepted'}]}
+    with db.session() as s:
+        ws=Scoped(s,wid)
+        ingest.upsert(ws,calendar_record(raw,'alex@example.test'),{'alex@example.test'},ingest.IngestResult())
+    events.detect(wid,'calendar','calendar-rsvp')
+    with db.session() as s:
+        ws=Scoped(s,wid); e=ws.first(ws.q(Event)); eid=e.id
+        assert e.details['role']=='organizer'
+        assert e.details['participants'][0]['status']=='accepted'
+        raw['attendees'][0]['responseStatus']='declined'
+        result=ingest.IngestResult()
+        ingest.upsert(ws,calendar_record(raw,'alex@example.test'),{'alex@example.test'},result)
+        assert result.updated==1
+    events.detect(wid,'calendar','calendar-rsvp')
+    with db.session() as s:
+        ws=Scoped(s,wid)
+        assert len(ws.all(ws.q(Event)))==1
+        assert ws.get(Event,eid).details['participants'][0]['status']=='declined'
+
+
+def test_slow_recognition_renews_lease_and_surfaces_lease_loss():
+    import threading
+    import pytest
+    renewed=threading.Event()
+    with events.keep_lease(renewed.set, interval=.01):
+        assert renewed.wait(1)
+    failed=threading.Event()
+    def lost():
+        failed.set()
+        raise RuntimeError('lease lost')
+    with pytest.raises(RuntimeError,match='lease lost'):
+        with events.keep_lease(lost, interval=.01):
+            assert failed.wait(1)

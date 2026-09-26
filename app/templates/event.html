@@ -22,7 +22,7 @@
 <section aria-labelledby="context"><div class="event-heading"><h2 id="context">Messages & context</h2><span class="small muted">{{ evidence|length }} {{ 'source' if evidence|length == 1 else 'sources' }}</span></div>
 <p class="muted small">Related messages and calendar entries, in order. Open a source to read it in full.</p>
 {% for source in evidence %}<article class="event-evidence">
-<div class="event-heading small"><strong>{{ provider_name(source.provider) }} · {{ 'You' if source.from_me else source.author_label or source.conversation_title or 'Calendar' }}</strong><span class="muted">{{ source.occurred_at.astimezone(tz).strftime('%d %b %Y · %H:%M') }}</span></div>
+<div class="event-heading small"><strong>{{ provider_name(source.provider) }} · {{ 'You' if source.from_me else source_names.get(source.author) or source.author_label or source.conversation_title or 'Calendar' }}</strong><span class="muted">{{ source.occurred_at.astimezone(tz).strftime('%d %b %Y · %H:%M') }}</span></div>
 {% if source.title %}<h3>{{ source.title }}</h3>{% endif %}
 <p>{{ source.body[:500] }}{{ '…' if source.body|length > 500 else '' }}</p><a class="small" href="{{ url('/sources/' ~ source.id) }}">Open source →</a>
 </article>{% else %}<p class="muted">No imported evidence is available for this event.</p>{% endfor %}
