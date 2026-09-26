@@ -292,3 +292,67 @@ def test_reindex_on_embedding_model_change_refuses_mixed_vectors(browser):
         models = set(s.scalars(select(Embedding.model)))
         assert models == {'fake-hash-64', 'fake-hash-32'}
         assert retrieval.search_chunks(Scoped(s, wa), 'lasergame')
+
+
+def test_missing_configuration_defers_and_legacy_failures_recover(browser, monkeypatch):
+    from worker import main
+    from app import jobs
+    setup_user(browser, whatsapp=False)
+    with db.session() as s:
+        chunk = s.scalar(select(Chunk).where(Chunk.provider == 'gmail'))
+        chunk.extracted_at = None
+        job = s.scalar(select(Job).where(Job.idempotency_key == f'extract:{chunk.chunk_key}'))
+        jid, cid = job.id, chunk.id
+        job.status, job.attempts, job.run_after = 'queued', 0, jobs.utcnow()
+    with monkeypatch.context() as m:
+        def unavailable(job):
+            raise ai.AIUnavailable('AI provider is not configured')
+        m.setattr(main, 'handle', unavailable)
+        assert main.run_one(['extract_chunk'])
+    with db.session() as s:
+        job = s.get(Job, jid)
+        assert job.status == 'queued' and job.attempts == 0
+        assert job.run_after > jobs.utcnow()
+        job.status, job.attempts = 'failed', 5
+        job.last_error = 'ai unavailable: AI provider is not configured'
+    with monkeypatch.context() as m:
+        m.setattr(ai.provider(), 'can_generate', lambda: False)
+        main.reconcile_ai()
+    with db.session() as s:
+        assert s.get(Job, jid).status == 'failed'
+    main.reconcile_ai()
+    main.reconcile_ai()
+    with db.session() as s:
+        job = s.get(Job, jid)
+        assert job.status == 'queued' and job.attempts == 0
+    assert main.run_one(['extract_chunk'])
+    with db.session() as s:
+        assert s.get(Chunk, cid).extracted_at is not None
+        s.get(Chunk, cid).extracted_at = None
+        job = s.get(Job, jid)
+        job.status, job.last_error = 'failed', 'invalid model output: truncated'
+    main.reconcile_ai()
+    with db.session() as s:
+        assert s.get(Job, jid).status == 'failed'
+        s.get(Job, jid).status = 'cancelled'
+        s.get(Job, jid).last_error = 'ai unavailable: AI provider is not configured'
+    main.reconcile_ai()
+    with db.session() as s:
+        assert s.get(Job, jid).status == 'cancelled'
+
+
+def test_message_trace_is_scoped_and_omits_text_by_default(browser):
+    import uuid
+    from app.trace_message import trace
+    setup_user(browser, whatsapp=False)
+    wid = workspace_of('alex@example.test')
+    with db.session() as s:
+        source = s.scalar(select(Source).where(Source.provider_object_id == 'a-m1'))
+        result = trace(Scoped(s, wid), source.id)
+        assert result['chunks'] and result['claims']
+        assert result['chunks'][0]['extracted_at']
+        assert result['chunks'][0]['embeddings'] and result['chunks'][0]['jobs']
+        assert 'text' not in result['source'] and 'value' not in result['claims'][0]
+        assert trace(Scoped(s, wid), source.id, True)['source']['text'] == source.body
+        with pytest.raises(ValueError, match='not found'):
+            trace(Scoped(s, uuid.uuid4()), source.id)

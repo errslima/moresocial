@@ -112,6 +112,12 @@ def run_one(kinds: list[str] | None = None) -> bool:
             _failed(status, _code(exc), duration_ms=elapsed(), **base)
             return True
         except ai.AIUnavailable as exc:
+            if str(exc) == 'AI provider is not configured':
+                with db.session() as s:
+                    jobs.defer(s, job.id, OWNER, utcnow() + timedelta(seconds=600),
+                               'AI waiting: provider configuration')
+                security.emit('job_deferred', code='ai_not_configured', duration_ms=elapsed(), **base)
+                return True
             if str(exc) == 'rate_limited':
                 # Pace backfills: wait for the provider without spending one of the job's attempts.
                 wait = min(ai.RATE_LIMIT_MAX_WAIT, exc.retry_after or ai.RATE_LIMIT_DEFAULT_WAIT) + random.uniform(0, 30)
@@ -188,6 +194,7 @@ def reconcile_ai(batch: int = 200) -> int:
     """Chunks missing an embedding for the configured model (new chunks, crashes, or a model
     change = reindex) or never extracted get idempotent jobs."""
     targets = ai.embedding_targets()
+    generation_ready = ai.provider().can_generate()
     n = 0
     with db.session() as s:
         legacy = s.execute(select(Chunk.workspace_id, Chunk.provider, Chunk.conversation_id).where(
@@ -207,6 +214,22 @@ def reconcile_ai(batch: int = 200) -> int:
             Chunk.pipeline_version == PIPELINE_VERSION, Chunk.extracted_at.is_(None),
             Chunk.provider.in_(sorted(memory.EXTRACT_PROVIDERS))).limit(batch)).all()
         for wid, cid, key in pending:
+            if generation_ready:
+                # Recover only configuration failures for still-current, unextracted chunks.
+                # Never revive cancellations or malformed-output failures.
+                job = s.scalar(select(Job).where(
+                    Job.workspace_id == wid, Job.kind == 'extract_chunk',
+                    Job.idempotency_key == f'extract:{key}',
+                    Job.status == 'failed',
+                    Job.last_error == 'ai unavailable: AI provider is not configured',
+                    exists().where(Workspace.id == wid, Workspace.status == 'active')
+                ).with_for_update(skip_locked=True))
+                if job is not None:
+                    job.status, job.attempts, job.run_after = 'queued', 0, utcnow()
+                    job.lease_owner = job.lease_expires_at = job.last_error = None
+                    security.emit('job_retry_scheduled', job_id=job.id, kind=job.kind,
+                                  code='ai_configuration_restored')
+                    n += 1
             n += jobs.enqueue(s, wid, 'extract_chunk', f'extract:{key}', {'chunk_id': str(cid)})
         # Cut over only after the complete pending space is covered. Chunks are locked
         # before the final check so an ingestion commit cannot be missed.

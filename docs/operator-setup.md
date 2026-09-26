@@ -289,3 +289,21 @@ DATABASE_URL=... SYNTHETIC_PROVIDERS=1 AI_PROVIDER=fake uv run python scripts/se
 ```
 
 Synthetic providers are refused in production mode and on `https://1f517.com`.
+
+### Trace one imported message
+
+Run this read-only command inside the app container:
+
+```bash
+sudo docker exec moresocial-web-1 python -m app.trace_message \
+  --workspace <workspace-uuid> --source <source-uuid>
+```
+
+The workspace-scoped JSON shows inclusion/deletion, current chunks, extraction timestamps,
+embedding models, job attempts/errors, and claims linked to the message. Add `--include-text`
+only when private message/claim wording is needed; text is omitted by default.
+
+Missing AI configuration defers jobs for ten minutes without consuming attempts.
+Once generation is configured, reconciliation also revives legacy terminal extraction
+jobs with the exact missing-configuration error, only for current unextracted chunks
+in active workspaces. Cancelled jobs and invalid-output failures remain untouched.
