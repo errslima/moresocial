@@ -16,7 +16,7 @@ install -d -m 0700 "$ROOT/data" "$ROOT/data/postgres" "$ROOT/data/whatsapp" "$RO
 # Persistent diagnostic store (deploy/logs.py): outlives containers; web/worker write app/ as uid 10001.
 install -d -m 0750 "$ROOT/logs"
 install -d -m 0700 "$ROOT/logs/host" "$ROOT/logs/connectors"
-install -d -m 0700 -o 10001 -g 10001 "$ROOT/logs/app"
+install -d -m 0700 "$ROOT/logs/app" && chown 10001:10001 "$ROOT/logs/app"
 event() { MORESOCIAL_RELEASE=$sha python3 "$here/deploy/logs.py" --root "$ROOT/logs" emit "$@" --service release >/dev/null 2>&1 || true; }
 stage=start
 trap 'event release_failed --level error --field stage=$stage' ERR
