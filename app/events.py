@@ -19,6 +19,7 @@ from .repo import Scoped
 
 TZ = ZoneInfo('Europe/Amsterdam')
 VERSION = 'events-v1'
+INPUT_VERSION = 'complete-bookings-v2'
 LABELS = {'accepted': 'Confirmed', 'maybe': 'Interested / unsure', 'declined': 'Not joining',
           'awaiting_reply': 'Invited · no reply'}
 ROLES = {'organizer': 'Organizing', 'invited': 'Invited', 'attending': 'Attending', 'ticket_holder': 'Ticket holder'}
@@ -51,6 +52,9 @@ SAME local day: activity, people and context must agree. Never merge unrelated s
 Include ALL message labels related to that event, including logistics, invitations, replies,
 changes, venue details and booking confirmations. Ignore unrelated messages in the same chat.
 The summary is a concise factual account of the plan, changes and unresolved questions.
+For a booking with consecutive sessions of the SAME activity/outing, return ONE event spanning
+the earliest session start through the final session end, not just the first session.
+Use "you" in summaries, never ME or internal person/message labels.
 Booking/ticket details outrank speculative chat times; a later explicit reschedule supersedes
 an earlier proposal. Use the user's role only when supported; use invited if uncertain.
 Participants must use supplied person IDs. Status requires that person's explicit statement,
@@ -84,12 +88,12 @@ def sources(ws, provider, conversation):
         Source.occurred_at >= now() - timedelta(days=30)).order_by(Source.occurred_at, Source.id))
 
 def fingerprint(rows):
-    return digest([[str(s.id), s.content_hash] for s in rows])
+    return digest([INPUT_VERSION, [[str(s.id), s.content_hash] for s in rows]])
 
 def enqueue(ws, provider, conversation, token):
     if provider not in ('whatsapp', 'gmail', 'calendar'):
         return False
-    return jobs.enqueue(ws.s, ws.wid, 'detect_events', 'events:' + digest([VERSION, provider, conversation, token]),
+    return jobs.enqueue(ws.s, ws.wid, 'detect_events', 'events:' + digest([VERSION, INPUT_VERSION, provider, conversation, token]),
         {'provider': provider, 'conversation_id': conversation}, run_after=now() + timedelta(seconds=90))
 
 def bootstrap(s):
@@ -199,7 +203,8 @@ def persist(ws, key, rows, items):
         data['participants'] = validated
         data['provider'] = rows[0].provider
         data['at'] = max((s.updated_at if data['kind'] == 'calendar' else s.occurred_at) for s in cited).isoformat()
-        data['rank'] = 3 if data['kind'] in ('calendar', 'booking', 'ticket') else 4 if data['kind'] == 'cancellation' else 1
+        data['rank'] = (5 if data['kind'] == 'cancellation' else 4 if rows[0].provider == 'gmail' and data['kind'] in ('booking', 'ticket')
+                        else 3 if data['kind'] == 'calendar' else 2 if data['kind'] in ('booking', 'ticket') else 1)
         same_identity = [ws.get(Event, eid) for eid, ids in previous_evidence.items()
                          if ids.intersection(str(s.id) for s in cited)]
         same_identity = [e for e in same_identity if e and e.starts_at and
@@ -257,13 +262,20 @@ def keep_lease(heartbeat, interval=30):
         raise errors[0]
 
 
+def message_text(source):
+    # HTML email tables can have thousands of whitespace characters between cells.
+    # Compact them before bounding input so later booking sessions remain visible.
+    body = re.sub(r'\s+', ' ', source.body).strip() if source.provider == 'gmail' else source.body
+    return body[:16000] if source.provider == 'gmail' else body[:4000]
+
+
 def windows(rows):
     """Keep model inputs bounded while covering every imported message, with reply overlap."""
     offset = 0
     while offset < len(rows):
         end, size = offset, 0
         while end < len(rows) and end - offset < 80:
-            cost = len(rows[end].body[:4000]) + len(rows[end].title or '') + 200
+            cost = len(message_text(rows[end])) + len(rows[end].title or '') + 200
             if end > offset and size + cost > 24000:
                 break
             size += cost
@@ -304,7 +316,7 @@ def detect(wid, provider, conversation, heartbeat=lambda: None):
                 messages = [{'label': f'M{i+1}', 'at': r.occurred_at.isoformat(), 'from_me': r.from_me,
                     'speaker': 'ME' if r.from_me else authors.get(r.id, r.author_label or 'unknown'),
                     'people': sorted({str(p.person_id) for p in participants if p.source_id == r.id and p.person_id}),
-                    'text': ((r.title + '\n') if r.title else '') + r.body[:4000]} for i, r in enumerate(window)]
+                    'text': ((r.title + '\n') if r.title else '') + message_text(r)} for i, r in enumerate(window)]
                 candidates = [{'id': str(e.id), 'title': e.title, 'starts_at': e.starts_at.isoformat(),
                     'place': e.details.get('place'), 'summary': e.details.get('summary', '')[:600]} for e in existing(ws)]
                 person_ids = {p.person_id for p in participants if p.person_id}

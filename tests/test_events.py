@@ -174,3 +174,18 @@ def test_slow_recognition_renews_lease_and_surfaces_lease_loss():
     with pytest.raises(RuntimeError,match='lease lost'):
         with events.keep_lease(lost, interval=.01):
             assert failed.wait(1)
+
+
+def test_booking_email_all_sessions_survive_whitespace_and_chat_does_not_override(browser):
+    browser.login('alex'); wid=workspace_of('alex@example.test')
+    with db.session() as s:
+        ws=Scoped(s,wid)
+        email=sample(ws,'gmail',text='Session 1 16:15-16:30'+('\n '*3000)+'Session 2 16:30-16:45'+('\n '*3000)+'Session 3 16:45-17:00')
+        assert '17:00' in events.message_text(email)
+        booked=item(email,kind='booking',ends_at=(email.occurred_at+timedelta(days=1,hours=1)).isoformat())
+        events.persist(ws,'mail',[email],[booked]); e=ws.first(ws.q(Event))
+        chat=sample(ws,conv='chat')
+        proposal=item(chat,kind='booking',starts_at=(events.dt(booked['starts_at'])-timedelta(minutes=15)).isoformat(),match_id=str(e.id))
+        events.persist(ws,'chat',[chat],[proposal])
+        assert e.starts_at==events.dt(booked['starts_at'])
+        assert e.ends_at==events.dt(booked['ends_at'])
