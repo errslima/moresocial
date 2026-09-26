@@ -49,3 +49,15 @@ if (wa && wa.dataset.active === 'yes') {
   };
   poll();
 }
+// The sidebar is a <details> so the compact menu works without JavaScript. On wide screens
+// it is always expanded (browsers without ::details-content need it open to show the links).
+const appnav = document.querySelector('[data-appnav]');
+if (appnav) {
+  const narrow = matchMedia('(max-width: 900px)');
+  const sync = () => { appnav.open = !narrow.matches; };
+  if (!narrow.matches) sync();
+  narrow.addEventListener('change', sync);
+}
+// Latest WhatsApp history opens at the newest message; older pages keep their position.
+const waHistory = document.querySelector('[data-wa-history="latest"]');
+if (waHistory) waHistory.scrollTop = waHistory.scrollHeight;

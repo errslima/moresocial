@@ -44,6 +44,14 @@ def live(database):
     google.set_provider(None)
 
 
+def nav_to(page, name):
+    """Follow a main-navigation link, expanding the compact mobile menu first when it is collapsed."""
+    menu = page.locator('details.appnav')
+    if menu.locator('summary').is_visible() and not menu.evaluate('d => d.open'):
+        menu.locator('summary').click()
+    menu.get_by_role('link', name=name, exact=True).click()
+
+
 @pytest.fixture(scope='module')
 def chromium():
     try:
@@ -83,7 +91,7 @@ def test_full_lasergame_scenario(live, chromium, viewport):
     assert page.context.cookies()[0]['path'] in ('/moresocial/', '/moresocial')
 
     # Link WhatsApp: QR for the owner, then ready (synthetic connector)
-    page.get_by_role('link', name='Connections').click()
+    nav_to(page, 'Connections')
     page.get_by_role('button', name='Link WhatsApp').click()
     page.wait_for_selector('img[data-wa-qr]:not([hidden])', timeout=10000)
     playwright.expect(page.locator('[data-wa-state]')).to_contain_text('Linked and syncing', timeout=15000)
@@ -110,7 +118,7 @@ def test_full_lasergame_scenario(live, chromium, viewport):
     no_horizontal_scroll()
 
     # Create a lasergame gathering, invite, draft and copy
-    page.get_by_role('link', name='Gatherings').click()
+    nav_to(page, 'Gatherings')
     page.get_by_label('Name').fill('Lasergame evening')
     page.get_by_label('Activity').fill('lasergame')
     page.get_by_role('button', name='Create').click()
@@ -135,7 +143,7 @@ def test_full_lasergame_scenario(live, chromium, viewport):
     assert 'Accepted' in page.locator('article.invitee h3').inner_text()
 
     # Ask a cited question
-    page.get_by_role('link', name='Ask').click()
+    nav_to(page, 'Ask')
     page.get_by_label('Question').fill('Does Sam like lasergame?')
     page.get_by_role('button', name='Ask', exact=True).click()
     page.wait_for_url(live + '/answers/*')
@@ -165,7 +173,7 @@ def test_ai_key_rejection_add_and_remove(live, chromium, viewport):
     page.get_by_role('button', name='Continue with Google').click()
     page.get_by_role('button', name='Allow').click()
     page.wait_for_url(live + '/home')
-    page.get_by_role('link', name='Connections').click()
+    nav_to(page, 'Connections')
     key = page.locator('#key-anthropic')
     assert key.get_attribute('type') == 'password' and key.get_attribute('autocomplete') == 'off'
 
@@ -203,7 +211,7 @@ def test_admin_openrouter_failure_keeps_choices_and_shows_reference(live, chromi
         page.get_by_role('button', name='Continue with Google').click()
         page.get_by_role('button', name='Allow').click()
         page.wait_for_url(live + '/home')
-        page.get_by_role('link', name='Admin').click()
+        nav_to(page, 'Admin')
         page.get_by_label('OpenRouter API key').fill(KEY)
         page.get_by_label('Embedding model').select_option('openai/text-embedding-3-small')
         page.get_by_role('button', name='Test and save').click()
@@ -269,7 +277,7 @@ def test_suggestions_browser(live, chromium, viewport):
     wid = workspace_of('alex@example.test')
     add(wid, 'Can you join dinner on Friday?')
     row = review(wid)[0]
-    page.get_by_role('link', name='Suggestions', exact=True).click()
+    nav_to(page, 'Suggestions')
     page.get_by_text('Why this appeared', exact=True).click()
     assert page.get_by_text('Can you join dinner on Friday?', exact=True).is_visible()
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
@@ -289,3 +297,194 @@ def test_suggestions_browser(live, chromium, viewport):
     page.get_by_role('link', name='History', exact=True).click()
     assert page.get_by_role('link', name='Reply about dinner').is_visible()
     ctx.close()
+
+
+def sign_in(page, live):
+    page.goto(live + '/')
+    page.get_by_role('button', name='Continue with Google').click()
+    page.get_by_role('button', name='Allow').click()
+    page.wait_for_url(live + '/home')
+
+
+def seed_whatsapp():
+    from test_whatsapp_pages import ALEX_WA, GROUP, NOOR, put
+    put('alex@example.test', NOOR, [(f'n{i:03d}', 20000 - i * 60, NOOR if i % 3 else None,
+                                     f'Noor message {i:03d} ' + ('with a very long unbroken link https://example.test/' + 'x' * 200 if i == 129 else ''))
+                                    for i in range(130)], name='Noor', contacts=[{'id': NOOR, 'saved_name': 'Noor Bakker'}])
+    put('alex@example.test', GROUP, [('g1', 30000, '31600000002@c.us', 'Climbing on Saturday?'),
+                                     ('g2', 29000, '31600000003@c.us', '', 'ptt')], name='Friends',
+        contacts=[{'id': '31600000002@c.us', 'saved_name': 'Sam'}, {'id': '31600000003@c.us', 'saved_name': 'Mila'}])
+    return ALEX_WA, NOOR, GROUP
+
+
+@pytest.mark.parametrize('viewport', [{'width': 1440, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])
+def test_sidebar_and_whatsapp_browser(live, chromium, viewport):
+    mobile = viewport['width'] < 900
+    config.override(dataclasses.replace(config.get(), admin_emails=frozenset({'blake@example.test'})))
+    ctx = chromium.new_context(viewport=viewport)
+    page = ctx.new_page()
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    page.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None)
+
+    def no_horizontal_scroll():
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), page.url
+
+    sign_in(page, live)
+    menu = page.locator('details.appnav')
+    main_nav = page.get_by_role('navigation', name='Main')
+    labels = main_nav.get_by_role('link').all_inner_texts() if not mobile else None
+    if mobile:
+        # Compact header: links collapsed behind one native <details> menu (no duplicate navigation).
+        assert page.get_by_role('link', name='WhatsApp', exact=True).is_hidden()
+        assert page.locator('nav[aria-label="Main"]').count() == 1
+        menu.locator('summary').click()
+        labels = main_nav.get_by_role('link').all_inner_texts()
+    else:
+        box = page.locator('.sidebar').bounding_box()
+        assert 230 <= box['width'] <= 250 and box['height'] >= 890
+        assert menu.locator('summary').is_hidden()
+        logout = page.get_by_role('button', name='Sign out').bounding_box()
+        assert logout['y'] > 780  # anchored at the bottom of the sidebar
+    assert [l.strip() for l in labels] == ['Home', 'WhatsApp', 'Suggestions', 'People', 'Ask', 'Gatherings', 'About me', 'Connections']
+    assert page.get_by_role('link', name='Admin').count() == 0  # not an administrator
+    assert page.get_by_role('link', name='Home', exact=True).get_attribute('aria-current') == 'page'
+    home_main = page.locator('main').bounding_box()
+    assert home_main['width'] <= 861
+    page.screenshot(path=f'/tmp/moresocial-home-{viewport["width"]}.png', full_page=True)
+    no_horizontal_scroll()
+
+    account, noor, group = seed_whatsapp()
+    nav_to(page, 'WhatsApp')
+    page.wait_for_url(live + '/whatsapp')
+    assert page.title() == 'WhatsApp · Moresocial'
+    assert page.locator('a[aria-current=page]').inner_text().strip() == 'WhatsApp'
+    playwright.expect(page.locator('.wa-conv')).to_have_count(2)
+    conv_names = lambda: [t.split('\n')[0] for t in page.locator('.wa-conv .wa-name').all_inner_texts()]
+    assert conv_names() == ['Noor Bakker', 'Friends']
+    if mobile:
+        assert page.locator('.wa-reader').is_hidden() and page.locator('.wa-list').is_visible()
+    else:
+        assert page.get_by_role('heading', name='Select a conversation').is_visible()
+        assert 330 <= page.locator('.wa-list').bounding_box()['width'] <= 350
+    page.screenshot(path=f'/tmp/moresocial-whatsapp-{viewport["width"]}.png')
+    no_horizontal_scroll()
+
+    # Search is a GET form: its state lives in the URL.
+    page.get_by_label('Search conversations').fill('friends')
+    page.get_by_label('Search conversations').press('Enter')
+    page.wait_for_url(live + '/whatsapp?q=friends')
+    assert conv_names() == ['Friends']
+    page.locator('.wa-conv', has_text='Friends').click()
+    page.wait_for_url('**/whatsapp?q=friends&account=*')
+    reader = page.locator('.wa-reader')
+    playwright.expect(reader.locator('.wa-sender').first).to_have_text('Sam')
+    playwright.expect(reader.locator('.wa-media')).to_have_text('Voice message')
+    if mobile:
+        assert page.locator('.wa-list').is_hidden()
+        reader.get_by_role('link', name='Back to conversations').click()
+        page.wait_for_url(live + '/whatsapp?q=friends')  # search/list state preserved
+        assert page.get_by_label('Search conversations').input_value() == 'friends'
+    page.get_by_role('link', name='Clear search').first.click()
+    page.wait_for_url(live + '/whatsapp')
+
+    # Open a long conversation: newest message in view, older history on request.
+    page.locator('.wa-conv', has_text='Noor Bakker').click()
+    page.wait_for_url('**/whatsapp?account=*')
+    chat_url = page.url
+    assert '%40c.us' in chat_url  # encoded query values
+    history = page.locator('.wa-history')
+    playwright.expect(history.locator('.wa-msg')).to_have_count(100)
+    assert history.locator('.wa-msg.out').count() > 0 and history.locator('.wa-msg.in').count() > 0
+    at_bottom = 'e => e.scrollTop + e.clientHeight >= e.scrollHeight - 4'
+    playwright.expect(history.locator('.wa-msg').last).to_contain_text('Noor message 129')
+    page.wait_for_function(f'(e => {at_bottom[5:]})(document.querySelector(".wa-history"))')
+    assert page.locator('.wa-list').is_hidden() == mobile
+    assert page.get_by_role('link', name='Back to conversations').is_visible() == mobile
+    # Nothing to send with: read-only history.
+    assert page.locator('textarea').count() == 0 and page.get_by_role('button', name='Send').count() == 0
+    page.screenshot(path=f'/tmp/moresocial-whatsapp-chat-{viewport["width"]}.png')
+    no_horizontal_scroll()
+
+    page.get_by_role('link', name='Older messages').click()
+    page.wait_for_url('**&before=*')
+    playwright.expect(history.locator('.wa-msg')).to_have_count(30)
+    assert history.evaluate('e => e.scrollTop') == 0  # older history does not jump to the bottom
+    playwright.expect(history.locator('.wa-msg').first).to_contain_text('Noor message 000')
+    page.reload()
+    playwright.expect(history.locator('.wa-msg')).to_have_count(30)
+    page.go_back()
+    page.wait_for_url(chat_url)
+    playwright.expect(history.locator('.wa-msg')).to_have_count(100)
+
+    # A direct link opens the same conversation in a fresh tab.
+    other = ctx.new_page()
+    other.on('pageerror', lambda e: errors.append(str(e)))
+    other.goto(chat_url)
+    playwright.expect(other.locator('.wa-history .wa-msg')).to_have_count(100)
+    assert other.locator('.wa-head h2').inner_text() == 'Noor Bakker'
+    other.close()
+
+    # Message details still lead to the existing source page.
+    history.locator('.wa-msg').last.get_by_role('link', name='Details of this message').click()
+    page.wait_for_url(live + '/sources/*')
+    assert 'Noor message 129' in page.locator('pre.source-text').inner_text()
+    page.go_back()
+    page.wait_for_url(chat_url)
+
+    # Sign out keeps the existing POST form with its CSRF token.
+    if mobile:
+        menu.locator('summary').click()
+    page.get_by_role('button', name='Sign out').click()
+    page.wait_for_url(live + '/?notice=signed-out')
+    assert page.locator('details.appnav').count() == 0 and page.get_by_role('button', name='Continue with Google').is_visible()
+    assert not [e for e in errors if 'favicon' not in e], errors
+    ctx.close()
+
+
+@pytest.mark.parametrize('viewport', [{'width': 1440, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])
+def test_admin_link_in_sidebar(live, chromium, viewport):
+    config.override(dataclasses.replace(config.get(), admin_emails=frozenset({'alex@example.test'})))
+    page = chromium.new_context(viewport=viewport).new_page()
+    sign_in(page, live)
+    nav_to(page, 'Admin')
+    page.wait_for_url(live + '/admin')
+    assert page.locator('a[aria-current=page]').inner_text().strip() == 'Admin'
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
+
+
+@pytest.mark.parametrize('scheme', ['light', 'dark'])
+def test_visual_review_screens(live, chromium, scheme):
+    """Screenshots for visual review at the reference sizes, in both colour schemes."""
+    for viewport in ({'width': 1440, 'height': 900}, {'width': 390, 'height': 844}):
+        ctx = chromium.new_context(viewport=viewport, color_scheme=scheme)
+        page = ctx.new_page()
+        sign_in(page, live)
+        if viewport['width'] == 1440:
+            account, noor, group = seed_whatsapp()
+        w = viewport['width']
+        page.screenshot(path=f'/tmp/moresocial-review-{scheme}-{w}-home.png')
+        page.goto(live + '/whatsapp')
+        page.screenshot(path=f'/tmp/moresocial-review-{scheme}-{w}-whatsapp.png')
+        page.locator('.wa-conv').first.click()
+        page.wait_for_url('**/whatsapp?account=*')
+        page.screenshot(path=f'/tmp/moresocial-review-{scheme}-{w}-chat.png')
+        if w == 390:
+            page.locator('details.appnav summary').click()
+            page.screenshot(path=f'/tmp/moresocial-review-{scheme}-{w}-menu.png')
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
+        ctx.close()
+
+
+@pytest.mark.parametrize('viewport', [{'width': 1440, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])
+def test_navigation_without_javascript(live, chromium, viewport):
+    page = chromium.new_context(viewport=viewport, java_script_enabled=False).new_page()
+    sign_in(page, live)
+    link = page.get_by_role('navigation', name='Main').get_by_role('link', name='WhatsApp')
+    if viewport['width'] < 900:
+        assert link.is_hidden()
+        page.locator('details.appnav summary').click()
+    assert link.is_visible()
+    link.click()
+    page.wait_for_url(live + '/whatsapp')
+    assert page.get_by_role('heading', name='WhatsApp', exact=True).is_visible()

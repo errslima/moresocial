@@ -1,0 +1,99 @@
+{% extends 'base.html' %}
+{% from 'icons.html' import icon %}
+{% set layout = 'wide' %}
+{% block title %}{% if selected %}{{ selected.name }} · {% endif %}WhatsApp{% endblock %}
+{% macro avatar(c) %}<span class="avatar av-{{ c.avatar }}" aria-hidden="true">{% if c.group %}{{ icon('group') }}{% elif c.initials %}{{ c.initials }}{% else %}{{ icon('person') }}{% endif %}</span>{% endmacro %}
+{% block content %}
+<div class="wa {{ 'has-chat' if selected else 'no-chat' }}">
+  <section class="wa-list" aria-labelledby="wa-title">
+    <div class="wa-list-head">
+      <h1 id="wa-title">WhatsApp</h1>
+      <form method="get" action="{{ url('/whatsapp') }}" class="wa-search" role="search">
+        <label for="wa-q" class="sr">Search conversations</label>
+        <input id="wa-q" type="search" name="q" value="{{ q }}" maxlength="100" placeholder="Search conversations" autocomplete="off">
+        <button type="submit">Search</button>
+      </form>
+      {% if q %}<p class="small">Showing conversations matching “{{ q }}”. <a href="{{ wa_url() }}">Clear search</a></p>{% endif %}
+    </div>
+    <div class="wa-scroll">
+      {% if rows %}
+      <ul class="wa-convs" aria-label="Conversations">
+        {% for c in rows %}
+        {% set current = selected and selected.account == c.account and selected.chat == c.chat %}
+        <li><a class="wa-conv" href="{{ wa_url(q=q, page=page, account=c.account, chat=c.chat) }}" {% if current %}aria-current="true"{% endif %}>
+          {{ avatar(c) }}
+          <span class="wa-name">{{ c.name }}{% if c.group %}<span class="sr"> (group)</span>{% endif %}</span>
+          <span class="wa-time">{% if c.at %}<time datetime="{{ c.at.isoformat() }}">{{ c.time }}</time>{% endif %}</span>
+          <span class="wa-preview">{{ c.prefix }}{{ c.preview }}</span>
+        </a></li>
+        {% endfor %}
+      </ul>
+      {% if page > 1 or more %}
+      <p class="wa-pages small">
+        {% if page > 1 %}<a href="{{ wa_url(q=q, page=page - 1) }}">Newer conversations</a>{% else %}<span></span>{% endif %}
+        {% if more %}<a href="{{ wa_url(q=q, page=page + 1) }}">More conversations</a>{% endif %}
+      </p>
+      {% endif %}
+      {% elif q %}
+      <div class="wa-empty" role="status">
+        <h2>No conversations match “{{ q }}”</h2>
+        <p>Search looks at chat and contact names. <a href="{{ wa_url() }}">Clear search</a></p>
+      </div>
+      {% elif page > 1 %}
+      <div class="wa-empty"><h2>No more conversations</h2><p><a href="{{ wa_url() }}">Back to the newest conversations</a></p></div>
+      {% elif not stored and not linked %}
+      <div class="wa-empty">
+        <h2>No WhatsApp conversations yet</h2>
+        <p>Link WhatsApp on <a href="{{ url('/connections') }}">Connections</a> to import your recent chats here.</p>
+      </div>
+      {% else %}
+      <div class="wa-empty">
+        <h2>No conversations imported yet</h2>
+        <p>WhatsApp is linked. Imported conversations will appear here as history loads; check progress on <a href="{{ url('/connections') }}">Connections</a>.</p>
+      </div>
+      {% endif %}
+    </div>
+    <p class="wa-note small muted">Shows imported history only (up to 90 days).{% if stored and not linked %} WhatsApp is not linked right now; stored chats stay readable.{% endif %} Moresocial never sends messages.</p>
+  </section>
+  <section class="wa-reader" aria-labelledby="{{ 'wa-chat' if selected else 'wa-select' }}">
+    {% if selected %}
+    <header class="wa-head">
+      <a class="wa-back" href="{{ list_url }}">{{ icon('back') }}Back to conversations</a>
+      {{ avatar(selected) }}
+      <div class="wa-head-text">
+        <h2 id="wa-chat">{{ selected.name }}</h2>
+        {% if selected.group %}<p class="small muted">Group</p>{% endif %}
+      </div>
+    </header>
+    <div class="wa-history" tabindex="0" aria-label="Messages with {{ selected.name }}" data-wa-history="{{ 'latest' if not before else 'older' }}">
+      {% if older %}<p class="wa-more small"><a href="{{ wa_url(q=q, page=page, account=selected.account, chat=selected.chat, before=messages[0].id) }}">Older messages</a></p>{% endif %}
+      {% if before %}<p class="wa-more small">Showing earlier messages. <a href="{{ wa_url(q=q, page=page, account=selected.account, chat=selected.chat) }}">Jump to latest messages</a></p>{% endif %}
+      {% if messages %}
+      <ol class="wa-msgs">
+        {% for m in messages %}
+        {% if m.day %}<li class="wa-day">{{ m.day }}</li>{% endif %}
+        <li class="wa-msg {{ 'out' if m.from_me else 'in' }}">
+          <div class="bubble">
+            {% if m.sender %}<p class="wa-sender">{{ m.sender }}</p>{% elif m.from_me %}<p class="sr">You:</p>{% endif %}
+            {% if m.label %}<p class="wa-media">{{ m.label }}</p>{% endif %}
+            {% if m.text %}<p class="wa-text">{{ m.text }}</p>{% endif %}
+            <p class="wa-meta">{% if m.at %}<time datetime="{{ m.at.isoformat() }}">{{ m.time }}</time> · {% endif %}<a href="{{ url('/sources/' ~ m.id) }}">Details<span class="sr"> of this message</span></a></p>
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p class="wa-empty">No imported messages here.</p>
+      {% endif %}
+      {% if before %}<p class="wa-more small"><a href="{{ wa_url(q=q, page=page, account=selected.account, chat=selected.chat) }}">Jump to latest messages</a></p>{% endif %}
+    </div>
+    {% else %}
+    <div class="wa-select">
+      {{ icon('whatsapp') }}
+      <h2 id="wa-select">Select a conversation</h2>
+      <p>Choose a chat to read its imported history.</p>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

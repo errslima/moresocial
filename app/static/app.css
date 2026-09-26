@@ -1,18 +1,57 @@
-:root{--bg:#fbfaf7;--fg:#1d1d1f;--muted:#5d5d66;--line:#dedbd3;--card:#fff;--accent:#1f5f8b;--accent-fg:#fff;--warn-bg:#fff4dc;--warn:#7a4b00;--danger:#a4262c;--ok:#1d6b3a;--focus:#ffbf47;color-scheme:light dark}
-@media (prefers-color-scheme:dark){:root{--bg:#141417;--fg:#ececf0;--muted:#a3a3ad;--line:#34343b;--card:#1d1d22;--accent:#7cb8e4;--accent-fg:#0d1b26;--warn-bg:#3a2e14;--warn:#f5d38c;--danger:#ff8a8f;--ok:#7fd49a}}
+:root{--bg:#fbfaf7;--fg:#1d1d1f;--muted:#5d5d66;--line:#dedbd3;--card:#fff;--accent:#1f5f8b;--accent-fg:#fff;--warn-bg:#fff4dc;--warn:#7a4b00;--danger:#a4262c;--ok:#1d6b3a;--focus:#ffbf47;--active-bg:#e6eef5;--hover-bg:#f1efe9;--bubble-out:#e1edf6;--bubble-in:#fff;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#141417;--fg:#ececf0;--muted:#a3a3ad;--line:#34343b;--card:#1d1d22;--accent:#7cb8e4;--accent-fg:#0d1b26;--warn-bg:#3a2e14;--warn:#f5d38c;--danger:#ff8a8f;--ok:#7fd49a;--active-bg:#1f2c38;--hover-bg:#23232a;--bubble-out:#1c3446;--bubble-in:#1d1d22}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 a{color:var(--accent)}
 :focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .skip{position:absolute;left:-999px}.skip:focus{left:16px;top:8px;background:var(--card);padding:8px;z-index:2}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
-.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 20px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--card)}
+/* Public pages: a simple top bar and the reading column. */
+.top{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--card)}
 .brand{font-weight:700;text-decoration:none;color:var(--fg);font-size:1.1rem}
-nav ul{display:flex;flex-wrap:wrap;gap:4px 14px;list-style:none;margin:0;padding:0}
-nav a{text-decoration:none;padding:4px 2px}nav a[aria-current=page]{font-weight:700;border-bottom:2px solid var(--accent)}
-.logout{margin-left:auto}
-main{max-width:860px;margin:0 auto;padding:16px}
+.icon{flex:none}
+main{min-width:0}
+.main-page{max-width:860px;margin:0 auto;padding:16px}
 .foot{max-width:860px;margin:32px auto;padding:0 16px;color:var(--muted);font-size:.85rem}
+/* Authenticated pages: a full-height sidebar beside the content area. */
+.shell{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+.sidebar{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:12px;padding:18px 12px;background:var(--card);border-right:1px solid var(--line);overflow-y:auto}
+.sidebar .brand{padding:2px 12px 8px;font-size:1.2rem}
+.appnav{flex:1;display:flex;flex-direction:column;min-height:0}
+.appnav::details-content{content-visibility:visible;display:flex;flex-direction:column;flex:1}
+.appnav>summary{display:none}
+.appnav-panel{flex:1;display:flex;flex-direction:column;gap:12px}
+.appnav ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.appnav a,.navbutton{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border-radius:8px;text-decoration:none;color:var(--fg);font-size:.95rem;line-height:1.3}
+.appnav a:hover,.navbutton:hover{background:var(--hover-bg)}
+.appnav a[aria-current=page]{background:var(--active-bg);color:var(--accent);font-weight:650;box-shadow:inset 3px 0 0 var(--accent)}
+.appnav a .icon,.navbutton .icon{color:var(--muted)}.appnav a[aria-current=page] .icon{color:var(--accent)}
+.logout{margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
+button.navbutton{background:none;border:none;min-height:0;cursor:pointer;text-align:left}
+.content{min-width:0;display:flex;flex-direction:column}
+.content>.main-page{width:100%;flex:1}
+/* Wide pages (WhatsApp) fill the content area exactly; their panes scroll inside it. */
+.layout-wide .shell{height:100vh;height:100dvh}
+.layout-wide .content{min-height:0;height:100vh;height:100dvh}
+.main-wide{flex:1;min-height:0;display:flex;flex-direction:column}
+.main-wide>.notice{margin:8px 16px}
+.layout-wide .foot{max-width:none;margin:0;padding:6px 16px;border-top:1px solid var(--line);font-size:.78rem}
+.layout-wide .foot p{margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:900px){
+  .shell{display:block;min-height:0}
+  .sidebar{position:relative;height:auto;display:block;padding:10px 16px;border-right:none;border-bottom:1px solid var(--line);overflow:visible}
+  .sidebar .brand{display:inline-block;padding:6px 0}
+  .appnav::details-content{content-visibility:revert;display:revert}
+  .appnav:not([open])>.appnav-panel{display:none}
+  .appnav>summary{display:flex;align-items:center;gap:6px;position:absolute;top:8px;right:12px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer;list-style:none;min-height:40px}
+  .appnav>summary::-webkit-details-marker{display:none}
+  .appnav[open]>summary{background:var(--active-bg)}
+  .appnav-panel{padding:10px 0 4px}
+  .logout{margin-top:4px}
+  .layout-wide .shell{display:flex;flex-direction:column}
+  .layout-wide .sidebar{flex:none}
+  .layout-wide .content{flex:1;height:auto}
+}
 h1{font-size:1.6rem;line-height:1.25}h2{font-size:1.2rem;margin-top:1.8em}
 .muted{color:var(--muted)}.small{font-size:.875rem}
 .notice,.warn{padding:10px 12px;border-radius:8px;background:var(--warn-bg);color:var(--warn)}
@@ -43,4 +82,62 @@ table.sync{width:100%;border-collapse:collapse;margin:10px 0}table.sync th,table
 code{overflow-wrap:anywhere}
 .ai-key{border-top:1px solid var(--line);margin-top:12px}.ai-key h3{font-size:1.05rem;margin:10px 0 4px}
 fieldset{border:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:4px 14px}legend{padding:0;margin-bottom:4px}
-@media (max-width:600px){h1{font-size:1.35rem}table.sync thead{display:none}table.sync tr,table.sync td,table.sync th{display:block}.logout{margin-left:0}}
+@media (max-width:600px){h1{font-size:1.35rem}table.sync thead{display:none}table.sync tr,table.sync td,table.sync th{display:block}}
+/* WhatsApp: conversation list beside the selected conversation. */
+.wa{flex:1;min-height:0;display:grid;grid-template-columns:340px minmax(0,1fr)}
+.wa-list,.wa-reader{min-width:0;min-height:0;display:flex;flex-direction:column}
+.wa-list{border-right:1px solid var(--line);background:var(--card)}
+.wa-list-head{padding:14px 14px 10px;border-bottom:1px solid var(--line)}
+.wa-list-head h1{margin:0 0 10px;font-size:1.35rem}
+.wa-search{display:flex;gap:6px}.wa-search input{flex:1;min-width:0}
+.wa-list-head .small{margin:8px 0 0}
+.wa-scroll{flex:1;min-height:0;overflow-y:auto}
+.wa-convs{list-style:none;margin:0;padding:6px}
+.wa-conv{display:grid;grid-template-columns:44px minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:10px;align-items:center;padding:9px 10px;border-radius:10px;text-decoration:none;color:var(--fg)}
+.wa-conv:hover{background:var(--hover-bg)}
+.wa-conv[aria-current=true]{background:var(--active-bg);box-shadow:inset 3px 0 0 var(--accent)}
+.wa-conv .avatar{grid-row:1/3}
+.wa-name{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wa-time{font-size:.78rem;color:var(--muted);white-space:nowrap}
+.wa-preview{grid-column:2/4;font-size:.875rem;color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.avatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:650;font-size:.95rem;color:#fff;flex:none}
+.avatar .icon{width:22px;height:22px}
+.av-0{background:#1f5f8b}.av-1{background:#2e7d5b}.av-2{background:#8a4f9e}.av-3{background:#b0533c}.av-4{background:#5b6b8c}.av-5{background:#8a6d1f}
+.wa-pages{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;padding:8px 16px 12px}
+.wa-note{margin:0;padding:8px 16px;border-top:1px solid var(--line)}
+.wa-empty{padding:24px 18px;color:var(--muted)}.wa-empty h2{margin:0 0 6px;color:var(--fg);font-size:1.05rem}
+.wa-reader{background:var(--bg)}
+.wa-head{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--card);min-width:0}
+.wa-head h2{margin:0;font-size:1.1rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wa-head .avatar{width:38px;height:38px}
+.wa-head-text{min-width:0}.wa-head-text p{margin:0}
+.wa-back{display:none}
+.wa-history{flex:1;min-height:0;overflow-y:auto;padding:12px 16px 20px}
+.wa-history:focus-visible{outline-offset:-3px}
+.wa-msgs{list-style:none;margin:0 auto;padding:0;max-width:820px;display:flex;flex-direction:column;gap:6px}
+.wa-day{align-self:center;margin:10px 0 4px;padding:2px 10px;border-radius:999px;background:var(--card);border:1px solid var(--line);font-size:.78rem;color:var(--muted)}
+.wa-msg{display:flex;min-width:0}
+.wa-msg.out{justify-content:flex-end}
+.bubble{max-width:min(78%,640px);min-width:0;padding:7px 11px 5px;border-radius:12px;background:var(--bubble-in);border:1px solid var(--line)}
+.wa-msg.in .bubble{border-top-left-radius:4px}
+.wa-msg.out .bubble{background:var(--bubble-out);border-color:transparent;border-top-right-radius:4px}
+.bubble p{margin:0}
+.wa-sender{font-size:.8rem;font-weight:650;color:var(--accent)}
+.wa-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.wa-media{font-style:italic;color:var(--muted)}
+.wa-meta{text-align:right;font-size:.72rem;color:var(--muted);margin-top:2px}
+.wa-meta a{color:inherit}
+.wa-more{text-align:center;margin:4px 0 10px}
+.wa-select{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;color:var(--muted)}
+.wa-select h2{margin:0 0 4px;color:var(--fg)}.wa-select .icon{width:44px;height:44px;margin-bottom:10px}
+@media (max-width:900px){
+  .wa{display:flex;flex-direction:column}
+  .wa-list,.wa-reader{flex:1}
+  .wa-list{border-right:none}
+  .wa.has-chat .wa-list,.wa.no-chat .wa-reader{display:none}
+  .wa-back{display:inline-flex;align-items:center;gap:2px;flex:none;font-size:.9rem;white-space:nowrap}
+  .wa-head{gap:10px;padding:8px 12px;flex-wrap:wrap}
+  .wa-history{padding:10px 10px 16px}
+  .bubble{max-width:88%}
+  .layout-wide .foot p{white-space:normal}
+}

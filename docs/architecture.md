@@ -17,6 +17,7 @@ revision, deployment evidence and outstanding checks, read
 | Admin | `ADMIN_EMAILS` only: encrypted OpenRouter key, pinned reasoning/embedding models, test/save, disable and rebuild status | `app/admin.py`, `app/operator_settings.py`, `app/templates/admin.html` |
 | AI assistance | Claim extraction, embeddings, hybrid retrieval, cited answers, invitation drafts, rewrites and RSVP suggestions | `app/memory.py`, `app/retrieval.py`, `app/ai.py`, `app/gatherings.py` |
 | Suggestions | Evidence-backed replies, promises and follow-ups from one-to-one WhatsApp; drafts, snooze, dismissal, resolution and per-chat pause | `app/suggestions.py`, `app/suggestion_pages.py`, [feature details](suggestions.md) |
+| WhatsApp | Read-only conversation browser over imported WhatsApp history: newest-first list (50 per page), name search, full chat history (100 messages per page with an older-messages cursor), media placeholders and links to each source | `app/conversations.py`, `app/whatsapp_pages.py`, `app/templates/whatsapp.html` |
 
 AI generation and embeddings are **enabled in production**, verified by the live readiness
 check on 2026-09-26. Synthetic tests establish workflow behavior; recommendation quality
@@ -29,6 +30,27 @@ rebuilt before cutover, so vectors never mix spaces. Manual
 workflows remain available. Integrations are read-only: drafts are copied by the
 user, and the app does not send messages, write Gmail drafts or change calendars.
 It does not know invitees' calendars merely because it can read the user's calendar.
+
+Authenticated pages share a left sidebar (`app/templates/base.html`); below 900px it collapses
+into a native `<details>` menu, so navigation needs no JavaScript. Ordinary pages keep an
+~860px reading column; a template sets `layout = 'wide'` to fill the content area instead.
+
+### WhatsApp conversation browser
+
+`GET /whatsapp` renders stored `sources` only: it never calls the connector, and it has no
+composer, send endpoint or attachment download. Pairing and connection management stay on
+Connections. A conversation is one `(provider_account, conversation_id)` pair inside the
+workspace, so chats from two linked numbers stay separate. Eligible rows are WhatsApp
+messages that are not deleted, are included and have a conversation ID. One SQL
+statement ranks each conversation's latest message with a window function
+(`coalesce(occurred_at, created_at)`, then source ID) and joins workspace-scoped
+`person_identifiers`/`people` to show corrected contact and sender names. Search matches
+conversation titles and contact names case-insensitively, with bounded input and escaped
+wildcards, before pagination. Opaque WhatsApp IDs are never shown as names: phone-based
+IDs fall back to `+number`, and `@lid` IDs to "Unnamed conversation". Selection, search,
+list page and history cursor (`before=<source id>`, validated inside the selected
+conversation) are query parameters, so refresh, Back and direct links work without
+client-side routing. Unknown or foreign selections return the generic 404 page.
 
 ## Data flow and storage
 
