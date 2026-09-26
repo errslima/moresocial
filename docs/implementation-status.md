@@ -7,9 +7,76 @@
 
 Last updated 2026-09-26. This is the resume point for any agent or operator.
 
+## Live layout and Suggestions repairs — 2026-09-26
+
+Active production revision: `4344fbbaeda16b20e23b469b75b596b91a5bd1b6` (`4344fbb`).
+This includes the operator session helper and cumulative repairs in `2ec781a`,
+`8002f17` and `4344fbb`. Standard `deploy/release.sh` image builds, migrations and
+readiness checks passed. Schema remains `0008`; no data migration was added.
+
+- Ordinary signed-in pages now start 24px beside the sidebar and use up to 1120px
+  of width; mobile retains 16px gutters. Public pages retain the old reading width.
+  Home no longer says WhatsApp suggestions require pinned people or gatherings.
+- Fixed invisible document overflow below the WhatsApp list/reader: absolutely
+  positioned accessibility labels now stay within their scrolling pane. Long
+  identifiers on People wrap instead of overflowing mobile screens. Content-hashed
+  CSS/JS URLs make browsers pick up deployed layout changes immediately.
+- Real model responses were rejected because evidence contained quotations instead
+  of message labels. The per-review schema now restricts citations to exact labels;
+  internal source IDs and versions stay out of the prompt. Follow-up live checks
+  exposed invalid due-date strings and a promise anchored to the other person's
+  message. The schema now requires timezone-aware date-times and restricts reply/
+  promise anchors by direction. Existing server validation and publication race
+  checks remain in place.
+- Failure notices count conversations whose latest review still failed, rather
+  than all historical failed attempts. Failed empty inboxes explain that the review
+  is incomplete instead of giving an all-clear message.
+
+Live verification, with the user's explicit approval to retry through the configured
+OpenRouter model using stored WhatsApp context:
+
+- **36 of 36 conversations reviewed successfully; 14 active suggestions.** Latest
+  jobs are all done; no pending reviews or unresolved failures at final verification.
+  Earlier failed job records remain as audit history. Temporary provider rate limits
+  recovered through normal retry/backoff.
+- All ten signed-in routes (Home, WhatsApp, Suggestions, People, Ask, Gatherings,
+  About me, Connections, Admin and Sources) returned 200 at 1440×900 and 390×844,
+  with no horizontal overflow or JavaScript page errors. Desktop content starts
+  beside the sidebar. WhatsApp list and open chat fit the viewport without the
+  previous blank overflow; mobile back navigation works.
+- Verified suggestion context/evidence and source links, Snoozed/History views,
+  People search and detail, and WhatsApp source filtering/detail. Generated one
+  editable live draft and checked its mobile layout and Copy message control.
+  No message was sent and no suggestion was marked done, dismissed or snoozed.
+- The connector restarted with the final image, completed a 50-chat history sync,
+  and Connections reported **Linked and syncing**. The final Suggestions page had
+  cards with no warnings or pending-review notice. Screenshots are private under
+  ignored `.dev/`, including `final-live-suggestions.png`.
+
+Automated verification:
+
+- **31 Suggestions tests** passed after the final schema changes; **18 browser
+  cases** passed (two obsolete personal-AI-key cases excluded). The browser suite
+  initially caught the old 860px width expectation; it was updated for the requested
+  1120px layout and both affected sidebar cases passed on rerun.
+- Earlier combined Suggestions/WhatsApp/browser run: **55 passed, 2 deselected**;
+  foundation/browser follow-up: **25 passed, 3 deselected**. Auth/session helper:
+  **28 passed**. Connector tests: **27 passed** in an isolated, network-disabled
+  production Node image; connector source was unchanged.
+- Broader non-browser run before the final date/direction additions: **212 passed,
+  20 failed**. These match the previously documented legacy personal-key/provider
+  and production-config failures. The two legacy browser key tests are also still
+  outstanding; the full suite is not green.
+
+Code and this deployment record are committed locally on `whatsapp-sidebar`;
+deployment used a Git bundle, without pushing or merging. This record is a later
+documentation-only commit than the running application. Immediate rollback:
+`sudo /srv/moresocial/src/deploy/rollback.sh 8002f17`; pre-repair release: `d667d92`.
+
 ## Temporary agent browser access — 2026-09-26
 
-Live source and images remain at `d667d92` (sidebar and WhatsApp release), confirmed
+At the time of this helper-only check, live source and images remained at `d667d92`
+(sidebar and WhatsApp release), confirmed
 through `/srv/moresocial/src` and `release.env`. No application deployment, restart or
 schema migration was needed for the operator-only session helper.
 
@@ -29,9 +96,9 @@ schema migration was needed for the operator-only session helper.
 - Live Chromium checks using the session passed on Home, WhatsApp list (50 rows),
   and an open chat at 1440×900 and 390×844. Mobile back navigation works; no horizontal
   overflow or page JavaScript errors. Mutation requests were blocked during review.
-- Visual follow-up: full-page screenshots expose substantial blank space below the
-  WhatsApp layout on desktop and mobile. This session-tool change does not fix that
-  existing layout behavior. Private screenshots are under `.dev/agent-live-*.png`.
+- Visual follow-up identified substantial blank space below the WhatsApp layout
+  on desktop and mobile; resolved by the live layout repairs recorded above.
+  Original private screenshots are under `.dev/agent-live-*.png`.
 
 ## Suggestions release — 2026-09-26
 
