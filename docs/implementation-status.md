@@ -5,7 +5,30 @@
 > OpenRouter-only; Admin owns one encrypted key and pinned reasoning/embedding models.
 > Local migration and synthetic checks are not evidence of live API validation or deployment.
 
-Last updated 2026-09-25. This is the resume point for any agent or operator.
+Last updated 2026-09-26. This is the resume point for any agent or operator.
+
+## Diagnostics release — 2026-09-26 (branch `diagnostics`)
+
+Implements `docs/diagnostics-plan.md`, deployed in the plan's order: `e373a49` (setup
+instrumentation and identity fix), `945f57d` (correlation and boundary events), `41c6966`
+(persistent store, retention, alerts). Active revision `41c6966`; no schema migration.
+
+- Verified live: catalog maps `voyageai/voyage-4` to `voyageai/voyage-4-20260727`; a
+  deliberately invalid key stops at `reasoning_probe` (401) with every stage under one
+  operation ID and no key or body logged; the public app ignores client request IDs; a
+  connector sync's operation ID appears on web's ingest events; a 404 reference stayed
+  searchable with `logs.py find` after web and worker were force-recreated; the hourly
+  prune/check unit ran with no alerts; scoped DEBUG reached the worker and expired.
+- Connector upgraded in place twice (image, then diagnostics mount); session kept.
+- **Pending (operator):** no OpenRouter key is saved. Run Admin **Test and save** once
+  with the real key; the page shows a reference. `logs.py find <reference>` then shows
+  the actual `returned_model` of both embedding probes, which confirms the identity policy
+  against real Voyage responses. If it still fails, the stage event names all three models.
+- Legacy `ai_provider=openai` and Anthropic/OpenAI key rows remain in `operator_settings`
+  (inert; superseded by the first successful OpenRouter save).
+- Pre-existing test failures unchanged: 22 legacy user-key/Anthropic tests
+  (`test_ai_keys.py`, one `test_ai_budget.py`, two browser key tests, one foundation config
+  test) describe the removed pre-OpenRouter features.
 
 Synthetic-provider tests do **not** prove live Google, WhatsApp or AI integration. The
 release is **deployed** at https://1f517.com/moresocial/. Interactive provider checks remain pending.

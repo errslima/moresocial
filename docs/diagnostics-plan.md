@@ -138,3 +138,26 @@ failure injection, and existing workflow tests. Confirm the admin failure refere
 finds the exact stage and model comparison, and verify log volume against the VPS
 disk budget before extending retention. Logging must never be a prerequisite for
 serving a request or committing a completed job.
+
+## Implementation status (September 26, 2026)
+
+Implemented and deployed on branch `diagnostics`; see `docs/implementation-status.md` for
+live verification and `docs/operator-setup.md` ("Diagnostics") for the runbook.
+
+1. Setup test stages, identity policy (`ai.identity_accepted`), persisted
+   `openrouter_embedding_identity` (names the vector space), preserved form, reference in
+   Admin. Unknown IDs and catalog outages fail before paid calls; an unchanged verified
+   configuration can be re-tested during a catalog outage. **Open:** the live synthetic
+   test needs the operator's key; the chosen rule (selected ID or documented canonical ID,
+   nothing else) is confirmed or refuted by that attempt's `returned_model`.
+2. `app/diagnostics.py` contract (schema 1, level, service, release, correlation IDs from
+   contextvars, typed field allowlist with secret-shape refusal, bounded frames, suppression
+   counts, never raises). Connector and provisioner share the schema.
+3. Request, provider, job, sync, ingest, connector, retrieval/answer, budget, rebuild,
+   admin and account-deletion events; browser shows server references only (no client
+   telemetry endpoint was added).
+4. `/srv/moresocial/logs` store, `deploy/logs.py` (find, tail, status, prune, check, debug,
+   emit), hourly `moresocial-logs.timer`, 14-day retention and 1 GiB cap. Alerts are
+   recorded in the store and the unit's exit status; no off-host notification channel
+   exists yet. Measured volume after deployment was low (see implementation status);
+   re-measure after the first busy week before extending retention.
