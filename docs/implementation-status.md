@@ -7,6 +7,24 @@
 
 Last updated 2026-09-26. This is the resume point for any agent or operator.
 
+## Voyage response identity fix — 2026-09-26
+
+Active production revision: `1585035` (previous: `1f753c0`). Operation
+`876cc6ebfa91c61019f1dfe196103133` confirmed the reasoning fix: DeepSeek finished
+normally with 820 output tokens. The initial embedding request then returned HTTP 200,
+1024 dimensions, and native model name `voyage-4`, which exact catalog matching rejected.
+
+- Added an embedding-only response alias scoped to selected `voyageai/voyage-4` and
+  canonical `voyageai/voyage-4-20260727`, shared by setup and runtime. Requests and saved
+  vector-space identity remain unchanged. Other models/revisions remain rejected.
+- 37 admin/OpenRouter/diagnostics tests passed, including native/native and mixed
+  response names, save/reload, 1024-dimensional vectors and negative identity cases.
+  Isolated test logging quotas to prevent events being suppressed by earlier tests.
+- Standard release script completed; public health/readiness and live identity checks
+  passed. Disposable test database and SSH tunnel removed. No schema changes.
+- Operator still needs to run Test and save with the key: neither failed attempt
+  saved it. No paid provider calls were made during this deployment.
+
 ## OpenRouter setup truncation fix — 2026-09-26
 
 Active production revision: `1f753c0` (previous: `41c6966`). The reasoning setup probe
