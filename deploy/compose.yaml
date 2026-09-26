@@ -20,7 +20,10 @@ x-app: &app
     CONNECTOR_IMAGE: moresocial-connector:${MORESOCIAL_REVISION}
     TRUSTED_PROXY_IPS: 172.31.77.1
     MORESOCIAL_RELEASE: ${MORESOCIAL_REVISION}
+    DIAGNOSTICS_DIR: /diagnostics   # persistent event store, see deploy/logs.py
   secrets: [db_password, google_auth.json, encryption_key, operator_key]
+  volumes:
+    - /srv/moresocial/logs/app:/diagnostics
   read_only: true
   tmpfs: [/tmp]
   cap_drop: [ALL]

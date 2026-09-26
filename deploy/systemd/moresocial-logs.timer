@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly Moresocial log retention and alert check
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

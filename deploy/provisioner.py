@@ -14,6 +14,7 @@ Safety rules:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -32,6 +33,8 @@ API = os.environ.get('MORESOCIAL_MANAGEMENT_URL', 'http://127.0.0.1:8773')
 KEY_FILE = Path(os.environ.get('MORESOCIAL_OPERATOR_KEY_FILE', '/srv/moresocial/secrets/operator_key'))
 BASE = Path(os.environ.get('MORESOCIAL_WHATSAPP_DIR', '/srv/moresocial/data/whatsapp'))
 WEB_CONTAINER = os.environ.get('MORESOCIAL_WEB_CONTAINER', 'moresocial-web-1')
+# Persistent diagnostic store (deploy/logs.py). Used only when the directory exists.
+LOGS = Path(os.environ.get('MORESOCIAL_LOG_DIR', '/srv/moresocial/logs'))
 CONNECTOR_UID = 1000
 LIMITS = {'memory': os.environ.get('CONNECTOR_MEMORY', '1536m'), 'pids': os.environ.get('CONNECTOR_PIDS', '256'),
           'shm': '256m', 'cpus': os.environ.get('CONNECTOR_CPUS', '1.0')}
@@ -54,7 +57,18 @@ def log(event: str, level: str = 'info', **fields) -> None:
                 row['workspace_id'] = str(uuid.UUID(value))  # the app's opaque workspace UUID
             elif key != 'workspace':
                 row[key] = value
-    print(json.dumps(row, separators=(',', ':')), flush=True)
+    line = json.dumps(row, separators=(',', ':'))
+    print(line, flush=True)
+    try:
+        if (LOGS / 'host').is_dir():
+            fd = os.open(LOGS / 'host' / f'provisioner-{datetime.now(timezone.utc):%Y%m%d}.jsonl',
+                         os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            try:
+                os.write(fd, (line + '\n').encode())
+            finally:
+                os.close(fd)
+    except OSError:
+        pass  # logging is never a prerequisite for reconciling
 
 
 def image_release(image: str) -> str | None:
@@ -83,14 +97,27 @@ def workspace_dir(ws: str) -> Path:
 
 
 class Provisioner:
-    def __init__(self, docker: Docker | None = None, fetch=None, report=None, base: Path | None = None):
+    def __init__(self, docker: Docker | None = None, fetch=None, report=None, base: Path | None = None,
+                 logs: Path | None = None):
         self.docker = docker or Docker()
         self.fetch = fetch or self._fetch
         self.report = report or self._report
         self.orphan_seen: dict[str, int] = {}
-        global BASE
+        global BASE, LOGS
         if base is not None:
             BASE = base
+        if logs is not None:
+            LOGS = logs
+
+    def diagnostics_dir(self, ws: str) -> Path | None:
+        """The connector's persistent event directory, when the host log store exists."""
+        connectors = LOGS / 'connectors'
+        if not LOGS.is_dir():
+            return None
+        path = connectors / ws
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._chown(path)  # the bind mount itself must be writable by the connector uid
+        return path
 
     # ---- management API
     def _key(self) -> str:
@@ -138,6 +165,23 @@ class Provisioner:
             self.docker.run('network', 'create', '--driver', 'bridge', '--label', 'moresocial.managed=1',
                             '--label', f'moresocial.workspace={ws}', network)
         self._attach_web(network)
+        diagnostics = self.diagnostics_dir(ws)
+        options = ['--network', network, '--restart', 'unless-stopped',
+                   '--label', 'moresocial.managed=1', '--label', f'moresocial.workspace={ws}',
+                   '--read-only', '--tmpfs', '/tmp:uid=1000,gid=1000,mode=1777',
+                   '--tmpfs', '/home/node:uid=1000,gid=1000,mode=0700',
+                   '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
+                   '--memory', LIMITS['memory'], '--memory-swap', LIMITS['memory'], '--pids-limit', LIMITS['pids'],
+                   '--cpus', LIMITS['cpus'], '--shm-size', LIMITS['shm'],
+                   '--log-opt', 'max-size=10m', '--log-opt', 'max-file=3',
+                   '-e', 'WEB_INTERNAL_URL=http://web:8001', '-e', 'XDG_CONFIG_HOME=/tmp/chromium-config',
+                   '-e', 'XDG_CACHE_HOME=/tmp/chromium-cache',
+                   '-v', f'{session}:/session', '-v', f'{key_file}:/run/secrets/connector_key:ro']
+        if diagnostics is not None:
+            options += ['-e', 'DIAGNOSTICS_DIR=/diagnostics', '-v', f'{diagnostics}:/diagnostics']
+        # The container spec (excluding the image, which is compared by ID) is pinned in a
+        # label, so a changed mount or limit also replaces the container; the session is kept.
+        spec = hashlib.sha256('\0'.join(options).encode()).hexdigest()[:16]
         current = self.state(container)
         if current is not None:
             # Verify the replacement exists before stopping a working connector.
@@ -146,24 +190,17 @@ class Provisioner:
             actual_image = self.docker.run('inspect', '--format', '{{.Image}}', container).stdout.strip()
             if not wanted_image or not actual_image:
                 raise ValueError('cannot verify connector image identity')
-            if actual_image != wanted_image:
+            actual_spec = self.docker.run('inspect', '--format', '{{index .Config.Labels "moresocial.spec"}}',
+                                          container, check=False).stdout.strip()
+            if actual_image != wanted_image or actual_spec != spec:
                 self.docker.run('stop', '--time', '30', container)
                 self.docker.run('rm', container)
-                log('connector_replaced', workspace=ws, release=image_release(image))
+                log('connector_replaced', workspace=ws, release=image_release(image),
+                    code='image' if actual_image != wanted_image else 'spec')
                 current = None
         if current is None:
-            self.docker.run('run', '-d', '--name', container, '--network', network, '--restart', 'unless-stopped',
-                            '--label', 'moresocial.managed=1', '--label', f'moresocial.workspace={ws}',
-                            '--read-only', '--tmpfs', '/tmp:uid=1000,gid=1000,mode=1777',
-                            '--tmpfs', '/home/node:uid=1000,gid=1000,mode=0700',
-                            '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
-                            '--memory', LIMITS['memory'], '--memory-swap', LIMITS['memory'], '--pids-limit', LIMITS['pids'],
-                            '--cpus', LIMITS['cpus'], '--shm-size', LIMITS['shm'],
-                            '--log-opt', 'max-size=10m', '--log-opt', 'max-file=3',
-                            '-e', 'WEB_INTERNAL_URL=http://web:8001', '-e', 'XDG_CONFIG_HOME=/tmp/chromium-config',
-                            '-e', 'MORESOCIAL_RELEASE=' + (image_release(image) or ''),
-                            '-e', 'XDG_CACHE_HOME=/tmp/chromium-cache',
-                            '-v', f'{session}:/session', '-v', f'{key_file}:/run/secrets/connector_key:ro', image)
+            self.docker.run('run', '-d', '--name', container, *options, '--label', f'moresocial.spec={spec}',
+                            '-e', 'MORESOCIAL_RELEASE=' + (image_release(image) or ''), image)
             log('connector_started', workspace=ws, release=image_release(image), outcome='created')
             return 'starting'
         if current != 'running':

@@ -345,7 +345,8 @@ def emit(event: str, exc: BaseException | None = None, *, level: str | None = No
 
 # ---------------- HTTP ingress ----------------
 
-QUIET_PATHS = ('/health', '/ready', '/internal/health')
+# Routine probes and the provisioner's 10-second poll: logged only when they fail.
+QUIET_PATHS = ('/health', '/ready', '/internal/health', '/internal/manage/connectors')
 
 
 def http_sample_rate() -> float:

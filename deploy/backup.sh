@@ -14,11 +14,16 @@ stamp=$(date -u +%Y%m%dT%H%M%SZ)
 work=$DEST/.work-$stamp
 mkdir -p "$work"
 trap 'rm -rf "$work"' EXIT
+# Outcome events for alerting (deploy/logs.py check): a failed or missing daily backup alerts.
+event() { python3 "$ROOT/src/deploy/logs.py" --root "$ROOT/logs" emit "$@" --service backup >/dev/null 2>&1 || true; }
+stage=database
+trap 'event backup_failed --level error --field stage=$stage' ERR
 
 # 1. Database (custom format, consistent snapshot).
 "${COMPOSE[@]}" exec -T db pg_dump -U moresocial_admin -d moresocial -Fc > "$work/db.dump"
 
 # 2. WhatsApp sessions: stop each connector briefly so LocalAuth files are not copied mid-write.
+stage=whatsapp
 if [ -d "$ROOT/data/whatsapp" ]; then
   for dir in "$ROOT"/data/whatsapp/*/; do
     [ -d "$dir" ] || continue
@@ -32,13 +37,17 @@ if [ -d "$ROOT/data/whatsapp" ]; then
 fi
 
 # 3. Private configuration (includes the encryption key; required to read stored grants).
+stage=config
 tar -C "$ROOT" -cf "$work/config.tar" secrets runtime.env release.env
 
 # 4. One encrypted archive.
+stage=encrypt
 tar -C "$work" -cf - . | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass "file:$PASSFILE" \
   > "$DEST/moresocial-$stamp.tar.enc"
 sha256sum "$DEST/moresocial-$stamp.tar.enc" > "$DEST/moresocial-$stamp.tar.enc.sha256"
 
 # 5. Retention: only Moresocial backup files in this directory.
+stage=retention
 find "$DEST" -maxdepth 1 -type f -name 'moresocial-*.tar.enc*' -mtime "+$RETENTION_DAYS" -delete
+event backup_completed --field bytes="$(stat -c %s "$DEST/moresocial-$stamp.tar.enc")"
 echo "backup ok: $DEST/moresocial-$stamp.tar.enc"

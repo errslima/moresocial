@@ -1,0 +1,17 @@
+[Unit]
+Description=Moresocial diagnostic log retention and alert check
+After=docker.service
+
+[Service]
+Type=oneshot
+# Retention first (14 days, 1 GiB cap), then alert rules; exit status 2 means an alert is active
+# (visible in `systemctl --failed` and `logs.py tail --event alert`).
+Environment=MORESOCIAL_LOG_DIR=/srv/moresocial/logs
+Environment=LOG_RETENTION_DAYS=14
+Environment=LOG_MAX_MB=1024
+ExecStart=/usr/bin/python3 /srv/moresocial/src/deploy/logs.py prune
+ExecStart=/usr/bin/python3 /srv/moresocial/src/deploy/logs.py check
+UMask=0077
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true

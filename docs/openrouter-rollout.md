@@ -7,7 +7,19 @@
 2. Create a dedicated, funded OpenRouter key and set its monetary spending limit in
    OpenRouter. In Admin select exact catalog model IDs and use **Test and save**. The
    synthetic generation and embedding probes are paid calls; record their latency,
-   model IDs and returned usage without recording keys or private text.
+   model IDs and returned usage without recording keys or private text. Each attempt
+   has a reference (shown in Admin); `logs.py find <reference>` lists its catalog,
+   reasoning, embedding, query, validation and commit stages with requested, catalog
+   canonical and returned model IDs. The catalog check runs first: an outage or an
+   unlisted model fails before any paid call.
+
+   Identity policy (`ai.identity_accepted`, shared by setup, runtime and storage): a
+   response is accepted only if it names the selected catalog ID or the canonical slug
+   the catalog documented for it at setup (for example `voyageai/voyage-4` ->
+   `voyageai/voyage-4-20260727`). Requests always send the selected ID; the canonical
+   identity is saved as `openrouter_embedding_identity` and names the vector space, so an
+   alias later re-pointed to a new dated model fails loudly instead of mixing spaces.
+   No prefix stripping or other normalization is applied.
 3. Watch pending embedding progress while the worker rebuilds. New chunks are written
    to both spaces. Verify an extraction, a cited answer, an invitation draft and an
    older source retrieval. Do not send messages as part of this verification.

@@ -217,6 +217,7 @@ class FakeDocker:
         self.calls = []
         self.containers = {}
         self.images = {}
+        self.specs = {}
         self.networks = set()
 
     def run(self, *args, check=True):
@@ -230,7 +231,8 @@ class FakeDocker:
             if name == 'moresocial-web-1':
                 out = json.dumps({n: {} for n in self.networks if n in getattr(self, 'web_nets', set())})
             elif name in self.containers:
-                out = self.images.get(name, '') if args[2] == '{{.Image}}' else self.containers[name]
+                out = {'{{.Image}}': self.images.get(name, ''), '{{index .Config.Labels "moresocial.spec"}}':
+                       self.specs.get(name, '')}.get(args[2], self.containers[name])
             else:
                 rc = 1
         elif args[:2] == ('network', 'inspect'):
@@ -243,6 +245,7 @@ class FakeDocker:
             name = args[args.index('--name') + 1]
             self.containers[name] = 'running'
             self.images[name] = 'sha256:' + args[-1]
+            self.specs[name] = next((a.split('=', 1)[1] for a in args if a.startswith('moresocial.spec=')), '')
         elif args[:2] == ('image', 'inspect'):
             out = 'sha256:' + args[-1]
         elif args[0] == 'stop':

@@ -137,10 +137,10 @@ git clone https://github.com/errslima/moresocial.git /tmp/moresocial && cd /tmp/
 git checkout <sha>
 # secrets and runtime.env as in section 2, then:
 sudo deploy/release.sh <sha>       # builds images, migrates once, starts db/web/worker, checks /ready
-sudo install -m 0644 deploy/systemd/moresocial-*.service deploy/systemd/moresocial-backup.timer /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/moresocial-*.service deploy/systemd/moresocial-*.timer /etc/systemd/system/
 # When installing from root-only /srv paths, expand wildcards inside sudo sh -c.
 sudo systemctl daemon-reload
-sudo systemctl enable --now moresocial-connectors.service moresocial-backup.timer
+sudo systemctl enable --now moresocial-connectors.service moresocial-backup.timer moresocial-logs.timer
 curl -fsS http://127.0.0.1:8772/health && curl -fsS http://127.0.0.1:8772/ready
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8772/internal/manage/connectors   # expect 404
 ```
@@ -172,9 +172,8 @@ in the 1f517 repository with the same lines so a later shared deploy keeps the r
 
 ## 5. Operations
 
-- Logs: `docker compose -p moresocial -f /srv/moresocial/src/deploy/compose.yaml logs --tail 100 web worker`
-  and `journalctl -u moresocial-connectors`. Logs are sanitized JSON; a user-facing error shows a
-  reference ID that matches the `reference` field.
+- Logs: see **Diagnostics** below. A user-facing error shows a reference; look it up with
+  `sudo python3 /srv/moresocial/src/deploy/logs.py find <reference>`.
 - Connector memory: each linked user runs one Chromium (limit 1.5 GB, 256 PIDs). Keep
   `WHATSAPP_CONNECTOR_CAP` at 2 until `docker stats` shows headroom; raise it in `runtime.env`
   and restart `web`.
@@ -191,6 +190,52 @@ in the 1f517 repository with the same lines so a later shared deploy keeps the r
   removes the connector, network and session directory and acknowledges completion.
   This works for the final user too. Failed acknowledgment is retried safely. An empty
   database without explicit cleanup records still does not authorize deleting sessions.
+
+## Diagnostics
+
+Every service writes one sanitized JSON event per line (`app/diagnostics.py`; the connector and
+provisioner use the same schema): `schema`, `ts` (UTC), `level`, `service`, `release`, `event`,
+`reference`, correlation IDs (`request_id`, `operation_id`, `parent_operation_id`, `job_id`,
+opaque `workspace_id`) and field-validated metadata. Keys, cookies, OAuth codes, authorization
+headers, URLs, prompts, messages, embeddings and provider bodies are never recorded; exceptions
+contribute their class and `file:function:line` frames only. `audit: true` marks administrative
+and lifecycle events, which are never sampled or suppressed.
+
+Correlation: the public app assigns every request an ID (returned as `X-Request-ID` and shown as
+the reference on error pages and failed AI actions). Jobs carry the initiating ID and the worker
+logs `parent_operation_id`; the internal API adopts a connector's ID, and web passes its ID to
+connectors. Admin **Test and save** shows its operation ID; its stage events record the requested,
+catalog-canonical and returned model, dimensions, HTTP status and OpenRouter request ID.
+
+Store: `/srv/moresocial/logs` (root 0750) outlives containers. `app/` (web, worker, migrate,
+uid 10001), `connectors/<workspace>/` (mounted into each connector, uid 1000) and `host/`
+(provisioner, backup, release, alerts). `docker logs` still shows stderr, but is lost when a
+container is replaced; the store is the durable copy. `moresocial-logs.timer` runs hourly:
+`logs.py prune` (14 days, 1 GiB cap, oldest first) then `logs.py check`.
+
+```bash
+L="sudo python3 /srv/moresocial/src/deploy/logs.py"
+$L find 6b41cd8b25b94cbda19266902d2fbe52       # reference/request/operation/job ID, plus related events
+$L tail --service web --level warn -n 50        # recent warnings from web
+$L tail --event admin_openrouter_stage          # every Admin setup stage (requested/returned models)
+$L tail --event alert --hours 48                # alerts raised by the hourly check
+$L status                                       # size, newest event per service, dropped events
+$L debug --service web --events admin_,provider_ --minutes 30   # scoped DEBUG, max 2 h
+systemctl status moresocial-logs.timer; systemctl --failed      # a failed check unit = active alert
+```
+
+Alert rules (one `alert` event per rule per six hours, then `alert_resolved`): error-level events
+(20/h), terminal job failures, queue lag over 30 minutes, stalled Google syncs, 5 failed provider
+calls/h, a failed or missing daily backup, failed readiness, dropped diagnostic events, log disk
+pressure, and no worker `queue_stats` reaching the store (collector or worker down). Alerts are
+recorded in the store and the unit's exit status; nothing is pushed off the server.
+
+Levels: `LOG_LEVEL=info` in production. DEBUG is enabled only through `logs.py debug`, scoped by
+service and event prefix and expiring within two hours; it never relaxes field restrictions.
+Healthy requests are sampled (`HTTP_LOG_SAMPLE`, default 10%); health probes and the provisioner
+poll are logged only when they fail. Repeated events are capped at 50 per minute per event and
+code, and the next admitted event carries a `suppressed` count. Logging never blocks a request
+or a job: write failures are counted (`dropped`) and reported on the next event.
 
 ## 6. Backups and restore
 
