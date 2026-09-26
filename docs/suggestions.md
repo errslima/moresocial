@@ -9,7 +9,7 @@ pause analysis and hide suggestions for someone until resumed.
 The inbox shows five items per page, with deadline ordering, Snoozed and History views.
 It reports AI availability, stale WhatsApp status, pending/failed reviews and incomplete
 history. The detail view shows the reviewed conversation context and original sources.
-Gmail, group chats, optional reconnect/check-in suggestions and sending are outside this
+Gmail, group chats and optional reconnect/check-in suggestions are outside this
 release. Existing gathering workflows are unchanged.
 
 ## Review and lifecycle
@@ -60,3 +60,23 @@ and draft races, bounded truncation retry, identity splitting and deadline order
 `tests/test_browser.py::test_suggestions_browser` exercises desktop/mobile display, drafting,
 edits, clipboard behavior and dismissal through Chromium. Synthetic tests establish these
 contracts, not the quality of a live model's recommendations.
+
+
+## Open the conversation and send
+
+Each suggestion with available evidence has an **Open conversation** button leading to
+MoreSocial's own WhatsApp page, using the evidence's exact account and conversation.
+A current saved draft is prefilled for editing; stale drafts are not carried over.
+Nothing is sent by opening the page. Press **Send message** to send the displayed text
+from the linked account. Existing direct chats (including LID identifiers) and groups
+support text up to 4,000 characters. **Message yourself** can start a conversation
+with the currently linked account even if it has no imported history. Attachments
+are not supported.
+
+Sends require authentication, CSRF protection, a visible stored conversation and a
+matching ready connector account. The connector independently checks the current
+account and chat. Send attempts are claimed durably before contacting WhatsApp, so
+refreshes and repeat submissions do not resend. A timeout is shown as an uncertain
+result and is never automatically retried. Confirmed sends use the normal idempotent
+message ingestion path. Delivery/read receipts are not tracked. Suggestions update
+through their normal conversation review; sending does not blindly mark them done.

@@ -42,7 +42,7 @@ export function record(event,fields={},error=null){
 }
 // Run fn under a fresh operation ID so its events and ingest calls correlate.
 export const withOperation=fn=>context.run(reference(),fn);
-const routes=new Set(['/status','/sync','/connect','/disconnect']);
+const routes=new Set(['/status','/sync','/connect','/disconnect','/send']);
 export function withRequest(req,res,fn){
  return context.run(reference(req.headers['x-request-id']),async()=>{
   const ref=current(),started=Date.now();res.setHeader('X-Request-ID',ref);

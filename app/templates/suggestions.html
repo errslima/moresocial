@@ -30,6 +30,7 @@
 <p class="small"><a href="{{ url('/sources/' ~ src.id) }}">{{ 'You' if src.from_me else card.person.display_name }} · {{ src.occurred_at|suggestion_time(timezone) }} · WhatsApp</a></p>
 {% endfor %}</details>{% endif %}
 <div class="row"><a href="{{ url('/suggestions/' ~ s.id) }}">View context{% if s.draft %} & draft{% endif %}</a>
+{% if card.conversation_url %}<a class="button" href="{{ card.conversation_url }}">Open conversation</a>{% endif %}
 {% if s.state in ['active','snoozed'] %}
 {% if not s.stale and card.evidence and not s.draft %}<form method="post" action="{{ url('/suggestions/' ~ s.id ~ '/draft') }}" data-busy="Drafting…">{{ csrf_field() }}<button class="primary">Draft a reply</button></form>{% endif %}
 <form method="post" action="{{ url('/suggestions/' ~ s.id ~ '/state') }}">{{ csrf_field() }}<button name="action" value="done">Done</button><button name="action" value="dismiss">Dismiss</button></form>

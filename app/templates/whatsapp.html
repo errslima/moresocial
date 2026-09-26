@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% from 'icons.html' import icon %}
+{% from 'macros.html' import csrf_field with context %}
 {% set layout = 'wide' %}
 {% block title %}{% if selected %}{{ selected.name }} · {% endif %}WhatsApp{% endblock %}
 {% macro avatar(c) %}<span class="avatar av-{{ c.avatar }}" aria-hidden="true">{% if c.group %}{{ icon('group') }}{% elif c.initials %}{{ c.initials }}{% else %}{{ icon('person') }}{% endif %}</span>{% endmacro %}
@@ -8,6 +9,7 @@
   <section class="wa-list" aria-labelledby="wa-title">
     <div class="wa-list-head">
       <h1 id="wa-title">WhatsApp</h1>
+      {% if self_chat %}<p class="small"><a href="{{ wa_url(account=self_chat, chat=self_chat) }}">Message yourself</a></p>{% endif %}
       <form method="get" action="{{ url('/whatsapp') }}" class="wa-search" role="search">
         <label for="wa-q" class="sr">Search conversations</label>
         <input id="wa-q" type="search" name="q" value="{{ q }}" maxlength="100" placeholder="Search conversations" autocomplete="off">
@@ -53,7 +55,7 @@
       </div>
       {% endif %}
     </div>
-    <p class="wa-note small muted">Shows imported history only (up to 90 days).{% if stored and not linked %} WhatsApp is not linked right now; stored chats stay readable.{% endif %} Moresocial never sends messages.</p>
+    <p class="wa-note small muted">Shows synced history (up to 90 days).{% if stored and not linked %} WhatsApp is not linked right now; stored chats stay readable.{% endif %}</p>
   </section>
   <section class="wa-reader" aria-labelledby="{{ 'wa-chat' if selected else 'wa-select' }}">
     {% if selected %}
@@ -86,6 +88,24 @@
       <p class="wa-empty">No imported messages here.</p>
       {% endif %}
       {% if before %}<p class="wa-more small"><a href="{{ wa_url(q=q, page=page, account=selected.account, chat=selected.chat) }}">Jump to latest messages</a></p>{% endif %}
+    </div>
+    <div class="wa-compose">
+      {% if suggestion_row %}<p class="small"><a href="{{ url('/suggestions/' ~ suggestion_row.id) }}">Back to suggestion</a>{% if compose_text %} · Review your draft before sending.{% endif %}</p>{% endif %}
+      {% if error %}<p class="warn" role="alert">{{ error }}</p>{% endif %}
+      {% if receipt %}
+      <p class="{{ 'small' if receipt.state == 'sent' else 'warn' }}" role="status">{% if receipt.state == 'sent' %}Message sent to WhatsApp. Delivery and read status are not tracked here.{% elif receipt.state == 'rejected' %}Nothing was sent. WhatsApp is disconnected, the account changed, or this chat is unavailable. Check Connections before trying again.{% else %}We could not confirm whether this message was sent. Check the conversation before sending again; this attempt will not be retried automatically.{% endif %}</p>
+      {% endif %}
+      {% if can_send %}
+      <form method="post" action="{{ url('/whatsapp/send') }}" data-busy="Sending…">
+        {{ csrf_field() }}
+        <input type="hidden" name="account" value="{{ selected.account }}">
+        <input type="hidden" name="chat" value="{{ selected.chat }}">
+        <input type="hidden" name="request_id" value="{{ request_id }}">
+        <label for="wa-message">Message {{ selected.name }}</label>
+        <textarea id="wa-message" name="text" rows="2" maxlength="4000" required placeholder="Write a message…">{{ compose_text }}</textarea>
+        <div class="row"><button class="primary" type="submit" {% if receipt and receipt.state == 'unknown' %}disabled{% endif %}>Send message</button>{% if receipt and receipt.state == 'unknown' %}<a href="{{ wa_url(account=selected.account, chat=selected.chat) }}">Check latest messages</a>{% else %}<span class="small muted">Sends from your linked WhatsApp account.</span>{% endif %}</div>
+      </form>
+      {% else %}<p class="small muted">Connect the WhatsApp account used for this conversation to send messages. <a href="{{ url('/connections') }}">Check Connections</a>.</p>{% if compose_text %}<label for="wa-message">Your draft</label><textarea id="wa-message" rows="2" readonly>{{ compose_text }}</textarea>{% endif %}{% endif %}
     </div>
     {% else %}
     <div class="wa-select">

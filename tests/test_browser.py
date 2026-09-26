@@ -528,3 +528,44 @@ def test_long_chat_list_and_main_page_bounds(live, chromium, viewport):
             assert main['x'] == sidebar['x'] + sidebar['width'], route
             assert main['width'] == min(1120, viewport['width'] - sidebar['width']), route
     context.close()
+
+
+@pytest.mark.parametrize('viewport', [{'width':1440,'height':900}, {'width':390,'height':844}], ids=['desktop','mobile'])
+def test_suggestion_to_conversation_and_send(live, chromium, viewport):
+    from app import db, whatsapp, suggestions
+    from app.models import Source
+    from app.repo import Scoped
+    from conftest import workspace_of
+    from test_suggestions import add, review, CHAT
+    account = '31600000009@c.us'
+    ctx = chromium.new_context(viewport=viewport)
+    page = ctx.new_page()
+    page.goto(live + '/')
+    page.get_by_role('button', name='Continue with Google').click()
+    page.get_by_role('button', name='Allow').click()
+    page.wait_for_url(live + '/home')
+    wid = workspace_of('alex@example.test')
+    src = add(wid, 'Can you join dinner on Friday?')
+    with db.session() as s:
+        s.get(Source, src).provider_account = account
+        conn = whatsapp.request_connect(Scoped(s, wid))
+        conn.observed, conn.account_wid = 'ready', account
+    row = review(wid)[0]
+    suggestions.draft(wid, row.id)
+    page.goto(live + '/suggestions')
+    page.get_by_role('link', name='Open conversation', exact=True).click()
+    page.wait_for_url('**/whatsapp?account=*')
+    assert page.locator('input[name=chat]').input_value() == CHAT
+    assert page.locator('#wa-message').input_value().strip()
+    page.locator('#wa-message').fill('Browser send test — hello!')
+    page.get_by_role('button', name='Send message', exact=True).click()
+    page.wait_for_url('**&receipt=*')
+    playwright.expect(page.get_by_role('status')).to_contain_text('Message sent to WhatsApp')
+    playwright.expect(page.locator('.wa-msg.out').last).to_contain_text('Browser send test — hello!')
+    assert page.locator('#wa-message').input_value() == ''
+    page.reload()
+    assert page.locator('.wa-msg.out', has_text='Browser send test — hello!').count() == 1
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+    assert page.evaluate('document.documentElement.scrollHeight <= innerHeight + 1')
+    page.screenshot(path=f'/tmp/moresocial-send-{viewport["width"]}.png')
+    ctx.close()

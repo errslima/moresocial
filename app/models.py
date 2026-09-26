@@ -578,3 +578,16 @@ class NextStepState(Base):
     step_key: Mapped[str] = mapped_column(String(200), nullable=False)
     snoozed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # NULL = dismissed
     created_at: Mapped[datetime] = now_col()
+
+
+class WhatsAppSend(Base):
+    """Durable send receipts. Claim before calling WhatsApp; never retry uncertain sends."""
+    __tablename__ = 'whatsapp_sends'
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    account: Mapped[str] = mapped_column(String(255), nullable=False)
+    chat: Mapped[str] = mapped_column(String(400), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(20), nullable=False)
+    message_id: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = now_col()

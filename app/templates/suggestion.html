@@ -5,6 +5,7 @@
 <p><a href="{{ url('/suggestions') }}">← Suggestions</a></p>
 <div class="row"><span class="tag">{{ kinds[row.kind] }}</span><a href="{{ url('/people/' ~ person.id) }}">{{ person.display_name }}</a><span class="tag">{{ row.state }}</span></div>
 <h1>{{ row.title }}</h1><p>{{ row.reason }}</p>
+{% if conversation_url %}<p><a class="button" href="{{ conversation_url }}">Open conversation</a></p>{% endif %}
 {% if error %}<p class="warn" role="alert">{{ error }}</p>{% endif %}
 {% if review.paused %}<p class="warn">Suggestions for this conversation are paused.</p>{% elif row.stale %}<p class="warn">The conversation changed. A fresh review is needed before drafting.</p>{% endif %}
 {% if row.due_at %}<p>Due {{ row.due_at|suggestion_time(timezone) }}</p>{% endif %}
@@ -18,7 +19,7 @@
 {{ csrf_field() }}<input type="hidden" name="revision" value="{{ row.draft_revision }}"><input type="hidden" name="review_revision" value="{{ review.revision }}">
 <label for="suggestion-draft">Edit your message</label><textarea id="suggestion-draft" name="text" rows="6" maxlength="4000" required>{{ row.draft }}</textarea>
 <div class="row"><button>Save edits</button>{% if row.draft_review_revision == review.revision %}<button type="button" data-copy="suggestion-draft">Copy message</button>{% endif %}</div>
-<p data-copy-status="suggestion-draft" role="status" class="small muted">Copying does not send anything or mark this suggestion done. Check any [placeholders] before sending it yourself.</p>
+<p data-copy-status="suggestion-draft" role="status" class="small muted">Save your edits, then open the conversation to send. Check any [placeholders] first. Copying does not send anything or mark this suggestion done.</p>
 </form>
 {% else %}<form method="post" action="{{ url('/suggestions/' ~ row.id ~ '/draft') }}" data-busy="Drafting…">{{ csrf_field() }}<button class="primary">Draft a reply</button></form>{% endif %}
 {% endif %}

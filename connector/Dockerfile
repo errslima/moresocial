@@ -6,7 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium ca-cer
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
-COPY diagnostics.js index.js contacts.js normalize.js protocol.js history.js queue.js server.js ./
+COPY patch-library.cjs ./
+RUN node patch-library.cjs
+COPY diagnostics.js index.js contacts.js normalize.js protocol.js history.js queue.js server.js send.js ./
 USER 1000:1000
 ENTRYPOINT ["/usr/bin/tini","--"]
 # The lock prevents two processes from opening the same WhatsApp session directory.

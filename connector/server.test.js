@@ -9,7 +9,8 @@ const {createHandler,listen,sameKey}=await import('./server.js');
 function start(){
   const calls=[];
   const handler=createHandler({key:'workspace-a-key',status:()=>({state:'pairing',qr:'data:image/png;base64,AAA'}),
-    connect:async()=>calls.push('connect'),sync:async()=>calls.push('sync'),disconnect:async()=>calls.push('disconnect')});
+    connect:async()=>calls.push('connect'),sync:async()=>calls.push('sync'),disconnect:async()=>calls.push('disconnect'),
+    send:async input=>{calls.push(['send',input]);return {state:'sent'};}});
   const server=listen(handler,0);
   return {calls,server,url:()=>`http://127.0.0.1:${server.address().port}`};
 }
@@ -25,10 +26,10 @@ test('only the workspace key is accepted',async()=>{
   }finally{s.server.close();}
 });
 
-test('there is no send, photo or repair route',async()=>{
+test('unsupported routes stay unavailable',async()=>{
   const s=start();await new Promise(r=>s.server.once('listening',r));
   try{
-    for(const p of ['/send','/send-preflight','/photo','/repair','/compatibility']){
+    for(const p of ['/send-preflight','/photo','/repair','/compatibility']){
       const r=await fetch(s.url()+p,{method:'POST',headers:{Authorization:'Bearer workspace-a-key'},body:'{}'});
       assert.equal(r.status,404,p);
     }
@@ -41,4 +42,19 @@ test('key comparison is exact',()=>{
   assert.equal(sameKey('Bearer abc','abc'),true);
   assert.equal(sameKey('Bearer abcd','abc'),false);
   assert.equal(sameKey('Bearer abc',''),false);
+});
+
+
+test('send endpoint authenticates and bounds JSON before invoking sender',async()=>{
+  const s=start();await new Promise(r=>s.server.once('listening',r));
+  const headers={Authorization:'Bearer workspace-a-key','Content-Type':'application/json'};
+  try{
+    assert.equal((await fetch(s.url()+'/send',{method:'POST',body:'{}'})).status,401);
+    assert.equal((await fetch(s.url()+'/send',{method:'POST',headers,body:'not-json'})).status,400);
+    assert.equal((await fetch(s.url()+'/send',{method:'POST',headers,body:'x'.repeat(40000)})).status,413);
+    assert.deepEqual(s.calls,[]);
+    const input={account:'self',chat:'123@c.us',text:'Hello'};
+    const response=await fetch(s.url()+'/send',{method:'POST',headers,body:JSON.stringify(input)});
+    assert.equal(response.status,200);assert.deepEqual(s.calls,[['send',input]]);
+  }finally{s.server.close();}
 });

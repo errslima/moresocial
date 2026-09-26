@@ -5,7 +5,8 @@ import uuid
 from fastapi import APIRouter, Depends, Form, Request
 from sqlalchemy import String, cast, func, or_, select
 
-from . import ai, suggestions
+from . import ai, suggestions, whatsapp_send
+from .whatsapp_pages import page_url
 from .models import Job, Person, PersonIdentifier, Suggestion, SuggestionReview, WhatsAppConnector, Workspace
 from .pages import ai_error, ai_failure, found
 from .web import Ctx, Problem, redirect, render, require_mutation, require_user
@@ -25,7 +26,9 @@ def locked_item(ctx, sid):
 
 
 def view_data(ctx, row, review):
-    return {'row': row, 'person': ctx.ws.get(Person, row.person_id), 'review': review,
+    target = whatsapp_send.suggestion_target(ctx.ws, row, review)
+    return {'conversation_url': page_url(**target, suggestion=row.id) if target else None,
+            'row': row, 'person': ctx.ws.get(Person, row.person_id), 'review': review,
             'evidence': suggestions.evidence(ctx.ws, row)}
 
 

@@ -3,7 +3,7 @@
 Each workspace has its own connector container (QR-linked WhatsApp Web, LocalAuth) on its
 own private network. The web app records the desired state; the host provisioner
 reconciles containers. The ingest workspace always comes from the connector's scoped key,
-never from the payload. There is no send path.
+never from the payload. Explicit sends are handled by whatsapp_send.
 """
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ class ConnectorUnavailable(Exception):
     pass
 
 
-def call(row: WhatsAppConnector, method: str, path: str, timeout: float = 8) -> dict:
+def call(row: WhatsAppConnector, method: str, path: str, timeout: float = 8, payload: dict | None = None) -> dict:
     key = security.decrypt(row.key_enc)
     if not key:
         raise ConnectorUnavailable()
@@ -100,10 +100,10 @@ def call(row: WhatsAppConnector, method: str, path: str, timeout: float = 8) -> 
     correlation = ctx.get('operation_id') or ctx.get('request_id')
     if correlation:
         headers['X-Request-ID'] = correlation  # the connector adopts it for its own events
-    route = path if path in ('/status', '/sync', '/connect', '/disconnect') else '/other'
+    route = path if path in ('/status', '/sync', '/connect', '/disconnect', '/send') else '/other'
     try:
         with httpx.Client(timeout=timeout, follow_redirects=False) as h:
-            r = h.request(method, connector_url(row.workspace_id) + path, headers=headers)
+            r = h.request(method, connector_url(row.workspace_id) + path, headers=headers, **({'json': payload} if payload is not None else {}))
     except httpx.HTTPError as exc:
         security.emit('connector_unreachable', exc, level='warn', route=route, workspace_id=row.workspace_id,
                       error_category='timeout' if isinstance(exc, httpx.TimeoutException) else 'connection')

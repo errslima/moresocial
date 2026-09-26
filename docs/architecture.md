@@ -27,8 +27,8 @@ and no local workspace or global token allowance. The encrypted admin configurat
 file and refreshes in each process within 30 seconds. Embedding-space identity includes the
 exact model, returned dimension and preprocessing contract; a changed model is staged and
 rebuilt before cutover, so vectors never mix spaces. Manual
-workflows remain available. Integrations are read-only: drafts are copied by the
-user, and the app does not send messages, write Gmail drafts or change calendars.
+workflows remain available. Gmail and Calendar remain read-only. WhatsApp supports explicit text sends from
+the conversation page, with durable duplicate protection and no automatic retries.
 It does not know invitees' calendars merely because it can read the user's calendar.
 
 Authenticated pages share a left sidebar (`app/templates/base.html`); below 900px it collapses
@@ -40,7 +40,9 @@ their centered 860px reading column.
 ### WhatsApp conversation browser
 
 `GET /whatsapp` renders stored `sources` only: it never calls the connector, and it has no
-composer, send endpoint or attachment download. Pairing and connection management stay on
+attachment download. A text composer and `POST /whatsapp/send` support explicit sends.
+`whatsapp_sends` records a durable claim before the external call and keeps the outcome
+without storing another copy of the message text. Pairing and connection management stay on
 Connections. A conversation is one `(provider_account, conversation_id)` pair inside the
 workspace, so chats from two linked numbers stay separate. Eligible rows are WhatsApp
 messages that are not deleted, are included and have a conversation ID. One SQL

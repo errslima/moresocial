@@ -30,7 +30,7 @@ bash scripts/dev.sh    # local synthetic app at http://localhost:8772/moresocial
 Stack: Python 3.12, FastAPI, SQLAlchemy/Alembic, PostgreSQL + pgvector, server-rendered
 Jinja; a Node `whatsapp-web.js` connector per user; OpenRouter for the operator-paid
 generation and embedding models. Model settings are configured by an administrator, not
-users. Read-only integrations: Moresocial never sends messages or writes to Gmail or Calendar.
+users. WhatsApp text messages can be sent explicitly from a conversation. Gmail and Calendar remain read-only.
 
 Google credentials and other private configuration must remain outside Git.
 Parts of `connector/` and `app/google_sync.py` are adapted from EnzoSocial (GPL-3.0).

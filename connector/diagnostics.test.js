@@ -27,7 +27,7 @@ test('request handler contains async exceptions without leaking error text',asyn
  await withRequest({url:'/send?token=PRIVATE_TOKEN',method:'POST',headers:{'x-request-id':'b'.repeat(32)}},res,async()=>{throw new Error('PRIVATE_BODY');});
  assert.equal(headers['X-Request-ID'],'b'.repeat(32));assert.equal(JSON.parse(body).reference,'b'.repeat(32));assert.ok(!body.includes('PRIVATE'));
  assert.ok(!fs.readFileSync(path.join(root,'events.jsonl'),'utf8').includes('PRIVATE'));
- const row=rows().at(-1);assert.equal(row.event,'request_exception');assert.equal(row.request_id,'b'.repeat(32));assert.equal(row.route,'/other');
+ const row=rows().at(-1);assert.equal(row.event,'request_exception');assert.equal(row.request_id,'b'.repeat(32));assert.equal(row.route,'/send');
 });
 test('concurrent operations keep their own correlation IDs',async()=>{
  const seen=await Promise.all([1,2,3].map(n=>withOperation(async()=>{const id=current();await new Promise(r=>setTimeout(r,5*(4-n)));

@@ -1,6 +1,6 @@
 // Moresocial WhatsApp connector: one container per workspace, QR-linked WhatsApp Web
-// (whatsapp-web.js LocalAuth), read-only. Adapted from EnzoSocial's connector (GPL-3.0);
-// sending, photo download and repair routes were removed. It holds only its own session
+// (whatsapp-web.js LocalAuth). Adapted from EnzoSocial's connector (GPL-3.0);
+// photo download and repair routes were removed. It holds only its own session
 // and a key scoped to its workspace; it has no database or model credentials.
 import {record,current,withOperation} from './diagnostics.js';
 import fs from 'node:fs';
@@ -12,6 +12,7 @@ import {normalizeRawMessage,normalizeWrapperMessage} from './normalize.js';
 import {LIMITS,selectChats,boundMessages} from './history.js';
 import {createQueue} from './queue.js';
 import {createHandler,listen} from './server.js';
+import {createSender} from './send.js';
 const {Client,LocalAuth}=wweb;
 
 const SESSION=process.env.SESSION_DIR||'/session';
@@ -147,10 +148,29 @@ async function disconnect(){
   client=null;status.state='stopped';status.qr=null;queue.clear();
 }
 
+const send=createSender({state:()=>desired?status.state:'stopped',account:me,
+  chat:id=>client.pupPage.evaluate(id=>{
+    const c=window.require('WAWebCollections').Chat.getModelsArray().find(c=>c.id?._serialized===id);
+    return c?{id,name:String(c.formattedTitle||c.name||id),is_group:c.id.server==='g.us'}:null;
+  },id).then(c=>c||(id===me()?{id,name:'You',is_group:false}:null)),
+  send:async(id,...args)=>{
+    const sent=await client.sendMessage(id,...args);
+    if(sent?.id?.id){
+      const canonical=await client.pupPage.evaluate((id,stanza)=>{
+        const c=window.require('WAWebCollections').Chat.getModelsArray().find(c=>c.id?._serialized===id);
+        const m=c?.msgs?.getModelsArray?.()?.find(m=>m.id?.id===stanza);
+        return m?String(m.id):null;
+      },id,sent.id.id).catch(()=>null);
+      if(canonical)sent.id._serialized=canonical;
+    }
+    return sent;
+  },
+  onSent:async packet=>{queue.push(packet);void queue.flush();}});
+
 listen(createHandler({key,
   status:()=>({...status,syncing,pending:queue.length,account:status.state==='ready'?me():null}),
   connect:async()=>{desired=true;if(client){try{await client.destroy();}catch{}client=null;}await connect();},
-  sync,disconnect}));
+  sync,disconnect,send}));
 setInterval(()=>void withOperation(()=>queue.flush()),10000);
 setInterval(()=>void withOperation(sync),15*60*1000);
 setInterval(()=>{if(desired&&!starting&&['disconnected','error'].includes(status.state)){client=null;void connect();}},60000);
