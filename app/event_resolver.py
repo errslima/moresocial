@@ -29,7 +29,7 @@ from .models import (Event, EventIdentityDecision, EventMention, EventPairScan, 
                      SourceParticipant)
 from .repo import Scoped
 
-RESOLVER_VERSION = 'identity-v1'
+RESOLVER_VERSION = 'identity-v2'
 MAX_PAIRS = 20          # candidate pairs evaluated per job; the rest continue in a new job
 MAX_MESSAGES = 40       # cited + context messages per packet
 MAX_CHARS = 24000       # packet message text budget
@@ -135,7 +135,7 @@ def signals_of(source) -> dict:
         ref = ref.strip('-').upper()
         if len(ref) >= 5 and re.search(r'\d', ref) and not DATE_LIKE.match(ref):
             out[h('ref:' + ref)] = ('reference', '')
-    if source.provider != 'gmail':
+    if source.provider == 'whatsapp':  # email and Calendar descriptions are mostly templates
         stripped = URL.sub(' ', text)
         for line in re.split(r'[\n.!?]+', stripped):
             line = re.sub(r'\s+', ' ', line).strip().lower()
@@ -278,6 +278,7 @@ class Candidate:
     priority: int
     signals: list
     fingerprint: str
+    templates: frozenset = frozenset()
 
 
 def scope(ws: Scoped, targets=()) -> list[Event]:
@@ -294,8 +295,27 @@ def scope(ws: Scoped, targets=()) -> list[Event]:
     return reps
 
 
+TEMPLATE_LIMIT = {'copied_text': 2, 'link': 3, 'page': 3}
+TEMPLATE_DEFAULT = 4
+
+
+def drop_templates(groups: dict) -> set:
+    """A reference shared by many separate records is boilerplate (Calendar descriptions,
+    newsletters, a venue's standard link), not evidence that two records are one outing."""
+    seen = {}
+    for g in groups.values():
+        for key, (kind, _, _) in g.refs.items():
+            seen.setdefault(key, [kind, 0])[1] += 1
+    templates = {k for k, (kind, n) in seen.items() if n > TEMPLATE_LIMIT.get(kind, TEMPLATE_DEFAULT)}
+    for g in groups.values():
+        for key in templates & set(g.refs):
+            del g.refs[key]
+    return templates
+
+
 def candidates(ws: Scoped, targets=()) -> tuple[list[Candidate], dict]:
     groups = load_groups(ws, scope(ws, targets))
+    templates = drop_templates(groups)
     stats = {'total': 0, 'cached': 0, 'settled': 0}
     index = {}
     for rid, g in groups.items():
@@ -336,7 +356,7 @@ def candidates(ws: Scoped, targets=()) -> tuple[list[Candidate], dict]:
                 scan.status in ('evaluated', 'rejected') or scan.attempts >= INVALID_LIMIT):
             stats['cached'] += 1
             continue
-        out.append(Candidate(a, b, p, codes, fp))
+        out.append(Candidate(a, b, p, codes, fp, frozenset(templates)))
     out.sort(key=lambda c: (c.priority, str(c.a), str(c.b)))
     return out, stats
 
@@ -538,6 +558,9 @@ def evaluate(wid, cand: Candidate, heartbeat, stats: Stats) -> bool:
             stats.stale += 1
             return False
         g1, g2 = current
+        for g in (g1, g2):
+            for key in cand.templates & set(g.refs):
+                del g.refs[key]
         packet, labels = build_packet(ws, g1, g2, cand.signals)
         s.commit()  # release the read transaction while the provider works
     heartbeat()
@@ -559,6 +582,9 @@ def evaluate(wid, cand: Candidate, heartbeat, stats: Stats) -> bool:
             s.commit()
             return False
         g1, g2 = current
+        for g in (g1, g2):
+            for key in cand.templates & set(g.refs):
+                del g.refs[key]
         stats.evaluated += 1
         if invalid is not None:
             stats.invalid += 1
@@ -656,12 +682,14 @@ REASON_TEXT = {
 
 
 def reviewable(reasons) -> bool:
-    """Only pairs with more than a shared date are offered as possible duplicates."""
+    """Only pairs with more than a shared date are offered as possible duplicates: a shared
+    reference or message, or date-based candidates where the model found positive support."""
     codes = {r.split(':', 1)[-1] for r in reasons}
     if codes & {'shared_payment_link', 'shared_booking_link', 'shared_booking_reference', 'shared_link',
                 'shared_source', 'copied_text', 'extraction_hint'}:
         return True
-    return bool(codes & {'compatible_activity', 'shared_people'}) and 'near_time' in codes
+    support = {r.split(':', 1)[1] for r in reasons if r.startswith('model:')} & set(SUPPORT)
+    return bool(codes & {'compatible_activity', 'shared_people'}) and 'near_time' in codes and bool(support)
 
 
 def reason_text(reasons) -> list[str]:
@@ -682,6 +710,8 @@ def review_pairs(ws: Scoped, limit: int = 6) -> list[dict]:
         (EventIdentityDecision.verdict == 'same') & EventIdentityDecision.applied.is_(False)))
         .order_by(EventIdentityDecision.created_at.desc()))
     for d in rows:
+        if d.via == 'resolver' and d.resolver_version != RESOLVER_VERSION:
+            continue  # re-evaluated under the current resolver before it is offered again
         a, b = ws.get(Event, d.event_a), ws.get(Event, d.event_b)
         if not a or not b:
             continue

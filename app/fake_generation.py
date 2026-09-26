@@ -52,7 +52,8 @@ def event_identity(ctx):
     if ta and tb and not ta & tb and first('A') and first('B'):
         return {'verdict': 'different', 'evidence_a': first('A'), 'evidence_b': first('B'), 'supporting': [],
                 'conflicting': ['different_activity'], 'explanation': 'The activities differ.'}
-    return {'verdict': 'uncertain', 'evidence_a': first('A'), 'evidence_b': first('B'), 'supporting': [],
+    support = ['same_people'] if 'shared_people' in ctx['signals'] else []
+    return {'verdict': 'uncertain', 'evidence_a': first('A'), 'evidence_b': first('B'), 'supporting': support,
             'conflicting': [], 'explanation': 'The evidence does not settle it.'}
 
 

@@ -818,3 +818,36 @@ def test_operator_tool_dry_run_then_apply(ws_id, capsys):
     with db.session() as s:
         assert ei.mode(s) == 'observe'  # mode change without --apply is rolled back
     json.loads(json.dumps(report))
+
+
+def test_template_text_and_date_only_pairs_are_not_suggested(ws_id, monkeypatch):
+    """Calendar/email boilerplate is not copied invitation text; a reference shared by many
+    separate records is a template; same-day pairs need model-supported evidence to be listed."""
+    fake_calls(monkeypatch)
+    boiler = ('This event was created automatically from an email you received in your mailbox. '
+              'To manage these events, open your settings.')
+    with db.session() as s:
+        ws = Scoped(s, ws_id)
+        trips = []
+        for i, (day, title) in enumerate([(20, 'Flight out'), (22, 'Hotel stay'), (25, 'Flight back')]):
+            src = msg(ws, f'cal{i}', boiler + f' Reservation {title}', local(15, 9, i), provider='calendar', title=title)
+            events.persist(ws, f'cal{i}', [src], [item(title, 'Travel', local(day, 10), kind='calendar')])
+            trips.append(ws.first(ws.q(EventMention).where(EventMention.scan_key == f'cal{i}')).event_id)
+        assert all(k[0] != 'copied_text' for k in er.signals_of(src).values())
+        chats = []
+        for i in range(4):  # the same long line forwarded to four unrelated plans
+            src = msg(ws, f'chat{i}', 'Please remember to bring your own water bottle and a small towel to every session this season',
+                      local(15, 10, i))
+            events.persist(ws, f'chat{i}', [src], [item(f'Session {i}', f'Sport{i}', local(20 + i, 18), role='organizer')])
+            chats.append(ws.first(ws.q(EventMention).where(EventMention.scan_key == f'chat{i}')).event_id)
+        todo, _ = er.candidates(ws)
+        assert not todo  # neither boilerplate nor a template line retrieves candidates
+        allday = [msg(ws, 'x', 'Chill day on Sunday', local(16, 9))]
+        events.persist(ws, 'x', allday, [dict(item('Chill day', '', local(18, 0)), all_day=True)])
+        gen = [msg(ws, 'y', 'Plans on Sunday?', local(16, 9, 5))]
+        events.persist(ws, 'y', gen, [item('Sunday plans', 'Plan', local(18, 15), kind='invitation', role='organizer')])
+    er.run(ws_id)
+    with db.session() as s:
+        ws = Scoped(s, ws_id)
+        assert ws.first(ws.q(EventIdentityDecision).where(EventIdentityDecision.via == 'resolver'))  # evaluated...
+        assert not er.review_pairs(ws)  # ...but not offered as a possible duplicate
