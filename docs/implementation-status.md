@@ -470,3 +470,14 @@ review. No source-message content or private screenshots are committed.
 
 The requested review notification was sent to the owner’s linked WhatsApp self-chat with a
 confirmed message receipt. It includes the Events URL and notes the ongoing initial history scan.
+
+## Event identity — 2026-09-27
+
+Implemented [the event identity plan](event-identity-execution-plan.md): stable original records,
+reversible groups (`canonical_event_id`) from user and automatic decisions, the `resolve_events`
+resolver with server-side verdict validation, field-level provenance, review UI (Possible
+duplicates, Same event / Keep separate, Separate…, Undo…) and the dry-run operator tool
+`scripts/reconcile-events.py`. Migration `0011` (additive). Active revision `d5fc668`, resolver
+mode `apply`. The owner's confirmed Sunday outing was repaired through the tested correction
+service (one event, 83 sources, 16:15–17:00). Details and verification: plan section M6.
+

@@ -1,6 +1,6 @@
 # Event identity: execution plan and agent handoff
 
-Status: implemented (M1–M5); M6 release results recorded below.
+Status: implemented and released (M1–M6); results recorded under each milestone.
 Prepared: 27 September 2026. Implemented: 27 September 2026 (branch `whatsapp-sidebar`, migration `0011`).
 Repository: `/Users/enzolima/Projects/1f517/moresocial`.
 
@@ -362,14 +362,43 @@ with GET previews), templates `events.html`, `event.html`, `event_split.html`, `
 
 ### M6 — Evaluate, backfill and release
 
-- [ ] Run the acceptance matrix below, focused regression tests and the repository's applicable
+- [x] Run the acceptance matrix below, focused regression tests and the repository's applicable
   broader checks. Record exact commands, results and any independently reproduced baseline failures.
-- [ ] Update `docs/events.md` and operator documentation with implemented behavior, flags,
+- [x] Update `docs/events.md` and operator documentation with implemented behavior, flags,
   job recovery, correction semantics and rollback limitations.
-- [ ] In observe mode, evaluate a bounded sample containing the confirmed duplicate and distinct
+- [x] In observe mode, evaluate a bounded sample containing the confirmed duplicate and distinct
   same-day plans. Inspect evidence privately; record aggregate outcomes, not message contents.
-- [ ] Commit the reviewed implementation before building a release; deploy scripts use tracked code.
-- [ ] Follow the authorized release procedure and production verification in section 7.
+- [x] Commit the reviewed implementation before building a release; deploy scripts use tracked code.
+- [x] Follow the authorized release procedure and production verification in section 7.
+
+Result (27 September 2026):
+
+- Tests: `.venv/bin/python -m pytest tests/test_events.py tests/test_event_identity.py` — 38 passed;
+  `pytest tests/test_browser.py -k event` — 4 passed (1440/390 px). Full `pytest` once after M5:
+  the same 22 failures as the pre-change baseline (AI-key tests, AI-key browser test,
+  production-secrets test; reproduced on the unchanged checkout), no new failures.
+- Rollback path validated locally: pre-identity code (`bda068e`) runs and keeps recognizing on a
+  `0011` database, shows the duplicate card of a group and reports `migrations: false`; the new
+  code restores one card per group.
+- Released `3726c54` (migration `0011`, mode `observe`) after backup
+  `moresocial-20260926T230947Z.tar.enc`; previous revision `90384f2`. Follow-ups from the live
+  sample: `6d7fd24` (Calendar/email template text and date-only pairs no longer suggested;
+  resolver `identity-v2`), `f2dad92` (pairs with separate-plan evidence not suggested), `d5fc668`
+  (earlier times compared as instants; grouping history lists grouping decisions; `recompute`).
+- Owner correction: the three records were rediscovered with `list`, dry-run matched, then applied
+  with `same --apply`: one event, the same 83-source union (digest-checked), 16:15–17:00, venue,
+  organizer, 10 distinct attendance entries, 15:00 and 16:00 kept as earlier times. `recompute`
+  changed visible facts only for this event (role). Other same-day records stay separate.
+- Observe sample: 14 pairs (`identity-v1`) and 5 (`identity-v2`); one validated same verdict
+  (reservation ↔ booking, shared payment link, confirmed by the owner), no false merge; the sparse
+  invitation stayed uncertain. Mode switched to `apply`. This is a small sample, not proof of
+  general accuracy. Two remaining suggestions are for the owner (same-titled records; two
+  birthday records).
+- Backfill: all eligible pairs evaluated (19 model calls in total); an unchanged rerun evaluated 0
+  pairs and made no model call. Live review at 1440/390 px: one card for the outing, 307 from
+  old record URLs, no horizontal overflow. The temporary browser session was revoked.
+- Not done: no WhatsApp notification (not authorized in this assignment). Destructive
+  split/undo paths were exercised in tests only, not on the owner's repaired event.
 
 ## 6. Required acceptance matrix
 
