@@ -107,7 +107,7 @@ FIELDS = {
     'identity': _model, 'reasoning_model': _model, 'embedding_model': _model, 'space': _space,
     'expected_dimension': _int, 'actual_dimension': _int, 'http_status': _int, 'retry_after_ms': _int,
     'provider_request_id': _request_id, 'input_tokens': _int, 'output_tokens': _int, 'tokens': _int,
-    'cost_usd': _number, 'revision': _int,
+    'cost_usd': _number, 'revision': _int, 'max_tokens': _int, 'finish_reason': _token,
     # jobs / sync / ingest / retrieval
     'queue_age_ms': _int, 'delay_ms': _int, 'lag_ms': _int, 'queued': _int, 'running': _int, 'failed': _int,
     'oldest_queue_age_ms': _int, 'stalled_streams': _int, 'pages': _int, 'items': _int, 'created': _int,

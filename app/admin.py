@@ -16,6 +16,8 @@ from .web import Ctx, Problem, is_admin, redirect, render, require_mutation, req
 router = APIRouter()
 _catalog: tuple[float, dict] | None = None
 CATALOG_SECONDS = 600
+# Reasoning tokens share the completion budget; 32 tokens truncated valid setup calls.
+SETUP_MAX_TOKENS = 4096
 _transport: httpx.BaseTransport | None = None
 
 
@@ -149,6 +151,8 @@ EXPLANATIONS = {
     'connection': 'OpenRouter could not be reached.',
     'provider_error': 'OpenRouter returned an error.',
     'malformed_response': 'OpenRouter returned a response that is not valid JSON.',
+    ('reasoning_probe', 'truncated'): 'The reasoning model reached the setup test token limit before finishing. '
+                                      'The API key was accepted, but setup could not be verified.',
     ('reasoning_probe', 'validation_schema'): 'The reasoning model did not return the requested JSON object.',
     ('reasoning_probe', 'model_mismatch'): 'The reasoning request was answered by a different model than the one selected.',
     'embedding_shape': 'The embedding response did not contain one well-formed vector of the expected size.',
@@ -219,7 +223,7 @@ class _Stage:
 
 def _probe_facts(probe: ai.OpenRouterProvider) -> dict:
     call = probe.last_call
-    return {k: call.get(k) for k in ('http_status', 'attempt', 'provider_request_id', 'returned_model') if call.get(k) is not None}
+    return {k: call.get(k) for k in ('http_status', 'attempt', 'provider_request_id', 'returned_model', 'max_tokens', 'finish_reason') if call.get(k) is not None}
 
 
 def setup_test(key: str, reasoning_model: str, embedding_model: str, *, reasoning_effort: bool,
@@ -258,14 +262,14 @@ def setup_test(key: str, reasoning_model: str, embedding_model: str, *, reasonin
         stage.facts['catalog_model'] = identity
 
     probe = ai.OpenRouterProvider(key, reasoning_model, embedding_model, 1, transport=_transport,
-                                  reasoning_effort=reasoning_effort)
+                                  reasoning_effort=reasoning_effort or bool(reasoning_entry.get('reasoning')))
     with _Stage('reasoning_probe', requested_model=reasoning_model,
                 catalog_model=reasoning_entry.get('canonical') or reasoning_model) as stage:
         try:
             generated = probe.generate(system='Return the requested object.', prompt='Synthetic setup check.',
                                        schema={'type': 'object', 'additionalProperties': False, 'required': ['ok'],
                                                'properties': {'ok': {'type': 'boolean'}}},
-                                       max_tokens=32, effort='low', context={})
+                                       max_tokens=SETUP_MAX_TOKENS, effort='low', context={})
         finally:
             stage.facts.update(_probe_facts(probe))
         stage.facts['returned_model'] = generated.model

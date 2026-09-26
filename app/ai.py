@@ -479,11 +479,15 @@ class OpenRouterProvider(Provider):
                     category=None, payload=None, delay=None, exc=None) -> None:
         fields = {'provider': 'openrouter', 'operation': operation, 'requested_model': model, 'attempt': attempt,
                   'http_status': status, 'duration_ms': int((time.monotonic() - started) * 1000), 'outcome': outcome,
-                  'error_category': category, 'delay_ms': int(delay * 1000) if delay else None}
+                  'error_category': category, 'delay_ms': int(delay * 1000) if delay else None,
+                  'max_tokens': self.last_call.get('max_tokens')}
         if isinstance(payload, dict):
             tin, tout = self._usage(payload)
             fields.update(returned_model=payload.get('model'), provider_request_id=payload.get('id'),
                           input_tokens=tin, output_tokens=tout, cost_usd=self._cost(payload))
+            choices = payload.get('choices')
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                fields['finish_reason'] = choices[0].get('finish_reason')
         self.last_call.update({k: v for k, v in fields.items() if v is not None})
         level = 'info' if outcome == 'ok' else ('warn' if outcome == 'retrying' else 'error')
         security.emit('provider_call', exc, level=level, **fields)
@@ -491,7 +495,7 @@ class OpenRouterProvider(Provider):
     def _post(self, endpoint: str, body: dict, operation: str) -> dict:
         response = None
         model = body.get('model')
-        self.last_call = {}
+        self.last_call = {'max_tokens': body.get('max_tokens')}
         for attempt in range(3):
             started = time.monotonic()
             delay = min(4, 2 ** attempt) if attempt < 2 else None

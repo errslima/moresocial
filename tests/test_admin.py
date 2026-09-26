@@ -279,3 +279,54 @@ def test_disable_and_remove_are_audited(browser, admin_on, capsys):
     assert events(err, 'admin_openrouter_key_removed')[0]['audit'] is True
     with db.session() as s:
         assert s.get(OperatorSetting, 'openrouter_api_key').value is None
+
+
+@pytest.mark.parametrize('supports_reasoning', [True, False])
+def test_setup_reasoning_budget_and_catalog_effort(browser, admin_on, capsys, supports_reasoning):
+    class BudgetRouter(FakeOpenRouter):
+        def __call__(self, request):
+            response = super().__call__(request)
+            if request.method == 'GET' and request.url.path.endswith('/models') and not request.url.path.endswith('/embeddings/models'):
+                payload = response.json()
+                if supports_reasoning:
+                    payload['data'][0]['supported_parameters'].append('reasoning')
+                return httpx.Response(200, json=payload)
+            if request.url.path.endswith('/chat/completions'):
+                body = json.loads(request.content)
+                # Simulate a reasoning model requiring more than the old 32-token budget.
+                if body['max_tokens'] < 1024:
+                    return httpx.Response(200, json={'model': REASONING, 'choices': [
+                        {'finish_reason': 'length', 'message': {'content': ''}}]})
+                assert body['max_tokens'] <= 4096
+                assert body.get('reasoning') == ({'effort': 'low'} if supports_reasoning else None)
+            return response
+
+    use(BudgetRouter())
+    browser.login('alex')
+    assert save(browser).status_code == 303
+    calls = events(capsys.readouterr().err, 'provider_call')
+    assert calls[0]['max_tokens'] == 4096 and calls[0]['finish_reason'] == 'stop'
+
+
+def test_setup_truncation_explains_limit_and_preserves_settings(browser, admin_on, capsys):
+    class TruncatedRouter(FakeOpenRouter):
+        def __call__(self, request):
+            response = super().__call__(request)
+            if request.url.path.endswith('/chat/completions'):
+                return httpx.Response(200, json={'model': REASONING, 'usage': {'completion_tokens': 4096},
+                    'choices': [{'finish_reason': 'length', 'message': {'content': 'PRIVATE_PARTIAL_OUTPUT'}}]})
+            return response
+
+    fake = use(TruncatedRouter())
+    browser.login('alex')
+    before = settings_without_test_record()
+    response = save(browser)
+    assert response.status_code == 400
+    assert 'reached the setup test token limit' in response.text
+    assert settings_without_test_record() == before
+    assert len(fake.posts) == 1  # Never advance to embeddings after a failed reasoning probe.
+    err = capsys.readouterr().err
+    failed = events(err, 'admin_openrouter_test_failed')[0]
+    assert failed['code'] == 'truncated'
+    assert failed['max_tokens'] == 4096 and failed['finish_reason'] == 'length'
+    assert 'PRIVATE_PARTIAL_OUTPUT' not in err and KEY not in err
