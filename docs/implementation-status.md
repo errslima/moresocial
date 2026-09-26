@@ -7,9 +7,51 @@
 
 Last updated 2026-09-26. This is the resume point for any agent or operator.
 
+## WhatsApp sending and suggestion conversation links — 2026-09-26
+
+Active production revision: `eaf3848` (includes `b3c41c8`), schema `0009`.
+Both releases used `deploy/release.sh`; web/worker readiness and the upgraded
+connector passed. Prior feature release: `4344fbb`. Migration 0009 only adds send
+receipts; it does not alter existing source data.
+
+- Suggestions have **Open conversation** buttons leading to MoreSocial's own WhatsApp
+  page, with the evidence's exact account/chat and a current saved draft when available.
+- The conversation composer sends text explicitly from the matching linked account.
+  CSRF, workspace/account checks, an existing-chat check (or the verified self-chat),
+  and durable request claims guard sending. Concurrent submissions/refreshes cannot
+  repeat a send; uncertain results preserve the text and disable automatic retry.
+- Sent messages enter the normal idempotent source-ingestion path. Gmail/Calendar
+  remain read-only. Delivery/read status is not exposed by the UI.
+- WhatsApp's current MsgKey omits `_serialized`, and a phone-based self-chat resolves
+  to an `@lid` conversation. The pinned library patch preserves the exact generated
+  message key; the connector returns the canonical destination and authoritative
+  self-chat mapping. The app redirects to that canonical stored conversation.
+
+Verification:
+
+- Initial release regression selection: **118 passed**, including WhatsApp,
+  suggestions, authentication, agent sessions and desktop/mobile browser checks.
+  After the canonical-ID fix: **91 passed** covering WhatsApp/suggestions/browser;
+  **33 connector tests passed**, including source-drift guards for the library patch.
+- The unrestricted suite retains **22 unrelated legacy failures**: retired personal
+  AI-key/provider behavior (including missing legacy `httpx2`), its two browser
+  scenarios, and an old production configuration expectation. The prior saved run
+  already reported the corresponding 20 non-browser failures.
+- Authenticated live checks: all five visible suggestion links at **1440px and 390px**
+  opened the correct internal conversation with an enabled composer; no document
+  overflow. Self-chat selection, the success receipt and refresh without duplicates
+  also passed at both sizes. Web and connector report ready.
+- Exactly **one** user-approved test message was sent to the linked user's own account.
+  WhatsApp acknowledged it (`ack=3`). It initially exposed the canonical-ID issue;
+  after the fix, a read-only replay of that existing message through the corrected
+  connector confirmed serialization/destination handling. The original uncertain
+  receipt was reconciled against that single verified message. No second live message
+  was sent. Future live receipt checks must not rerun the original send script.
+- Temporary operator browser session revoked after verification.
+
 ## Live layout and Suggestions repairs — 2026-09-26
 
-Active production revision: `4344fbbaeda16b20e23b469b75b596b91a5bd1b6` (`4344fbb`).
+Previous production revision: `4344fbbaeda16b20e23b469b75b596b91a5bd1b6` (`4344fbb`).
 This includes the operator session helper and cumulative repairs in `2ec781a`,
 `8002f17` and `4344fbb`. Standard `deploy/release.sh` image builds, migrations and
 readiness checks passed. Schema remains `0008`; no data migration was added.
