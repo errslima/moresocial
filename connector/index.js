@@ -19,6 +19,7 @@ const SESSION=process.env.SESSION_DIR||'/session';
 const WEB=process.env.WEB_INTERNAL_URL||'http://web:8001';
 const key=fs.readFileSync(process.env.CONNECTOR_KEY_FILE||'/run/secrets/connector_key','utf8').trim();
 let client=null, desired=true, starting=false, syncing=false;
+let selfChat=null;
 let status={state:'starting',qr:null,last_sync:null,chats_synced:0,error:null};
 const historyPath=SESSION+'/history.json';
 let history=fs.existsSync(historyPath)?JSON.parse(fs.readFileSync(historyPath,'utf8')):{};
@@ -129,7 +130,13 @@ async function connect(){
   client=instance;
   instance.on('qr',async qr=>{status.qr=await QRCode.toDataURL(qr);status.state='pairing';});
   instance.on('authenticated',()=>{status.state='loading';status.qr=null;});
-  instance.on('ready',()=>{status.state='ready';status.qr=null;status.error=null;void withOperation(sync);});
+  instance.on('ready',async()=>{
+    selfChat=await instance.pupPage.evaluate(()=>{
+      const me=window.require('WAWebUserPrefsMeUser');
+      return me.getMaybeMeLidUser?.()?._serialized||me.getMaybeMePnUser?.()?._serialized||null;
+    }).catch(()=>null);
+    status.state='ready';status.qr=null;status.error=null;void withOperation(sync);
+  });
   instance.on('auth_failure',()=>{record('whatsapp_auth_failed');status.state='auth_failure';status.qr=null;});
   instance.on('disconnected',()=>{record('whatsapp_disconnected');status.state='disconnected';status.qr=null;});
   instance.on('message_create',m=>void withOperation(()=>event(m)));
@@ -152,23 +159,13 @@ const send=createSender({state:()=>desired?status.state:'stopped',account:me,
   chat:id=>client.pupPage.evaluate(id=>{
     const c=window.require('WAWebCollections').Chat.getModelsArray().find(c=>c.id?._serialized===id);
     return c?{id,name:String(c.formattedTitle||c.name||id),is_group:c.id.server==='g.us'}:null;
-  },id).then(c=>c||(id===me()?{id,name:'You',is_group:false}:null)),
-  send:async(id,...args)=>{
-    const sent=await client.sendMessage(id,...args);
-    if(sent?.id?.id){
-      const canonical=await client.pupPage.evaluate((id,stanza)=>{
-        const c=window.require('WAWebCollections').Chat.getModelsArray().find(c=>c.id?._serialized===id);
-        const m=c?.msgs?.getModelsArray?.()?.find(m=>m.id?.id===stanza);
-        return m?String(m.id):null;
-      },id,sent.id.id).catch(()=>null);
-      if(canonical)sent.id._serialized=canonical;
-    }
-    return sent;
-  },
+  },id).then(c=>c||(id===me()||id===selfChat?{id,name:'You',is_group:false}:null)),
+  send:(...args)=>client.sendMessage(...args),
   onSent:async packet=>{queue.push(packet);void queue.flush();}});
 
 listen(createHandler({key,
-  status:()=>({...status,syncing,pending:queue.length,account:status.state==='ready'?me():null}),
+  status:()=>({...status,syncing,pending:queue.length,account:status.state==='ready'?me():null,
+    self_chat:status.state==='ready'?(selfChat||me()):null}),
   connect:async()=>{desired=true;if(client){try{await client.destroy();}catch{}client=null;}await connect();},
   sync,disconnect,send}));
 setInterval(()=>void withOperation(()=>queue.flush()),10000);

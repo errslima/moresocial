@@ -15,11 +15,12 @@ export function createSender({state,account,chat,send,onSent}){
     try{
       const msg=await send(input.chat,input.text.trim(),{sendSeen:false,waitUntilMsgSent:true,linkPreview:false});
       if(!msg?.id?._serialized||!msg.fromMe)return {state:'unknown'};
-      const packet={account:input.account,chat:target,messages:[{id:msg.id._serialized,
+      const destination=typeof msg.to==='string'&&/^[0-9a-z._-]{1,80}@(c\.us|g\.us|lid|s\.whatsapp\.net)$/.test(msg.to)?msg.to:target.id;
+      const packet={account:input.account,chat:{...target,id:destination},messages:[{id:msg.id._serialized,
         ts:msg.timestamp,from_me:true,sender:input.account,kind:'chat',body:input.text.trim()}]};
       // Queue the same packet as the event handler. Ingestion deduplicates its message ID.
       try{await onSent(packet);}catch{/* The response also carries the packet for ingestion. */}
-      return {state:'sent',packet};
+      return {state:'sent',requested_chat:input.chat,packet};
     }catch{return {state:'unknown'};}
   };
 }

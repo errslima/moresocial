@@ -62,7 +62,8 @@ def conversation_page(request, ctx, q="", page=1, account="", chat="", before=""
     return render(request, 'whatsapp.html', ctx, status=status, error=error,
                   compose_text=draft if compose_text is None else compose_text,
                   request_id=request_id or uuid.uuid4(), can_send=selected and whatsapp_send.available(connector, account),
-                  self_chat=connector.account_wid if connector and whatsapp_send.available(connector, connector.account_wid) else None,
+                  self_chat=whatsapp_send.self_chat(connector) if connector and whatsapp_send.available(connector, connector.account_wid) else None,
+                  self_account=connector.account_wid if connector else None,
                   receipt=result, suggestion_row=suggestion_row, rows=rows, more=more, q=q, page=page, selected=selected,
                   messages=messages, older=older, before=before, linked=linked, stored=stored, wa_url=page_url,
                   list_url=page_url(q=q, page=page))
@@ -82,4 +83,4 @@ def send_message(request: Request, account: str = Form(...), chat: str = Form(..
         return conversation_page(request, ctx, account=account, chat=chat, receipt=str(receipt.id),
                                  status=202 if receipt.state == 'unknown' else 409, compose_text=text,
                                  request_id=request_id if receipt.state == 'unknown' else None)
-    return redirect('/whatsapp', account=account, chat=chat, receipt=str(receipt.id))
+    return redirect('/whatsapp', account=receipt.account, chat=receipt.chat, receipt=str(receipt.id))

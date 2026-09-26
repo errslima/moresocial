@@ -9,7 +9,7 @@
   <section class="wa-list" aria-labelledby="wa-title">
     <div class="wa-list-head">
       <h1 id="wa-title">WhatsApp</h1>
-      {% if self_chat %}<p class="small"><a href="{{ wa_url(account=self_chat, chat=self_chat) }}">Message yourself</a></p>{% endif %}
+      {% if self_chat %}<p class="small"><a href="{{ wa_url(account=self_account, chat=self_chat) }}">Message yourself</a></p>{% endif %}
       <form method="get" action="{{ url('/whatsapp') }}" class="wa-search" role="search">
         <label for="wa-q" class="sr">Search conversations</label>
         <input id="wa-q" type="search" name="q" value="{{ q }}" maxlength="100" placeholder="Search conversations" autocomplete="off">

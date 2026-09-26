@@ -142,6 +142,9 @@ def status(ws: Scoped) -> dict:
     if account:
         row.account_wid = account
     row.status = {'history': history, 'pending': live.get('pending') if isinstance(live.get('pending'), int) else None}
+    self_chat = live.get('self_chat')
+    if isinstance(self_chat, str) and CHAT_RE.fullmatch(self_chat) and not self_chat.endswith('@g.us'):
+        row.status['self_chat'] = self_chat
     row.detail = str(live.get('error'))[:300] if live.get('error') else None
     qr = live.get('qr') if state == 'pairing' and isinstance(live.get('qr'), str) and live['qr'].startswith('data:image/') else None
     return {'state': state, 'qr': qr, 'detail': row.detail, 'history': history}

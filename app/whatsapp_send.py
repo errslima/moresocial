@@ -25,12 +25,17 @@ def available(connector, account):
                 and connector.account_wid == account)
 
 
+def self_chat(connector):
+    return (connector.status or {}).get('self_chat') or connector.account_wid
+
+
 def conversation(ws, tz, account, chat):
     stored = conversations.conversation(ws, tz, account, chat)
     if stored:
         return stored
     connector = ws.first(ws.q(WhatsAppConnector))
-    if account == chat and whatsapp.CHAT_RE.fullmatch(chat) and available(connector, account):
+    if (available(connector, account) and chat in (account, self_chat(connector))
+            and whatsapp.CHAT_RE.fullmatch(chat)):
         return conversations.Summary(account, chat, 'You', False, 'Y', 0, None, '', '', '')
     return None
 
@@ -75,10 +80,12 @@ def send(ws, account, chat, text, request_id):
     elif result.get('state') == 'sent':
         packet = result.get('packet') or {}
         messages = packet.get('messages') or []
-        if (packet.get('chat', {}).get('id') == chat and len(messages) == 1
+        destination = packet.get('chat', {}).get('id', '')
+        if (result.get('requested_chat') == chat and isinstance(destination, str)
+                and whatsapp.CHAT_RE.fullmatch(destination) and len(messages) == 1
                 and messages[0].get('from_me') is True and messages[0].get('body') == text
                 and whatsapp.MSG_ID_RE.fullmatch(str(messages[0].get('id', '')))):
-            receipt.state, receipt.message_id = 'sent', messages[0]['id']
+            receipt.state, receipt.message_id, receipt.chat = 'sent', messages[0]['id'], destination
             ws.s.commit()
             # Same idempotent ingest as live events; the sent bubble appears immediately.
             whatsapp.ingest(ws.wid, packet, account)
@@ -86,6 +93,6 @@ def send(ws, account, chat, text, request_id):
 
 
 def fake_send(account, chat, text):
-    return {'state': 'sent', 'packet': {'chat': {'id': chat, 'name': chat, 'is_group': chat.endswith('@g.us')},
+    return {'state': 'sent', 'requested_chat': chat, 'packet': {'chat': {'id': chat, 'name': chat, 'is_group': chat.endswith('@g.us')},
         'messages': [{'id': 'true_' + chat + '_' + uuid.uuid4().hex, 'ts': int(whatsapp.utcnow().timestamp()),
                       'sender': account, 'from_me': True, 'kind': 'chat', 'body': text}]}}

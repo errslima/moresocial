@@ -143,3 +143,25 @@ def test_concurrent_submissions_claim_only_once(browser, ready, monkeypatch):
             release.set()
         assert first.result(10).status_code == 303
     assert len(calls) == 1
+
+
+def test_whatsapp_canonical_destination_and_self_mapping(browser, ready, monkeypatch):
+    canonical = '123456789012345@lid'
+    with db.session() as s:
+        c = Scoped(s, ready).first(Scoped(s, ready).q(WhatsAppConnector))
+        c.status = {'self_chat': canonical}
+    html = page(browser).text
+    assert 'chat=123456789012345%40lid' in html
+    assert page(browser, account=ALEX_WA, chat=canonical).status_code == 200
+    original = whatsapp_send.fake_send
+    def resolved(account, chat, text):
+        result = original(account, chat, text)
+        result['packet']['chat']['id'] = canonical
+        return result
+    monkeypatch.setattr(whatsapp_send, 'fake_send', resolved)
+    data = form(browser, chat=ALEX_WA)
+    result = browser.post('/whatsapp/send', data)
+    assert result.status_code == 303
+    assert parse_qs(urlsplit(result.headers['location']).query)['chat'] == [canonical]
+    assert 'Message sent to WhatsApp' in browser.c.get(result.headers['location']).text
+    assert browser.post('/whatsapp/send', data).headers['location'] == result.headers['location']

@@ -29,3 +29,10 @@ test('send failures are ambiguous, storage failure preserves confirmed send',asy
  }
  assert.equal((await setup({onSent:async()=>{throw Error('storage');}}).fn(input)).state,'sent');
 });
+
+test('uses the actual canonical destination while retaining the requested chat',async()=>{
+ const {fn}=setup({send:async()=>({id:{_serialized:'true_canonical_123'},fromMe:true,timestamp:1234567890,to:'987654321@lid'})});
+ const result=await fn(input);
+ assert.equal(result.requested_chat,input.chat);
+ assert.equal(result.packet.chat.id,'987654321@lid');
+});
