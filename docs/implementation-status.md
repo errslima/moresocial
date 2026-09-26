@@ -7,6 +7,22 @@
 
 Last updated 2026-09-26. This is the resume point for any agent or operator.
 
+## OpenRouter setup truncation fix — 2026-09-26
+
+Active production revision: `1f753c0` (previous: `41c6966`). The reasoning setup probe
+now permits 4,096 output tokens and requests low effort when the catalog advertises
+reasoning support. Truncation has a specific explanation; provider and setup events
+record the token ceiling and finish reason. Saved runtime effort preferences are unchanged.
+
+- 33 targeted admin, OpenRouter and diagnostics tests passed, including truncation,
+  preserved settings, catalog capability handling and secret-safe metadata.
+- Tests used a disposable VPS PostgreSQL container through an SSH tunnel because
+  local sandbox restrictions prevent PostgreSQL startup. Container and tunnel removed.
+- Deployed with `deploy/release.sh`; public health and readiness passed. Web and worker
+  run the new image; the live probe constant is 4096. No schema changes in this fix.
+- No valid OpenRouter key is saved, so a real DeepSeek/Voyage setup test remains for
+  the operator through Admin. No paid provider requests were made during deployment.
+
 ## Diagnostics release — 2026-09-26 (branch `diagnostics`)
 
 Implements `docs/diagnostics-plan.md`, deployed in the plan's order: `e373a49` (setup
