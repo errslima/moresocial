@@ -424,6 +424,32 @@ class Event(Base):
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default='planning', nullable=False)
     created_at: Mapped[datetime] = now_col()
+    origin: Mapped[str] = mapped_column(String(20), default='legacy', nullable=False)
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    details: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    dismissed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    locked_fields: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+
+
+class EventScan(Base):
+    __tablename__ = 'event_scans'
+    __table_args__ = (UniqueConstraint('workspace_id', 'scan_key'),)
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    scan_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class EventMention(Base):
+    __tablename__ = 'event_mentions'
+    __table_args__ = (owned('events', 'event_id', ondelete='CASCADE'),)
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    scan_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
 
 class EventCandidate(Base):

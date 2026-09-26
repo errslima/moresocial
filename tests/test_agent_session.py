@@ -32,7 +32,12 @@ def test_issue_authenticates_existing_account_without_google(make_browser, tmp_p
     owner, agent, other = make_browser(), make_browser(), make_browser()
     owner.login('alex')
     other.login('blake')
-    gathering = other.post('/gatherings', {'title': 'Private to Blake', 'csrf': other.csrf()}).headers['location']
+    from app.models import Event
+    from conftest import workspace_of
+    eid = uuid.uuid4()
+    with db.session() as s:
+        s.add(Event(id=eid, workspace_id=workspace_of('blake@example.test'), title='Private to Blake', timezone='UTC'))
+    gathering = '/moresocial/events/' + str(eid)
     with db.session() as s:
         grants = [(c.id, c.refresh_token_enc) for c in s.scalars(select(Connection).order_by(Connection.id))]
     def no_google(*args, **kwargs):

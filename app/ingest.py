@@ -195,6 +195,8 @@ def schedule_rebuilds(ws: Scoped, result: IngestResult, token: str = '') -> None
         if provider == 'whatsapp':
             from . import suggestions
             suggestions.changed(ws, conv)
+        from . import events
+        events.enqueue(ws, provider, conv, changes)
         key = 'rebuild:' + hashlib.sha256(f'{provider}|{conv}|{changes}'.encode()).hexdigest()[:40]
         jobs.enqueue(ws.s, ws.wid, 'rebuild_conversation', key, {'provider': provider, 'conversation_id': conv})
 
@@ -204,6 +206,8 @@ def invalidate(ws: Scoped, source_ids: list[uuid.UUID], rebuild: bool = True) ->
     cached answers and draft evidence; clear RSVP suggestions citing them."""
     if not source_ids:
         return
+    from . import events
+    events.invalidate(ws, source_ids)
     chunk_ids = list(ws.s.scalars(ws.q(ChunkSource, ChunkSource.chunk_id).where(ChunkSource.source_id.in_(source_ids))))
     convs = set(ws.s.execute(ws.q(Source, Source.provider, Source.conversation_id).where(Source.id.in_(source_ids))).all())
     from . import suggestions

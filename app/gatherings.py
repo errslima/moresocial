@@ -177,20 +177,6 @@ def next_steps(ws: Scoped, limit: int = 3) -> list[dict]:
     hidden = {n.step_key for n in ws.all(ws.q(NextStepState).where(
         or_(NextStepState.snoozed_until.is_(None), NextStepState.snoozed_until > now)))}
     steps = []
-    for event in ws.all(ws.q(Event).where(Event.status == 'planning').order_by(Event.created_at.desc()).limit(10)):
-        people = ws.all(ws.q(EventPerson).where(EventPerson.event_id == event.id))
-        pending = [p for p in people if p.suggested_status]
-        if pending:
-            steps.append({'key': f'review:{event.id}', 'text': f'Review {len(pending)} possible reply(ies) for {event.title}',
-                          'href': f'/gatherings/{event.id}'})
-        todo = [p for p in people if p.status == 'not_contacted']
-        if todo:
-            steps.append({'key': f'invite:{event.id}:{len(todo)}',
-                          'text': f'Draft invitations for {len(todo)} person(s) for {event.title}', 'href': f'/gatherings/{event.id}'})
-        waiting = [p for p in people if p.status == 'awaiting_reply' and p.status_changed_at < now - timedelta(days=4)]
-        if waiting:
-            steps.append({'key': f'followup:{event.id}', 'href': f'/gatherings/{event.id}',
-                          'text': f'Optional: a friendly follow-up for {event.title} ({len(waiting)} without a reply so far)'})
     for person in ws.all(ws.q(Person).where(Person.pinned.is_(True)).limit(20)):
         ids = person_identifiers(ws, person.id)
         last = ws.s.scalar(select(Source.occurred_at).where(Source.workspace_id == ws.wid, Source.author.in_(ids))

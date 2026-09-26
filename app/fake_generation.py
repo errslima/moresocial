@@ -27,6 +27,8 @@ def words(text: str) -> set[str]:
 
 
 def respond(ctx: dict) -> dict:
+    if ctx['purpose'] == 'events':
+        return {'events': []}
     if ctx['purpose'] == 'suggestions':
         return suggestion_review(ctx)
     if ctx['purpose'] == 'suggestion_draft':

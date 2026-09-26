@@ -196,7 +196,9 @@ def calendar_record(event: dict, account: str) -> SourceRecord:
         author=Participant('email', organizer, 'organizer') if organizer and not (event.get('organizer') or {}).get('self') else None,
         occurred_at=start, ends_at=end, body=body, body_truncated=truncated,
         meta={'status': event.get('status', 'confirmed'), 'all_day': all_day, 'self_response': own,
-              'location': location or None, 'note': 'Scheduled calendar event; not proof of attendance.'},
+              'location': location or None, 'self_organizer': bool((event.get('organizer') or {}).get('self')),
+              'attendee_responses': {a['email'].lower(): a.get('responseStatus', 'needsAction') for a in event.get('attendees') or [] if a.get('email')},
+              'note': 'Scheduled calendar event; not proof of attendance.'},
         participants=participants, deleted=event.get('status') == 'cancelled')
 
 

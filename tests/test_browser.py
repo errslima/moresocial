@@ -117,30 +117,27 @@ def test_full_lasergame_scenario(live, chromium, viewport):
     assert page.locator('li.claim', has_text='Amersfoort, near the station').locator('text=added or confirmed by you').is_visible()
     no_horizontal_scroll()
 
-    # Create a lasergame gathering, invite, draft and copy
-    nav_to(page, 'Gatherings')
-    page.get_by_label('Name').fill('Lasergame evening')
-    page.get_by_label('Activity').fill('lasergame')
-    page.get_by_role('button', name='Create').click()
-    page.get_by_label('Start').fill(time.strftime('%Y-%m-%dT19:00', time.localtime(time.time() + 6 * 86400)))
-    page.get_by_role('button', name='Add date').click()
-    page.get_by_label('Add', exact=True).select_option(label='Sam Jansen')
-    page.get_by_role('button', name='Add invitee').click()
-    page.get_by_role('button', name='Draft an invitation').click()
-    draft = page.locator('textarea[data-copy-source]')
-    text = draft.input_value()
-    assert 'Sam' in text and 'lasergame' in text.lower()
-    page.get_by_role('button', name='Copy', exact=True).click()
-    playwright.expect(page.locator('[data-copy-status]')).to_contain_text('Nothing was sent')
-    assert page.evaluate('navigator.clipboard.readText()') == text  # Copy copies exactly what is shown
-    assert page.get_by_role('button', name='Send').count() == 0
-    assert 'Not contacted' in page.locator('article.invitee h3').inner_text()  # copying does not advance state
+    # Automatically recognize an event from imported evidence, then inspect/dismiss it.
+    from app import events, db
+    from app.repo import Scoped
+    from conftest import workspace_of
+    from test_events import sample, item
+    with db.session() as s:
+        ws = Scoped(s, workspace_of('alex@example.test'))
+        source = sample(ws)
+        events.persist(ws, 'browser-event', [source], [item(source)])
+    nav_to(page, 'Events')
+    assert page.get_by_role('button', name='Create', exact=True).count() == 0
+    page.get_by_role('link', name='Dinner at Olive', exact=True).click()
+    assert page.get_by_role('heading', name='Messages & context').is_visible()
+    assert page.get_by_role('link', name='Open source →').count() == 1
     no_horizontal_scroll()
-
-    # Record the RSVP manually
-    page.locator('article.invitee').get_by_label('Status').select_option('accepted')
-    page.locator('article.invitee').get_by_role('button', name='Update').click()
-    assert 'Accepted' in page.locator('article.invitee h3').inner_text()
+    page.screenshot(path=f".dev/events-detail-{viewport['width']}.png", full_page=True)
+    page.get_by_role('button', name='Dismiss event', exact=True).click()
+    page.get_by_role('link', name='Dismissed 1').click()
+    assert page.get_by_role('link', name='Dinner at Olive', exact=True).is_visible()
+    no_horizontal_scroll()
+    page.screenshot(path=f".dev/events-overview-{viewport['width']}.png", full_page=True)
 
     # Ask a cited question
     nav_to(page, 'Ask')
@@ -346,7 +343,7 @@ def test_sidebar_and_whatsapp_browser(live, chromium, viewport):
         assert menu.locator('summary').is_hidden()
         logout = page.get_by_role('button', name='Sign out').bounding_box()
         assert logout['y'] > 780  # anchored at the bottom of the sidebar
-    assert [l.strip() for l in labels] == ['Home', 'WhatsApp', 'Suggestions', 'People', 'Ask', 'Gatherings', 'About me', 'Connections']
+    assert [l.strip() for l in labels] == ['Home', 'WhatsApp', 'Suggestions', 'People', 'Ask', 'Events', 'About me', 'Connections']
     assert page.get_by_role('link', name='Admin').count() == 0  # not an administrator
     assert page.get_by_role('link', name='Home', exact=True).get_attribute('aria-current') == 'page'
     home_main = page.locator('main').bounding_box()
@@ -518,7 +515,7 @@ def test_long_chat_list_and_main_page_bounds(live, chromium, viewport):
     pane.evaluate('e => e.scrollTop = e.scrollHeight')
     assert page.locator('.wa-conv').last.is_visible()
     assert page.evaluate('document.documentElement.scrollHeight <= innerHeight + 1')
-    for route in ('home', 'suggestions', 'people', 'ask', 'gatherings', 'me', 'connections', 'admin', 'sources'):
+    for route in ('home', 'suggestions', 'people', 'ask', 'events', 'me', 'connections', 'admin', 'sources'):
         response = page.goto(live + '/' + route)
         assert response.status == 200
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), route
@@ -569,3 +566,35 @@ def test_suggestion_to_conversation_and_send(live, chromium, viewport):
     assert page.evaluate('document.documentElement.scrollHeight <= innerHeight + 1')
     page.screenshot(path=f'/tmp/moresocial-send-{viewport["width"]}.png')
     ctx.close()
+
+
+@pytest.mark.parametrize('viewport', [{'width':1440,'height':900}, {'width':390,'height':844}], ids=['desktop','mobile'])
+def test_automatic_events_page(live, chromium, viewport):
+    from app import events, db
+    from app.repo import Scoped
+    from conftest import workspace_of
+    from test_events import sample, item
+    context = chromium.new_context(viewport=viewport)
+    page = context.new_page()
+    sign_in(page, live)
+    with db.session() as s:
+        ws = Scoped(s, workspace_of('alex@example.test'))
+        source = sample(ws)
+        events.persist(ws, 'browser-event', [source], [item(source)])
+    nav_to(page, 'Events')
+    assert page.get_by_role('button', name='Create', exact=True).count() == 0
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+    page.screenshot(path=f".dev/events-overview-{viewport['width']}.png", full_page=True)
+    page.get_by_role('link', name='Dinner at Olive', exact=True).click()
+    assert page.get_by_role('heading', name='Messages & context').is_visible()
+    assert page.get_by_role('link', name='Open source →').count() == 1
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+    page.screenshot(path=f".dev/events-detail-{viewport['width']}.png", full_page=True)
+    page.get_by_role('button', name='Dismiss event', exact=True).click()
+    page.get_by_role('link', name='Dismissed 1').click()
+    page.get_by_role('link', name='Dinner at Olive', exact=True).click()
+    page.get_by_role('button', name='Restore event').click()
+    assert page.get_by_role('heading', name='Dinner at Olive').is_visible()
+    response = page.goto(live + '/gatherings')
+    assert response.status == 200 and page.url.endswith('/events')
+    context.close()

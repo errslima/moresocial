@@ -3,7 +3,7 @@
 {% block content %}
 <section class="hero">
   <h1>Remember the people who matter, and make plans with them.</h1>
-  <p>Moresocial keeps a private, source-backed memory of your relationships and helps you organize gatherings and write messages you send yourself.</p>
+  <p>Moresocial keeps a private, source-backed memory of your relationships and brings together events from your messages and Calendar.</p>
   <form method="post" action="{{ url('/api/auth/google/start') }}">
     <input type="hidden" name="purpose" value="login">
     <button type="submit" class="primary big">Continue with Google</button>

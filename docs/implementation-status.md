@@ -433,3 +433,19 @@ User API keys (deviations from `docs/api-keys-execution-plan.md`):
 | First backup + scratch restore on the host | **passed**; scratch resources removed | deployed |
 
 Deployed revision: `c921458b7ece3329e41ef7390dd4bf171ef062f5`. Rollback target: none (first deployment); removal procedure is in the operator runbook.
+
+## Automatic Events — 2026-09-26
+
+Implemented the Events overview and evidence timeline described in [Events](events.md).
+Manual event creation/planning routes removed; `/gatherings` redirects permanently.
+Migration 0010 is additive. Source ingestion plus worker reconciliation recognize Calendar,
+WhatsApp and qualifying email events, with cross-conversation matching, explicit attendance,
+booking precedence, persistent dismissal and immediate source-exclusion invalidation.
+
+Local verification: 78 focused integration/browser checks pass (Events, auth, agent sessions,
+Google sync, workflow, source review fixes, diagnostics; 1440/390px browser coverage). Rendered
+screenshots inspected. A broad run also exposed legacy AI-key/budget/config tests that target
+features removed by the earlier OpenRouter migration; representative failures reproduced on
+unchanged 7b643cc. These are separate from the Events release checks.
+
+Live deployment and recognition verification pending below.

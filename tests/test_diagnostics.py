@@ -199,6 +199,9 @@ def test_connector_request_correlates_through_jobs(make_browser, internal, capsy
     assert r.status_code == 200 and r.headers['X-Request-ID'] == rid  # the internal API adopts the connector's ID
     with db.session() as s:
         traced = s.scalars(select(Job).where(Job.workspace_id == workspace_of('alex@example.test'), Job.status == 'queued')).all()
+        from app.jobs import utcnow
+        for job in traced:
+            job.run_after = utcnow()  # Advance the event recognition settling period.
     assert traced and all(j.payload['_trace'] == {'op': rid} for j in traced)
     drain()
     completed = events(capsys.readouterr().err, 'job_completed')

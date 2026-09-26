@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% from 'icons.html' import icon %}
+{% block title %}Events{% endblock %}
+{% block content %}
+<header class="events-hero">
+  <p class="eyebrow">YOUR SOCIAL CALENDAR</p>
+  <h1>Events</h1>
+  <p class="events-intro">The plans in your conversations, brought together.</p>
+  <p class="muted">Recognized automatically from WhatsApp, email and Google Calendar. Open an event to see the messages behind it.</p>
+</header>
+<div class="events-note"><span aria-hidden="true">{{ icon('gatherings') }}</span><div><strong>One event. The whole conversation.</strong><br><span class="small muted">Invitations, replies and booking details belong together—even when they arrive in different places.</span></div></div>
+<nav class="event-tabs" aria-label="Event views">
+{% for value, label in [('upcoming','Upcoming'),('past','Past'),('dismissed','Dismissed')] %}
+<a href="{{ url('/events') }}?view={{ value }}" {% if view == value %}aria-current="page"{% endif %}>{{ label }} <span>{{ counts[value] }}</span></a>
+{% endfor %}</nav>
+{% if pending %}<p class="small muted" role="status">Reviewing imported conversations. New events will appear as they are recognized.</p>{% endif %}
+{% if events %}
+<div class="event-grid">
+{% for e in events %}
+<article class="event-card{% if e.status == 'cancelled' %} event-cancelled{% endif %}">
+  <div class="event-date" aria-hidden="true">{% if e.starts_at %}<span>{{ e.starts_at.astimezone(tz).strftime('%b') }}</span><strong>{{ e.starts_at.astimezone(tz).strftime('%d') }}</strong>{% else %}<span>PAST</span><strong>—</strong>{% endif %}</div>
+  <div class="event-card-body">
+    <div class="event-badges"><span class="tag">{{ 'Earlier plan' if e.origin == 'legacy' else 'Detected' }}</span>{% if e.status == 'cancelled' %}<span class="tag">Cancelled</span>{% elif e.details.get('role') %}<span class="small muted">{{ roles.get(e.details.get('role'), 'Invited') }}</span>{% endif %}</div>
+    <h2><a href="{{ url('/events/' ~ e.id) }}">{{ e.title }}</a></h2>
+    <p class="event-meta">{% if e.starts_at %}{{ e.starts_at.astimezone(tz).strftime('%A %d %B') }} · {{ 'Time to be confirmed / all day' if e.details.get('all_day') else e.starts_at.astimezone(tz).strftime('%H:%M') }}{% else %}Date not recorded{% endif %}</p>
+    <p class="small muted">{{ e.details.get('place') or 'Place to be confirmed' }}</p>
+    {% if e.details.get('summary') %}<p class="event-summary">{{ e.details.get('summary')[:220] }}{{ '…' if e.details.get('summary')|length > 220 else '' }}</p>{% endif %}
+    {% if e.details.get('participants') %}<div class="event-attendance">{% for status, label in [('accepted','confirmed'),('maybe','unsure'),('declined','not joining'),('awaiting_reply','awaiting reply')] %}{% set count = e.details.participants|selectattr('status','equalto',status)|list|length %}{% if count %}<span class="event-rsvp rsvp-{{ status }}">{{ count }} {{ label }}</span>{% endif %}{% endfor %}</div>{% endif %}
+    <div class="event-providers">{% for provider in e.details.get('providers', []) %}<span>{{ {'whatsapp':'WhatsApp','gmail':'Email','calendar':'Calendar'}[provider] }}</span>{% endfor %}<span>{{ e.details.get('source_count') or 0 }} {{ 'source' if e.details.get('source_count') == 1 else 'sources' }}</span></div>
+  </div>
+</article>
+{% endfor %}
+</div>
+{% else %}
+<div class="events-empty">
+  {{ icon('gatherings') }}
+  <h2>{{ 'Your next plans will find their way here' if view == 'upcoming' else 'No ' ~ view ~ ' events' }}</h2>
+  <p class="muted">{% if view == 'upcoming' %}An invitation in WhatsApp, a booking by email, or an entry in Calendar can become an event. Related messages add the details as your plans take shape.{% elif view == 'dismissed' %}Events you dismiss stay here, even when more messages arrive.{% else %}Events move here after they finish. Their context stays together.{% endif %}</p>
+  {% if view == 'upcoming' %}<a href="{{ url('/connections') }}">Check your connections →</a>{% endif %}
+</div>
+{% endif %}
+<p class="small muted">Times shown in Europe/Amsterdam. Event details reflect the imported evidence and may need checking.</p>
+{% endblock %}

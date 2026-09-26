@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, or_, select
 
-from . import accounts, ai, config, diagnostics, gatherings, ingest, memory, retrieval, security, whatsapp
+from . import accounts, ai, config, diagnostics, events as automatic_events, gatherings, ingest, memory, retrieval, security, whatsapp
 from .models import (Answer, AnswerSource, Claim, ClaimSource, Connection, Draft, Event, EventCandidate, EventPerson,
                      Exclusion, Job, Person, PersonIdentifier, RelationshipNote, SelfProfile, Source,
                      SourceParticipant, SyncStream, WhatsAppConnector)
@@ -74,10 +74,10 @@ def welcome(request: Request, ctx: Ctx | None = Depends(optional_user)):
 def home(request: Request, ctx: Ctx = Depends(require_user)):
     ws = ctx.ws
     conn = ws.first(ws.q(Connection).where(Connection.provider == 'google'))
-    events = ws.all(ws.q(Event).where(Event.status == 'planning').order_by(Event.created_at.desc()).limit(5))
+    events = automatic_events.cards(ws)[:5]
     sources = ws.s.scalar(select(func.count()).select_from(Source).where(Source.workspace_id == ws.wid))
     return render(request, 'home.html', ctx, steps=gatherings.next_steps(ws), conn=conn, events=events, sources=sources,
-                  budget=ai.budget_state(ws.wid))
+                  budget=ai.budget_state(ws.wid), event_tz=automatic_events.TZ)
 
 
 @router.post('/home/steps')
@@ -273,176 +273,58 @@ def answer(request: Request, aid: str, ctx: Ctx = Depends(require_user)):
     return render(request, 'answer.html', ctx, answer=a, cites=cites, sources=srcs)
 
 
-# ---------------- gatherings ----------------
+# ---------------- events ----------------
 
 @router.get('/gatherings')
-def gatherings_page(request: Request, ctx: Ctx = Depends(require_user)):
-    rows = ctx.ws.all(ctx.ws.q(Event).order_by(Event.created_at.desc()))
-    return render(request, 'gatherings.html', ctx, events=rows)
+def gatherings_page(ctx: Ctx = Depends(require_user)):
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(config.get().url('/events'), status_code=301)
 
 
 @router.post('/gatherings')
-def create_gathering(title: str = Form(...), activity: str = Form(''), notes: str = Form(''),
-                           timezone_: str = Form('Europe/Amsterdam', alias='timezone'), ctx: Ctx = Depends(require_mutation)):
-    if not title.strip():
-        raise Problem(400, 'Give the gathering a name.')
-    if not gatherings.valid_timezone(timezone_):
-        raise Problem(400, 'Unknown time zone.')
-    e = ctx.ws.add(Event(id=uuid.uuid4(), title=title.strip()[:200], activity=activity.strip()[:100] or None,
-                         notes=notes.strip()[:4000], timezone=timezone_))
-    return redirect(f'/gatherings/{e.id}')
+@router.post('/events')
+def create_gathering(ctx: Ctx = Depends(require_mutation)):
+    raise Problem(405, 'Events are recognized automatically from WhatsApp, email and Calendar.')
 
 
 @router.get('/gatherings/{eid}')
-def gathering(request: Request, eid: str, error: str = '', ref: str = '', ctx: Ctx = Depends(require_user)):
-    ws = ctx.ws
-    e = found(ws.get(Event, eid), 'That gathering')
-    cands = ws.all(ws.q(EventCandidate).where(EventCandidate.event_id == e.id).order_by(EventCandidate.starts_at))
-    invitees = ws.all(ws.q(EventPerson).where(EventPerson.event_id == e.id))
-    people_ = {p.id: p for p in ws.all(ws.q(Person).where(Person.id.in_([i.person_id for i in invitees])))}
-    drafts = {}
-    for d in ws.all(ws.q(Draft).where(Draft.event_id == e.id).order_by(Draft.created_at)):
-        drafts[d.person_id] = d
-    draft_cites = {d.id: ws.all(ws.q(AnswerSource).where(AnswerSource.draft_id == d.id)) for d in drafts.values()}
-    replies = {i.id: gatherings.reply_evidence(ws, e, i) for i in invitees}
-    suggestions = {i.id: ws.get(Source, i.suggested_source_id) for i in invitees if i.suggested_source_id}
-    all_people = ws.all(ws.q(Person).order_by(Person.pinned.desc(), Person.display_name).limit(500))
+def old_gathering(eid: str, ctx: Ctx = Depends(require_user)):
+    from fastapi.responses import RedirectResponse
+    found(ctx.ws.get(Event, eid), 'That event')
+    return RedirectResponse(config.get().url('/events/' + eid), status_code=301)
+
+
+@router.get('/events')
+def events_page(request: Request, view: str = 'upcoming', ctx: Ctx = Depends(require_user)):
+    if view not in ('upcoming', 'past', 'dismissed'):
+        view = 'upcoming'
     from zoneinfo import ZoneInfo
-    return render(request, 'gathering.html', ctx, event=e, candidates=[(c, gatherings.calendar_conflicts(ws, c)) for c in cands],
-                  invitees=invitees, people=people_, drafts=drafts, draft_cites=draft_cites, replies=replies,
-                  suggestions=suggestions, all_people=all_people, statuses=gatherings.STATUS_LABELS, tz=ZoneInfo(e.timezone),
-                  error={'ai': 'The assistant could not write a draft right now. You can still write one yourself.',
-                         'budget': "Today's AI budget is used up; drafting resumes tomorrow."}.get(error),
-                  reference=diagnostics.valid_id(ref) if error else None)
+    from .models import Job
+    pending = ctx.ws.s.scalar(ctx.ws.q(Job, func.count()).where(Job.kind == 'detect_events', Job.status.in_(['queued', 'running'])))
+    return render(request, 'events.html', ctx, events=automatic_events.cards(ctx.ws, view), view=view,
+                  counts={v: len(automatic_events.cards(ctx.ws, v)) for v in ('upcoming', 'past', 'dismissed')},
+                  pending=pending, tz=ZoneInfo('Europe/Amsterdam'), roles=automatic_events.ROLES)
 
 
-@router.post('/gatherings/{eid}/edit')
-def edit_gathering(eid: str, title: str = Form(...), activity: str = Form(''), notes: str = Form(''),
-                         status: str = Form('planning'), ctx: Ctx = Depends(require_mutation)):
-    e = found(ctx.ws.get(Event, eid), 'That gathering')
-    e.title, e.activity, e.notes = title.strip()[:200] or e.title, activity.strip()[:100] or None, notes.strip()[:4000]
-    e.status = status if status in ('planning', 'done', 'cancelled') else e.status
-    return redirect(f'/gatherings/{e.id}')
-
-
-@router.post('/gatherings/{eid}/candidates')
-def add_candidate(eid: str, start: str = Form(...), hours: float = Form(2.0), ctx: Ctx = Depends(require_mutation)):
+@router.get('/events/{eid}')
+def gathering(request: Request, eid: str, ctx: Ctx = Depends(require_user)):
+    from .models import EventMention
     from zoneinfo import ZoneInfo
-    e = found(ctx.ws.get(Event, eid), 'That gathering')
-    try:
-        local = datetime.fromisoformat(start)
-    except ValueError:
-        raise Problem(400, 'Enter a date and time.')
-    starts = (local if local.tzinfo else local.replace(tzinfo=ZoneInfo(e.timezone))).astimezone(timezone.utc)
-    hours = min(max(hours, 0.25), 24)
-    ctx.ws.add(EventCandidate(id=uuid.uuid4(), event_id=e.id, starts_at=starts, ends_at=starts + timedelta(hours=hours)))
-    return redirect(f'/gatherings/{e.id}')
+    e = found(ctx.ws.get(Event, eid), 'That event')
+    mentions = ctx.ws.all(ctx.ws.q(EventMention).where(EventMention.event_id == e.id))
+    ids = {uuid.UUID(sid) for m in mentions for sid in m.evidence}
+    evidence = ctx.ws.all(ctx.ws.q(Source).where(Source.id.in_(ids), Source.included.is_(True), Source.deleted_at.is_(None))
+                          .order_by(Source.occurred_at, Source.id)) if ids else []
+    people_ = {str(p.id): p for p in ctx.ws.all(ctx.ws.q(Person))}
+    return render(request, 'event.html', ctx, event=e, evidence=evidence, people=people_,
+                  tz=ZoneInfo(e.timezone), roles=automatic_events.ROLES, statuses=automatic_events.LABELS)
 
 
-@router.post('/gatherings/{eid}/candidates/{cid}/delete')
-def delete_candidate(eid: str, cid: str, ctx: Ctx = Depends(require_mutation)):
-    c = found(ctx.ws.get(EventCandidate, cid), 'That time')
-    ctx.s.delete(c)
-    return redirect(f'/gatherings/{c.event_id}')
-
-
-@router.post('/gatherings/{eid}/people')
-def add_invitee(eid: str, person: str = Form(...), ctx: Ctx = Depends(require_mutation)):
-    ws = ctx.ws
-    e = found(ws.get(Event, eid), 'That gathering')
-    p = found(ws.get(Person, person), 'That person')
-    if not ws.first(ws.q(EventPerson).where(EventPerson.event_id == e.id, EventPerson.person_id == p.id)):
-        ws.add(EventPerson(id=uuid.uuid4(), event_id=e.id, person_id=p.id))
-    return redirect(f'/gatherings/{e.id}')
-
-
-@router.post('/gatherings/{eid}/people/{epid}/status')
-def invitee_status(eid: str, epid: str, status: str = Form(...), ctx: Ctx = Depends(require_mutation)):
-    ep = found(ctx.ws.get(EventPerson, epid), 'That invitee')
-    if status == 'remove':
-        ctx.s.delete(ep)
-    else:
-        try:
-            gatherings.set_status(ep, status)
-        except ValueError:
-            raise Problem(400, 'Unknown status.')
-    return redirect(f'/gatherings/{ep.event_id}')
-
-
-@router.post('/gatherings/{eid}/people/{epid}/suggestion')
-def invitee_suggestion(eid: str, epid: str, action: str = Form(...), ctx: Ctx = Depends(require_mutation)):
-    ep = found(ctx.ws.get(EventPerson, epid), 'That invitee')
-    if action == 'accept' and ep.suggested_status:
-        gatherings.set_status(ep, ep.suggested_status)
-    else:
-        ep.suggested_status, ep.suggested_source_id = None, None
-    return redirect(f'/gatherings/{ep.event_id}')
-
-
-@router.post('/gatherings/{eid}/check-replies')
-def check_replies(eid: str, ctx: Ctx = Depends(require_mutation)):
-    ws = ctx.ws
-    e = found(ws.get(Event, eid), 'That gathering')
-    try:
-        for ep in ws.all(ws.q(EventPerson).where(EventPerson.event_id == e.id,
-                                                 EventPerson.status.in_(['awaiting_reply', 'maybe']))):
-            gatherings.suggest_rsvp(ws, e, ep)
-    except (ai.AIUnavailable, ai.BudgetExhausted, ai.InvalidOutput) as exc:
-        return redirect(f'/gatherings/{e.id}', error='budget' if isinstance(exc, ai.BudgetExhausted) else 'ai',
-                        ref=ai_failure('rsvp', exc))
-    return redirect(f'/gatherings/{e.id}')
-
-
-@router.post('/gatherings/{eid}/people/{epid}/draft')
-def draft_for(eid: str, epid: str, ctx: Ctx = Depends(require_mutation)):
-    ws = ctx.ws
-    e = found(ws.get(Event, eid), 'That gathering')
-    ep = found(ws.get(EventPerson, epid), 'That invitee')
-    existing = ws.first(ws.q(Draft).where(Draft.event_id == e.id, Draft.person_id == ep.person_id))
-    try:
-        if existing:
-            ctx.s.delete(existing)
-            ctx.s.flush()
-        gatherings.create_draft(ws, e, ep)
-    except (ai.AIUnavailable, ai.BudgetExhausted, ai.InvalidOutput) as exc:
-        ctx.s.rollback()
-        return redirect(f'/gatherings/{e.id}', error='budget' if isinstance(exc, ai.BudgetExhausted) else 'ai',
-                        ref=ai_failure('draft', exc))
-    return redirect(f'/gatherings/{e.id}')
-
-
-@router.post('/drafts/{did}')
-def edit_draft(did: str, text: str = Form(''), action: str = Form('save'), ctx: Ctx = Depends(require_mutation)):
-    ws = ctx.ws
-    d = found(ws.get(Draft, did), 'That draft')
-    if action == 'save':
-        if text.strip():
-            d.text, d.edited = text.strip()[:2000], True
-    elif action in ('shorter', 'casual'):
-        try:
-            gatherings.rewrite_draft(ws, d, action)
-        except (ai.AIUnavailable, ai.BudgetExhausted, ai.InvalidOutput) as exc:
-            return redirect(f'/gatherings/{d.event_id}', error='budget' if isinstance(exc, ai.BudgetExhausted) else 'ai',
-                            ref=ai_failure('rewrite', exc))
-    elif action == 'blank':
-        d.text, d.edited = text.strip()[:2000] or d.text, True
-    else:
-        raise Problem(400, 'Unknown action.')
-    return redirect(f'/gatherings/{d.event_id}')
-
-
-@router.post('/gatherings/{eid}/people/{epid}/manual-draft')
-def manual_draft(eid: str, epid: str, text: str = Form(...), ctx: Ctx = Depends(require_mutation)):
-    ws = ctx.ws
-    ep = found(ws.get(EventPerson, epid), 'That invitee')
-    if text.strip():
-        d = ws.first(ws.q(Draft).where(Draft.event_id == ep.event_id, Draft.person_id == ep.person_id))
-        if d:
-            d.text, d.edited = text.strip()[:2000], True
-        else:
-            ws.add(Draft(id=uuid.uuid4(), event_id=ep.event_id, person_id=ep.person_id, purpose='invitation',
-                         text=text.strip()[:2000], edited=True))
-    return redirect(f'/gatherings/{ep.event_id}')
+@router.post('/events/{eid}/dismiss')
+def dismiss_event(eid: str, action: str = Form('dismiss'), ctx: Ctx = Depends(require_mutation)):
+    e = found(ctx.ws.get(Event, eid), 'That event')
+    e.dismissed = action != 'restore'
+    return redirect('/events' if e.dismissed else '/events/' + eid)
 
 
 # ---------------- about me ----------------

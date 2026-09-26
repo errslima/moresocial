@@ -137,8 +137,8 @@ def test_gmail_burst_resumes_history_pages_without_losing_messages(browser, monk
         assert s.get(SyncStream, sid).cursor == 'after-burst'
         assert s.get(SyncStream, sid).progress == {}
         assert s.scalar(select(func.count()).select_from(Source)) == 702
-        # Only the two newly applied batches schedule work; replaying the first is a no-op.
-        assert s.scalar(select(func.count()).select_from(Job)) - jobs_before == 2
+        # Each new batch schedules memory rebuilding and event recognition; replay is a no-op.
+        assert s.scalar(select(func.count()).select_from(Job)) - jobs_before == 4
 
 
 def long_source(wid):

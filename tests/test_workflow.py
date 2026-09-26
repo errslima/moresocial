@@ -31,91 +31,21 @@ def test_every_screen_renders(browser):
     wid = workspace_of('alex@example.test')
     sam = person(wid, 'sam.jansen@example.test')
     for path in ['/home', '/people', '/people?q=sam', f'/people/{sam.id}', '/sources', '/sources?provider=whatsapp',
-                 '/ask', '/gatherings', '/me', '/connections']:
+                 '/ask', '/events', '/me', '/connections']:
         r = browser.get(path)
         assert r.status_code == 200, path
         assert 'name="csrf" value=""' not in r.text, path  # every form carries the session token
 
 
-def test_lasergame_gathering_flow(browser):
-    setup(browser)
-    wid = workspace_of('alex@example.test')
-    sam, noor = person(wid, 'sam.jansen@example.test'), person(wid, '31600000001@c.us')
-    csrf = browser.csrf('/gatherings')
-    r = browser.post('/gatherings', {'title': 'Lasergame evening', 'activity': 'lasergame', 'timezone': 'Europe/Amsterdam',
-                                     'notes': 'Not on Sunday', 'csrf': csrf})
-    gid = r.headers['location'].rsplit('/', 1)[1]
-    # One candidate overlaps the fixture's dentist appointment, one is free (explicit UTC offsets).
-    browser.post(f'/gatherings/{gid}/candidates', {'start': (synthetic_data.anchor() + timedelta(days=3, hours=10)).isoformat(),
-                                                    'hours': '2', 'csrf': csrf})
-    browser.post(f'/gatherings/{gid}/candidates', {'start': (synthetic_data.anchor() + timedelta(days=5, hours=12)).isoformat(),
-                                                    'hours': '2', 'csrf': csrf})
-    for p in (sam, noor):
-        assert browser.post(f'/gatherings/{gid}/people', {'person': str(p.id), 'csrf': csrf}).status_code == 303
-    page = browser.get(f'/gatherings/{gid}').text
-    assert 'Dentist' in page  # conflict in the user's own imported calendar
-    assert 'No conflicting events in your imported primary calendar' in page
-    assert "says nothing about invitees" in page
-    home = browser.get('/home').text
-    assert 'Draft invitations for 2 person(s) for Lasergame evening' in home
-    with db.session() as s:
-        eps = {e.person_id: e for e in s.scalars(select(EventPerson).where(EventPerson.workspace_id == wid))}
-    ep_sam = eps[sam.id]
-    calls_before = list(synthetic.STATE.calls)
-    assert browser.post(f'/gatherings/{gid}/people/{ep_sam.id}/draft', {'csrf': csrf}).status_code == 303
-    page = browser.get(f'/gatherings/{gid}').text
-    m = re.search(r'<textarea id="d-([0-9a-f-]+)" name="text"[^>]*>([^<]*)</textarea>', page)
-    draft_id, text = m.group(1), m.group(2)
-    assert 'Sam' in text and 'lasergame' in text.lower()
-    assert 'data-copy="d-' + draft_id in page and 'Copying does not send anything' in page
-    assert '>Send<' not in page and 'Send' not in re.sub(r'(?s)<footer.*', '', page).replace('send it yourself', '').replace(
-        'Send it yourself', '').replace('does not send', '').replace('never sends', '')
-    browser.post(f'/drafts/{draft_id}', {'action': 'shorter', 'text': text, 'csrf': csrf})
-    browser.post(f'/drafts/{draft_id}', {'action': 'save', 'text': 'Hey Sam, lasergame on Saturday?', 'csrf': csrf})
-    with db.session() as s:
-        d = s.get(Draft, draft_id)
-        assert d.text == 'Hey Sam, lasergame on Saturday?' and d.edited
-        assert s.get(EventPerson, ep_sam.id).status == 'not_contacted'  # drafting/copying never advances state
-    # user sends it themselves, then records it
-    browser.post(f'/gatherings/{gid}/people/{ep_sam.id}/status', {'status': 'awaiting_reply', 'csrf': csrf})
-    browser.post(f'/gatherings/{gid}/people/{eps[noor.id].id}/status', {'status': 'awaiting_reply', 'csrf': csrf})
-    # Sam replies (new Gmail message arrives on next sync)
-    synthetic.STATE.extra_mail['alex'] = [dict(id='a-reply', thread='a-t1', days=0, frm='Sam Jansen <sam.jansen@example.test>',
-                                               to='alex@example.test', subject='Re: Lasergame', body="Count me in!")]
-    from app.models import SyncStream
-    with db.session() as s:
-        for st in s.scalars(select(SyncStream)):
-            st.next_run_at = st.last_success_at
-    schedule()
-    drain()
-    browser.post(f'/gatherings/{gid}/check-replies', {'csrf': csrf})
-    with db.session() as s:
-        ep = s.get(EventPerson, ep_sam.id)
-        assert ep.suggested_status == 'accepted' and ep.status == 'awaiting_reply'  # suggestion only
-    page = browser.get(f'/gatherings/{gid}').text
-    assert 'Possible reply' in page and 'Count me in!' in page
-    browser.post(f'/gatherings/{gid}/people/{ep_sam.id}/suggestion', {'action': 'accept', 'csrf': csrf})
-    with db.session() as s:
-        assert s.get(EventPerson, ep_sam.id).status == 'accepted'
-        # Noor has not replied since the invitation: no status is invented for her.
-        assert s.get(EventPerson, eps[noor.id].id).status == 'awaiting_reply'
-    # Google was only ever read
-    assert all(m == 'GET' or 'oauth2' in h for m, h in synthetic.STATE.calls[len(calls_before):])
-
-
 def test_next_steps_dismiss_and_snooze(browser):
     setup(browser)
-    csrf = browser.csrf('/gatherings')
-    r = browser.post('/gatherings', {'title': 'Lasergame', 'csrf': csrf})
-    gid = r.headers['location'].rsplit('/', 1)[1]
     wid = workspace_of('alex@example.test')
-    browser.post(f'/gatherings/{gid}/people', {'person': str(person(wid, 'noor@example.test').id), 'csrf': csrf})
+    with db.session() as s:
+        s.add(Person(id=uuid.uuid4(), workspace_id=wid, display_name='A pinned friend', name_source='user', pinned=True))
     home = browser.get('/home').text
     key = re.search(r'name="key" value="([^"]+)"', home).group(1)
-    browser.post('/home/steps', {'key': key, 'action': 'snooze', 'csrf': csrf})
-    assert 'Draft invitations' not in browser.get('/home').text
-    # at most three suggestions, never a score or streak
-    assert browser.get('/home').text.count('class="card"') <= 3
+    browser.post('/home/steps', {'key': key, 'action': 'snooze', 'csrf': browser.csrf()})
+    assert f'value="{key}"' not in browser.get('/home').text
 
 
 def test_about_me_is_editable_and_observations_are_distinct(browser):

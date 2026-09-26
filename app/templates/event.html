@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field, provider_name with context %}
+{% block title %}{{ event.title }}{% endblock %}
+{% block content %}
+<a class="small" href="{{ url('/events') }}">← Events</a>
+<header class="events-hero">
+  <div class="event-badges"><span class="tag">{{ 'Earlier plan' if event.origin == 'legacy' else 'Detected from your sources' }}</span>{% if event.dismissed %}<span class="tag">Dismissed</span>{% endif %}{% if event.status == 'cancelled' %}<span class="tag">Cancelled</span>{% endif %}</div>
+  <h1>{{ event.title }}</h1>
+  <p class="events-intro">{{ roles.get(event.details.get('role'), 'Your event') }}</p>
+</header>
+<div class="event-facts">
+  <div><span class="eyebrow">WHEN</span><p>{% if event.starts_at %}{{ event.starts_at.astimezone(tz).strftime('%A %d %B %Y') }}<br>{{ 'Time to be confirmed / all day' if event.details.get('all_day') else event.starts_at.astimezone(tz).strftime('%H:%M') }}{% if event.ends_at and not event.details.get('all_day') %} – {{ event.ends_at.astimezone(tz).strftime('%H:%M') }}{% endif %}{% else %}Date not recorded{% endif %}</p></div>
+  <div><span class="eyebrow">WHERE</span><p>{{ event.details.get('place') or 'Place to be confirmed' }}</p></div>
+</div>
+{% if event.details.get('field_source') %}<p class="small muted">Details from <a href="{{ url('/sources/' ~ event.details.get('field_source')) }}">supporting evidence</a> · {{ event.timezone }}</p>{% endif %}
+{% if event.details.get('summary') %}<section><h2>The plan so far</h2><p class="event-context">{{ event.details.get('summary') }}</p></section>{% endif %}
+<section aria-labelledby="participants"><h2 id="participants">Who’s joining</h2>
+{% if event.details.get('participants') %}<ul class="event-participants">{% for p in event.details.get('participants') %}{% set person = people.get(p.person) %}
+{% if person %}<li><a href="{{ url('/people/' ~ person.id) }}">{{ person.display_name }}</a><span class="event-rsvp rsvp-{{ p.status }}">{{ statuses[p.status] }}</span><a class="small" href="{{ url('/sources/' ~ p.evidence) }}">Evidence</a></li>{% endif %}
+{% endfor %}</ul>{% else %}<p class="muted">No explicit attendance replies recognized yet.</p>{% endif %}
+<p class="small muted">Only explicit replies set attendance. A group invitation does not mean everyone is joining.</p></section>
+<section aria-labelledby="context"><div class="event-heading"><h2 id="context">Messages & context</h2><span class="small muted">{{ evidence|length }} {{ 'source' if evidence|length == 1 else 'sources' }}</span></div>
+<p class="muted small">Related messages and calendar entries, in order. Open a source to read it in full.</p>
+{% for source in evidence %}<article class="event-evidence">
+<div class="event-heading small"><strong>{{ provider_name(source.provider) }} · {{ 'You' if source.from_me else source.author_label or source.conversation_title or 'Calendar' }}</strong><span class="muted">{{ source.occurred_at.astimezone(tz).strftime('%d %b %Y · %H:%M') }}</span></div>
+{% if source.title %}<h3>{{ source.title }}</h3>{% endif %}
+<p>{{ source.body[:500] }}{{ '…' if source.body|length > 500 else '' }}</p><a class="small" href="{{ url('/sources/' ~ source.id) }}">Open source →</a>
+</article>{% else %}<p class="muted">No imported evidence is available for this event.</p>{% endfor %}
+</section>
+<form class="event-dismiss" method="post" action="{{ url('/events/' ~ event.id ~ '/dismiss') }}">{{ csrf_field() }}
+{% if event.dismissed %}<button name="action" value="restore">Restore event</button>{% else %}<button name="action" value="dismiss">Dismiss event</button><span class="small muted">Future mentions will keep attaching, without returning it to Upcoming.</span>{% endif %}</form>
+{% endblock %}

@@ -188,19 +188,22 @@ def test_logout_and_csrf(browser):
 def test_mutations_need_csrf(browser):
     browser.login('alex')
     assert browser.post('/gatherings', {'title': 'x'}).status_code == 403
-    assert browser.post('/gatherings', {'title': 'x', 'csrf': browser.csrf()}).status_code == 303
+    assert browser.post('/events', {'title': 'x', 'csrf': browser.csrf()}).status_code == 405
 
 
 def test_two_users_are_isolated(make_browser):
     a, b = make_browser(), make_browser()
     a.login('alex')
     b.login('blake')
-    r = a.post('/gatherings', {'title': 'Alex lasergame', 'csrf': a.csrf()})
-    gid = r.headers['location'].rsplit('/', 1)[1]
-    assert a.get('/gatherings/' + gid).status_code == 200
-    assert b.get('/gatherings/' + gid).status_code == 404
-    assert b.post(f'/gatherings/{gid}/edit', {'title': 'hijack', 'csrf': b.csrf()}).status_code == 404
-    assert 'Alex lasergame' not in b.get('/gatherings').text
+    from app.models import Event
+    import uuid
+    gid = str(uuid.uuid4())
+    with db.session() as s:
+        s.add(Event(id=uuid.UUID(gid), workspace_id=workspace_of('alex@example.test'), title='Alex lasergame', timezone='Europe/Amsterdam'))
+    assert a.get('/events/' + gid).status_code == 200
+    assert b.get('/events/' + gid).status_code == 404
+    assert b.post(f'/events/{gid}/dismiss', {'csrf': b.csrf()}).status_code == 404
+    assert 'Alex lasergame' not in b.get('/events?view=past').text
 
 
 def test_state_changing_get_is_not_possible(browser):
