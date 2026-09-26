@@ -19,8 +19,8 @@ revision, deployment evidence and outstanding checks, read
 
 AI assistance is implemented but **disabled in the deployed configuration**
 (`AI_PROVIDER=none`); live provider behavior and quality remain unverified.
-All generation and embeddings use the shared operator-owned OpenRouter key, under workspace
-and global token allowances. The encrypted admin configuration overrides an optional bootstrap
+All generation and embeddings use the shared operator-owned OpenRouter key, with spending limits managed in OpenRouter
+and no local workspace or global token allowance. The encrypted admin configuration overrides an optional bootstrap
 file and refreshes in each process within 30 seconds. Embedding-space identity includes the
 exact model, returned dimension and preprocessing contract; a changed model is staged and
 rebuilt before cutover, so vectors never mix spaces. Manual
@@ -39,7 +39,7 @@ It does not know invitees' calendars merely because it can read the user's calen
    identifiers and invalidates derived data when sources change or are excluded.
 4. PostgreSQL jobs (`app/jobs.py`, `worker/main.py`) rebuild conversation chunks,
    generate embeddings and extract claims when AI is enabled. Leases and idempotency
-   keys support retries; budget exhaustion defers AI jobs.
+   keys support retries; provider rate limits defer AI jobs.
 5. Retrieval combines structured ownership filters with memory search. Citations
    refer to the actual source segments in the matching chunk, including later
    passages of long messages. Claims and answers retain source references.

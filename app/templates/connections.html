@@ -61,10 +61,9 @@
 
 <section aria-labelledby="m" class="card"><h2 id="m">AI assistant</h2>
 <h3>Now</h3>
-{% if assistant.tier == 'operator' %}<p>The assistant uses Moresocial’s shared OpenRouter allowance. Imported excerpts needed for a task are processed by OpenRouter and its routed model provider under Moresocial’s account policies. Used today: {{ '{:,}'.format(budget.used) }} of {{ '{:,}'.format(budget.limit) }} tokens.</p>
+{% if assistant.tier == 'operator' %}<p>The assistant uses Moresocial’s shared OpenRouter account. Imported excerpts needed for a task are processed by OpenRouter and its routed model provider under Moresocial’s account policies. Used today: {{ '{:,}'.format(budget.used) }} tokens. Spending limits are managed in OpenRouter.</p>
 {% endif %}
 {% if not ai_configured %}<p>The assistant is temporarily unavailable; sources are still imported and searchable by text. An administrator can configure it in Admin.</p>
-{% elif budget.paused or ai_paused %}<p class="warn">Paused: today's AI allowance is used up. Processing resumes tomorrow.</p>
 {% elif pending %}<p>Processing {{ pending }} item(s)…</p>{% else %}<p>Memory processing is up to date.</p>{% endif %}
 </section>
 

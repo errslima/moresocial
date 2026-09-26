@@ -205,18 +205,22 @@ def test_user_corrections_are_authoritative(browser):
     assert 'no longer current' in page and 'added or confirmed by you' in page
 
 
-def test_budget_exhaustion_pauses_visibly_and_terminates(browser):
+def test_shared_ai_ignores_legacy_caps_and_keeps_processing(browser):
     original = config.get()
-    config.override(dataclasses.replace(original, ai_daily_tokens_workspace=50))
+    config.override(dataclasses.replace(original, ai_daily_tokens_workspace=50, ai_daily_tokens_global=50))
     try:
         setup_user(browser, whatsapp=False)
         with db.session() as s:
-            paused = s.scalars(select(Job).where(Job.last_error.like('AI paused%'))).all()
-            assert paused and all(j.status == 'queued' for j in paused)  # paused until tomorrow, not retried
-            assert s.scalar(select(func.count()).select_from(Embedding)) == 0
-        assert 'Paused' in browser.get('/connections').text
+            assert not s.scalars(select(Job).where(Job.last_error.like('AI paused%'))).all()
+            assert s.scalar(select(func.count()).select_from(Embedding)) > 0
+        page = browser.get('/connections').text
+        assert 'Paused' not in page and 'shared OpenRouter allowance' not in page
+        assert 'Spending limits are managed in OpenRouter' in page
+        state = ai.budget_state(workspace_of('alex@example.test'))
+        assert state['used'] > 50 and state['limit'] is None and not state['paused']
         r = browser.post('/ask', {'question': 'Does Sam like lasergame?', 'csrf': browser.csrf('/ask')})
-        assert r.status_code == 503 and 'budget' in r.text
+        assert r.status_code == 303
+        assert browser.get(r.headers['location']).status_code == 200
     finally:
         config.override(original)
 
@@ -234,9 +238,12 @@ def test_global_budget_and_reconciliation(browser):
     original = config.get()
     config.override(dataclasses.replace(original, ai_daily_tokens_global=total + 5))
     try:
-        with pytest.raises(ai.BudgetExhausted) as exc:
-            ai.reserve(wa, 'generate', 'fake', 100)
-        assert exc.value.scope == 'global'
+        usage_id = ai.reserve(wa, 'generate', 'fake', 3_000_000)
+        assert not ai.budget_state(wa)['paused']
+        ai.reconcile(usage_id, 2_500_000, 100)
+        with db.session() as s:
+            assert s.get(UsageBudget, ('global', ai.today())).tokens == total + 2_500_100
+            assert s.get(UsageBudget, ('workspace:' + str(wa), ai.today())).tokens == total + 2_500_100
     finally:
         config.override(original)
 

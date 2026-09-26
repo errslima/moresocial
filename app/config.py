@@ -82,6 +82,7 @@ class Settings:
     openrouter_embedding_providers: tuple[str, ...]   # retained only for old env parsing; never sent
     embedding_model: str
     embedding_dimension: int
+    # Retained for configuration compatibility only; shared AI no longer enforces these caps.
     ai_daily_tokens_workspace: int
     ai_daily_tokens_global: int
     user_ai_keys: tuple[str, ...]  # providers users may add their own key for; empty = feature off

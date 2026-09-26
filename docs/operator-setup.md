@@ -101,7 +101,7 @@ embedding dimension before activation. A failed test preserves the current confi
 
 There are no provider allowlists, `data_collection="deny"` or ZDR fields in app requests.
 OpenRouter can fail over among providers for the same pinned model. Set a monetary limit on the
-dedicated key in OpenRouter; local token allowances are a separate safety control. Embedding
+dedicated key in OpenRouter; Moresocial imposes no workspace or global token allowance. Embedding
 changes stage a new space and background rebuild while search remains on the active space.
 See [the rollout runbook](openrouter-rollout.md) for migration, verification and cleanup.
 
@@ -183,8 +183,9 @@ in the 1f517 repository with the same lines so a later shared deploy keeps the r
   container removal is needed. Real WhatsApp session continuity still needs a live check.
 - A stopped or crashed connector is restarted by Docker (`unless-stopped`) or re-created by the
   provisioner, keeping `/srv/moresocial/data/whatsapp/<id>/session`.
-- AI budgets: `AI_DAILY_TOKENS_PER_WORKSPACE` / `AI_DAILY_TOKENS_GLOBAL`. When exhausted, AI work
-  pauses until the next UTC day and the UI says so.
+- AI spending limits are managed on the dedicated key in OpenRouter. Legacy
+  `AI_DAILY_TOKENS_PER_WORKSPACE` / `AI_DAILY_TOKENS_GLOBAL` values are ignored.
+  Daily token usage is still tracked. Migration 0006 resumes jobs deferred by the old shared caps.
 - Account deletion is self-service (Connections page). An operator-only cleanup record
   containing just the workspace ID survives the account cascade until the provisioner
   removes the connector, network and session directory and acknowledges completion.

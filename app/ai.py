@@ -1,4 +1,4 @@
-"""Generation and embedding providers with per-workspace and global daily token budgets.
+"""Generation and embedding providers with daily token usage accounting.
 
 Operator tier: Anthropic Messages API (structured JSON output) for generation and Voyage AI
 for embeddings, configured by the operator. User tier: a workspace's own Anthropic or OpenAI
@@ -114,22 +114,22 @@ def tomorrow_start() -> datetime:
 RESERVE_SQL = text("""
 INSERT INTO usage_budgets(scope, day, tokens) VALUES (:scope, :day, 0) ON CONFLICT DO NOTHING;
 """)
-TAKE_SQL = text("""UPDATE usage_budgets SET tokens = tokens + :n WHERE scope = :scope AND day = :day AND tokens + :n <= :limit
+TAKE_SQL = text("""UPDATE usage_budgets SET tokens = tokens + :n WHERE scope = :scope AND day = :day AND (CAST(:limit AS BIGINT) IS NULL OR tokens + :n <= :limit)
                    RETURNING tokens""")
 
 
-def _scopes(workspace_id: uuid.UUID, billing: str) -> list[tuple[str, int]]:
-    """Budget scopes a call reserves against. A user's own key is capped per workspace only
-    (runaway protection); it never consumes the operator's workspace or global allowance."""
+def _scopes(workspace_id: uuid.UUID, billing: str) -> list[tuple[str, int | None]]:
+    """Usage scopes. Shared AI has no local cap; spending is controlled in OpenRouter.
+    The retired user-key tier retains its historical accounting and limit."""
     settings = config.get()
     if billing == 'user':
         return [('userkey:' + str(workspace_id), settings.ai_daily_tokens_user_key)]
-    return [('workspace:' + str(workspace_id), settings.ai_daily_tokens_workspace), ('global', settings.ai_daily_tokens_global)]
+    return [('workspace:' + str(workspace_id), None), ('global', None)]
 
 
 def reserve(workspace_id: uuid.UUID, operation: str, model: str, tokens: int, job_id: uuid.UUID | None = None,
             billing: str = 'operator', provider_name: str = 'anthropic') -> uuid.UUID:
-    """Atomically reserve estimated tokens against every budget scope of the paying tier."""
+    """Atomically record estimated usage, enforcing a cap only for the retired user-key tier."""
     day = today()
     scopes = _scopes(workspace_id, billing)
     with db.session() as s:
@@ -175,7 +175,7 @@ def budget_state(workspace_id: uuid.UUID, billing: str | None = None) -> dict:
         rows = dict(s.execute(text('SELECT scope, tokens FROM usage_budgets WHERE day = :d AND scope = ANY(:scopes)'),
                               {'d': today(), 'scopes': list(scopes)}).all())
     key = next(iter(scopes))
-    paused = any(rows.get(scope, 0) >= limit * 0.98 for scope, limit in scopes.items()) if billing != 'none' else False
+    paused = any(limit is not None and rows.get(scope, 0) >= limit * 0.98 for scope, limit in scopes.items()) if billing != 'none' else False
     return {'billing': billing, 'used': rows.get(key, 0), 'limit': scopes[key], 'paused': paused}
 
 

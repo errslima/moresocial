@@ -488,8 +488,6 @@ def connections_page(request: Request, ctx: Ctx, status: int = 200):
     ai_jobs = ws.s.execute(select(Job.kind, Job.status, func.count()).where(
         Job.workspace_id == ws.wid, Job.kind.in_(['embed_chunk', 'extract_chunk', 'rebuild_conversation']),
         Job.status.in_(['queued', 'running'])).group_by(Job.kind, Job.status)).all()
-    paused = ws.s.scalar(select(func.count()).select_from(Job).where(Job.workspace_id == ws.wid, Job.status == 'queued',
-                                                                     Job.last_error.like('AI paused%')))
     settings = config.get()
     operator = ai.provider()
     assistant = {'tier': 'operator' if operator.can_generate() else 'none',
@@ -498,7 +496,7 @@ def connections_page(request: Request, ctx: Ctx, status: int = 200):
                  'shared': True}
     return render(request, 'connections.html', ctx, status=status, conn=conn, streams=streams, counts=counts, wa=wa,
                   exclusions=exclusions, scopes={'gmail': config.GMAIL_SCOPE, 'calendar': config.CALENDAR_SCOPE},
-                  pending=sum(r[2] for r in ai_jobs), ai_paused=paused, budget=ai.budget_state(ws.wid), limits=settings,
+                  pending=sum(r[2] for r in ai_jobs), budget=ai.budget_state(ws.wid), limits=settings,
                   ai_configured=assistant['tier'] != 'none', assistant=assistant)
 
 

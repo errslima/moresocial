@@ -37,7 +37,7 @@
 <p>{% if key_row and key_row.value %}<span class="tag ok">saved</span> Key ending in <code>{{ key_row.hint }}</code>, saved {{ when(key_row.updated_at) }}.{% else %}No database key is saved.{% endif %}</p>
 <form method="post" action="{{ url('/admin/ai/openrouter/disable') }}" class="row">{{ csrf_field() }}<button>Disable AI</button></form>
 {% if key_row and key_row.value %}<form method="post" action="{{ url('/admin/ai/openrouter/key/remove') }}" class="row">{{ csrf_field() }}<button class="danger">Remove key and disable AI</button></form>{% endif %}
-<p class="small muted">Disable or remove stops new paid work; in-flight requests can still complete. Set a monetary spending limit on this dedicated key in OpenRouter. Local token allowances are not an exact cost cap.</p>
+<p class="small muted">Disable or remove stops new paid work; in-flight requests can still complete. Set a monetary spending limit on this dedicated key in OpenRouter. Moresocial does not impose a local token allowance.</p>
 </section>
 
 <section class="card"><h2>Known OpenRouter spend</h2>

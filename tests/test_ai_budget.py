@@ -118,3 +118,40 @@ def test_adapters_log_rate_limits_without_content(capsys):
     err = capsys.readouterr().err
     assert '"event": "ai_generation_failed"' in err and '"provider": "openai"' in err and '"provider": "anthropic"' in err
     assert '"status": 429' in err and OPENAI_KEY not in err and 'prompt' not in err
+
+
+def test_allowance_migration_resumes_only_shared_budget_waits(browser, database):
+    from pathlib import Path
+    from alembic import command
+    from alembic.config import Config
+    from app import jobs
+
+    browser.login('alex', calendar=False)
+    wid = workspace_of('alex@example.test')
+    cfg = Config(str(Path(__file__).resolve().parents[1] / 'alembic.ini'))
+    cfg.attributes['database_url'] = database['runtime_url']
+    command.downgrade(cfg, '0005')
+    until = ai.tomorrow_start()
+    reasons = [
+        ('workspace', 'queued', 'AI paused: daily workspace budget reached'),
+        ('global', 'queued', 'AI paused: daily global budget reached'),
+        ('userkey', 'queued', 'AI paused: daily limit for your API key reached'),
+        ('rate', 'queued', 'AI waiting: provider rate limit'),
+        ('cancelled', 'cancelled', 'AI paused: daily global budget reached'),
+    ]
+    try:
+        with db.session() as s:
+            for key, status, reason in reasons:
+                jobs.enqueue(s, wid, 'extract_chunk', 'migration:' + key, run_after=until)
+                job = s.scalars(select(Job).where(Job.idempotency_key == 'migration:' + key)).one()
+                job.status, job.last_error = status, reason
+    finally:
+        command.upgrade(cfg, 'head')
+    with db.session() as s:
+        for key, status, reason in reasons:
+            job = s.scalars(select(Job).where(Job.idempotency_key == 'migration:' + key)).one()
+            assert job.status == status and job.attempts == 0
+            if key in ('workspace', 'global'):
+                assert job.last_error is None and job.run_after <= jobs.utcnow()
+            else:
+                assert job.last_error == reason and job.run_after == until

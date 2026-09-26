@@ -116,7 +116,7 @@ account for per-user browser resource costs in the multi-user design.
 Users do not add personal AI keys. An administrator configures one encrypted OpenRouter
 key plus exact reasoning and embedding model IDs in Admin. That key pays for extraction,
 cited answers, drafts, rewrites and embeddings in every workspace. The Connections page
-only reports whether shared AI is available and its local allowance; importing and keyword
+reports whether shared AI is available and today’s token usage; importing and keyword
 search continue while it is unavailable. Excerpts needed for a task are sent to OpenRouter
 and its routed downstream provider under their account policies. The app does not promise
 zero retention or no downstream data collection.
