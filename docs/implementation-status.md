@@ -41,11 +41,11 @@ validation or deployment.
   `0007`) preceded the Suggestions release below; its verification notes are in the
   archived [diary notes](archive/development/diary-observations.md).
 
-- **Implemented locally, not deployed (2026-09-27):** the social assistant per
-  [its execution plan](social-assistant-execution-plan.md): heartbeat-based WhatsApp
-  health (`0013`), event-aware suggestions, persona, preferences, shareable updates and
-  proactive event/check-in/update drafts (`0014`), on branch `whatsapp-sidebar`.
-  Production still runs `79304e9`, schema `0012`, at the time of writing.
+- **Deployed 2026-09-27 08:24 UTC: `901bc09`, schema `0014`** — the social assistant per
+  [its execution plan](social-assistant-execution-plan.md) (heartbeat-based WhatsApp
+  health, event-aware suggestions, persona, preferences, shareable updates, proactive
+  drafts). Previous release `79304e9`. Authenticated UI checks are still pending; see the
+  dated entry below.
 
 ## Pending live checks and operator actions
 
@@ -61,7 +61,7 @@ Consolidated on 2026-09-27 from the dated entries below and the archived plans.
 | Retired variables in production `runtime.env` (`USER_AI_KEYS`, `ANTHROPIC_MODEL` and `OPENAI_MODEL` were added on 2026-09-25) | optional: ignored by the application; no record of removal | operator |
 | Log volume re-measurement after the first busy week, before extending the 14-day retention | **pending**, from the diagnostics release | operator |
 | Split/undo of a real event group | not exercised live by design; covered by synthetic tests | none |
-| Social assistant release (`0013`/`0014`, new connector image) | **pending**: not deployed; follow the [runbook](operator-setup.md#social-assistant-release-migrations-00130014) | operator |
+| Social assistant live UI checks (Assistant page, event-linked cards, prepared drafts, composer handoff at 1440/390 px) and review of the first prepared drafts | **pending**: release deployed and verified server-side on 2026-09-27; authenticated browsing not yet done | owner/operator |
 | Quality of event-aware titles and prepared drafts with the live model | **pending**: only synthetic contracts verified; read prepared drafts, never send test messages to real people | owner |
 | Read-only legacy schema inventory on production (`python -m app.legacy_inventory`, [cleanup plan 3](cleanup/03-historical-schema.md)) | **pending**: needed before any retired-table or key-column removal; only local synthetic inventories exist | operator |
 
@@ -72,7 +72,28 @@ and embeddings in use by the 2026-09-26 Suggestions and Events releases); Docker
 the Compose stack and the provisioner with a paired connector. Obsolete: live checks for
 personal AI keys and for Anthropic/Voyage keys, whose features were retired.
 
-## Social assistant — 2026-09-27 (implemented locally, not deployed)
+## Social assistant deployment — 2026-09-27
+
+Released `901bc09` (previous `79304e9`) following the
+[runbook](operator-setup.md#social-assistant-release-migrations-00130014):
+
+- Encrypted pre-release backup `moresocial-20260927T082050Z.tar.enc` (service result success).
+- Old worker stopped, then `deploy/release.sh 901bc09` from a fresh checkout of the
+  bundle: images built, migrations `0013` and `0014` applied, web and worker started,
+  readiness passed (database, migrations, Google client, encryption key, AI generation and
+  embeddings all true), release activated at 08:24:46 UTC, connectors restarted.
+- Server-side checks: alembic `0014`; all 21 existing conversation suggestions kept and
+  received action keys (none without); the connector runs image `901bc09` and its first
+  heartbeat arrived within two minutes (`ready`, last sweep `ok`, 0 pending), which the
+  classifier treats as healthy, so the stale-row warning is gone. Public `/health` OK.
+- The first scheduled scan created 4 proactive suggestions, matching the 4 confirmed
+  participants of the day's 16:15 outing. Their content, the job outcomes and send
+  records were **not inspected**, and authenticated page checks were **not performed**
+  in this session; both remain pending (table above). No message was sent by this work.
+- Rollback path: `python -m app.proactive mode off` and a forward fix; `rollback.sh`
+  refuses pre-0014 images while the new schema is present.
+
+## Social assistant — 2026-09-27 (implementation)
 
 Implemented milestones M0–M6 of [the execution plan](social-assistant-execution-plan.md);
 its implementation log has the details and deviations. Summary:

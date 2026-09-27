@@ -709,3 +709,12 @@ Limitations and open items:
   exists; the documented path is `python -m app.proactive mode off` plus a forward fix.
 - Release: stop the old worker before migrating (see the runbook), then connectors pick up
   the heartbeat image via the provisioner.
+
+### Deployment — 2026-09-27
+
+User-authorized release of `901bc09` at 08:24 UTC (previous `79304e9`), after an
+encrypted backup and stopping the old worker. Readiness, schema `0014`, preserved
+suggestions and a fresh connector heartbeat were verified server-side; the first scan
+created 4 prepared drafts for the day's confirmed outing participants. Authenticated live
+UI checks and inspection of those drafts are pending. Details:
+[implementation status](implementation-status.md#social-assistant-deployment--2026-09-27).
