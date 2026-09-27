@@ -20,6 +20,21 @@ KEY_CANARY = 'sk-ant-api03-InventoryCanaryKey-0001-wxyz'
 TEXT_CANARY = 'Inventory canary: Sam likes secret lasergame'
 
 
+@pytest.fixture(autouse=True)
+def legacy_schema(clean, database):
+    """Inspect historical data at 0011, even after head has retired its empty tables."""
+    cfg = Config(str(Path(__file__).resolve().parents[1] / 'alembic.ini'))
+    cfg.attributes['database_url'] = database['runtime_url']
+    command.downgrade(cfg, '0011')
+    try:
+        yield
+    finally:
+        # Disposable fixture data intentionally includes nonempty legacy tables.
+        with db.engine().begin() as c:
+            c.execute(text('TRUNCATE workspaces CASCADE'))
+        command.upgrade(cfg, 'head')
+
+
 def setup_workspace(browser):
     browser.login('alex')
     schedule()
@@ -85,7 +100,7 @@ def test_empty_candidates_are_eligible(browser, capsys):
     assert rc == 0 and report['status'] == 'ok'
     assert report['transaction'] == {'read_only': True, 'isolation': 'repeatable read'}
     schema = report['schema']
-    assert schema['revision'] == schema['code_head']
+    assert schema['revision'] == '0011' and schema['code_head'] == '0012'
     assert {t: schema[t] for t in ('event_candidates', 'event_people', 'drafts')} == {
         t: {'state': 'present', 'rows': 0} for t in ('event_candidates', 'event_people', 'drafts')}
     answers = schema['answer_sources']
@@ -193,7 +208,7 @@ def isolated_database(database):
     url = _with_user(_with_db(database['admin_url'], name), RUNTIME_ROLE, RUNTIME_PASSWORD)
     cfg = Config(str(Path(__file__).resolve().parents[1] / 'alembic.ini'))
     cfg.attributes['database_url'] = url
-    command.upgrade(cfg, 'head')
+    command.upgrade(cfg, '0011')
     try:
         yield url
     finally:

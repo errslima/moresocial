@@ -16,7 +16,7 @@ import uuid
 from sqlalchemy import and_, delete, exists, func, or_, select
 
 from . import jobs
-from .models import (Answer, AnswerSource, Chunk, ChunkSource, Claim, ClaimSource, Draft, EventPerson, Exclusion,
+from .models import (Answer, AnswerSource, Chunk, ChunkSource, Claim, ClaimSource, Exclusion,
                      Person, PersonIdentifier, RelationshipNote, Source, SourceParticipant, Account, WhatsAppConnector,
                      Connection)
 from .repo import Scoped
@@ -226,15 +226,9 @@ def invalidate(ws: Scoped, source_ids: list[uuid.UUID], rebuild: bool = True) ->
         ws.update(Claim, Claim.id.in_(claim_ids), Claim.status == 'confirmed', unsupported, basis='user')
     answer_ids = list(ws.s.scalars(ws.q(AnswerSource, AnswerSource.answer_id).where(
         AnswerSource.source_id.in_(source_ids), AnswerSource.answer_id.is_not(None))))
-    draft_ids = list(ws.s.scalars(ws.q(AnswerSource, AnswerSource.draft_id).where(
-        AnswerSource.source_id.in_(source_ids), AnswerSource.draft_id.is_not(None))))
     if answer_ids:
         ws.update(Answer, Answer.id.in_(answer_ids), answer=REMOVED_ANSWER, stale=True)
         ws.delete(AnswerSource, AnswerSource.answer_id.in_(answer_ids))
-    if draft_ids:
-        ws.update(Draft, Draft.id.in_(draft_ids), stale=True)
-        ws.delete(AnswerSource, AnswerSource.draft_id.in_(draft_ids), AnswerSource.source_id.in_(source_ids))
-    ws.update(EventPerson, EventPerson.suggested_source_id.in_(source_ids), suggested_status=None, suggested_source_id=None)
     if rebuild:
         result = IngestResult(conversations=convs, changes=[(str(i), 'invalidated') for i in source_ids])
         schedule_rebuilds(ws, result, 'invalidate:' + jobs.utcnow().isoformat())
@@ -273,9 +267,7 @@ def prune_people(ws: Scoped) -> None:
     used = or_(
         exists().where(SourceParticipant.workspace_id == ws.wid, SourceParticipant.person_id == Person.id),
         exists().where(Claim.workspace_id == ws.wid, Claim.person_id == Person.id),
-        exists().where(RelationshipNote.workspace_id == ws.wid, RelationshipNote.person_id == Person.id),
-        exists().where(EventPerson.workspace_id == ws.wid, EventPerson.person_id == Person.id),
-        exists().where(Draft.workspace_id == ws.wid, Draft.person_id == Person.id))
+        exists().where(RelationshipNote.workspace_id == ws.wid, RelationshipNote.person_id == Person.id))
     ws.delete(Person, Person.pinned.is_(False), Person.name_source == 'provider',
               ~exists().where(PersonIdentifier.workspace_id == ws.wid, PersonIdentifier.person_id == Person.id,
                               PersonIdentifier.linked_by_user.is_(True)), ~used)
@@ -292,15 +284,8 @@ def link_people(ws: Scoped, keep: Person, other: Person) -> None:
     ws.update(SourceParticipant, SourceParticipant.person_id == other.id, person_id=keep.id)
     ws.update(Claim, Claim.person_id == other.id, person_id=keep.id)
     ws.update(RelationshipNote, RelationshipNote.person_id == other.id, person_id=keep.id)
-    ws.update(Draft, Draft.person_id == other.id, person_id=keep.id)
     from .models import Suggestion
     ws.update(Suggestion, Suggestion.person_id == other.id, person_id=keep.id)
-    kept_events = set(ws.s.scalars(ws.q(EventPerson, EventPerson.event_id).where(EventPerson.person_id == keep.id)))
-    for ep in ws.all(ws.q(EventPerson).where(EventPerson.person_id == other.id)):
-        if ep.event_id in kept_events:
-            ws.s.delete(ep)
-        else:
-            ep.person_id = keep.id
     keep.pinned = keep.pinned or other.pinned
     ws.s.flush()
     ws.s.delete(other)

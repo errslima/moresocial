@@ -1,10 +1,17 @@
 # Plan 3: inventory and safely retire historical schema
 
-Status: phase A completed locally on 2026-09-27; phase B **deferred** (no target inventory). Depends on: plans 1 and 2 completed and verified.
+Status: phase A reviewed and deployed on 2026-09-27; production inventory permits phase B group G.
+Group G migration `0012` is implemented and locally verified; rollout is pending.
+Group K is retained because production contains two encrypted personal-key records.
+Depends on: plans 1 and 2 completed and verified.
 Read [the handoff](README.md) first. Baseline schema was `0011`; determine the actual
 next revision before creating a migration.
 
 ## Outcome and data decision gate
+
+The user's subsequent review/deployment request authorizes the rollout recorded in
+[schema rollout](schema-rollout.md). The original local-only execution result below
+is historical; the new production inventory satisfies the gate for group G only.
 
 This plan has two phases. **Phase A is always executable locally:** implement a
 read-only inventory, test it, and document the data decisions. **Phase B removes

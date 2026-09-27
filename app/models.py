@@ -508,49 +508,6 @@ class EventPairScan(Base):
     updated_at: Mapped[datetime] = now_col(onupdate=func.now())
 
 
-class EventCandidate(Base):
-    __tablename__ = 'event_candidates'
-    __table_args__ = (owned('events', 'event_id', ondelete='CASCADE'),)
-    id: Mapped[uuid.UUID] = pk()
-    workspace_id: Mapped[uuid.UUID] = ws_fk()
-    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    chosen: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-
-
-class EventPerson(Base):
-    __tablename__ = 'event_people'
-    __table_args__ = (UniqueConstraint('workspace_id', 'id'), UniqueConstraint('workspace_id', 'event_id', 'person_id'),
-                      owned('events', 'event_id', ondelete='CASCADE'), owned('people', 'person_id', ondelete='CASCADE'))
-    id: Mapped[uuid.UUID] = pk()
-    workspace_id: Mapped[uuid.UUID] = ws_fk()
-    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    person_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    # not_contacted | awaiting_reply | accepted | declined | maybe
-    status: Mapped[str] = mapped_column(String(20), default='not_contacted', nullable=False)
-    status_changed_at: Mapped[datetime] = now_col()
-    suggested_status: Mapped[str | None] = mapped_column(String(20))
-    # Set only from a workspace-scoped lookup; cleared when that source is excluded or deleted.
-    suggested_source_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-
-
-class Draft(Base):
-    __tablename__ = 'drafts'
-    __table_args__ = (UniqueConstraint('workspace_id', 'id'), owned('events', 'event_id', ondelete='CASCADE'),
-                      owned('people', 'person_id', ondelete='CASCADE'))
-    id: Mapped[uuid.UUID] = pk()
-    workspace_id: Mapped[uuid.UUID] = ws_fk()
-    event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
-    person_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    purpose: Mapped[str] = mapped_column(String(20), nullable=False)  # invitation | follow_up
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    edited: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    created_at: Mapped[datetime] = now_col()
-    updated_at: Mapped[datetime] = now_col(onupdate=func.now())
-
-
 class Answer(Base):
     __tablename__ = 'answers'
     __table_args__ = (UniqueConstraint('workspace_id', 'id'),)
@@ -564,14 +521,13 @@ class Answer(Base):
 
 
 class AnswerSource(Base):
-    """Evidence referenced by an answer or a draft, pinned to a source version."""
+    """Evidence referenced by an answer, pinned to a source version."""
     __tablename__ = 'answer_sources'
-    __table_args__ = (owned('answers', 'answer_id', ondelete='CASCADE'), owned('drafts', 'draft_id', ondelete='CASCADE'),
+    __table_args__ = (owned('answers', 'answer_id', ondelete='CASCADE'),
                       owned('sources', 'source_id', ondelete='CASCADE'))
     id: Mapped[uuid.UUID] = pk()
     workspace_id: Mapped[uuid.UUID] = ws_fk()
     answer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
-    draft_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
     source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     source_version: Mapped[str] = mapped_column(String(200), nullable=False)
     label: Mapped[str] = mapped_column(String(10), nullable=False)
