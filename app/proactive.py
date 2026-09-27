@@ -343,6 +343,7 @@ def build(ws: Scoped, *, kind, person, dest, event=None, update=None, rationale,
     primary = evc.events[0]['label'] if evc.internal and evc.internal[0]['basis'] == 'primary' else None
     facts = rationale.get('facts', {})
     data = {'purpose': 'proactive', 'person': person.display_name, 'timezone': ac.tz(ws).key, 'partial_history': True,
+            'today': ac.today(ws), '_sources': ac.sources_of(lines, evc),
             # Internal event/update IDs stay out of the prompt (they are part of the fingerprint below).
             'candidate': {'kind': kind, 'event': primary, 'policy': rationale['policy'],
                           'facts': {k: v for k, v in facts.items() if k not in ('event', 'update')}},
@@ -355,9 +356,17 @@ def build(ws: Scoped, *, kind, person, dest, event=None, update=None, rationale,
     return data, fingerprint
 
 
+def user_event(ws: Scoped, row):
+    """(True, event or None) when the user corrected which event this action is about."""
+    if row is None or getattr(row, 'event_link', None) != 'user':
+        return False, None
+    return True, ws.get(Event, row.event_id) if row.event_id else None
+
+
 def candidate_context(ws: Scoped, c: Candidate, row=None):
-    return build(ws, kind=c.kind, person=c.person, dest=c.dest, event=c.event, update=c.update, rationale=c.rationale,
-                 action_key=c.action_key, row=row)
+    corrected, event = user_event(ws, row)
+    return build(ws, kind=c.kind, person=c.person, dest=c.dest, event=event if corrected else c.event, update=c.update,
+                 rationale=c.rationale, action_key=c.action_key, row=row)
 
 
 def draft_context(ws: Scoped, row: Suggestion):
@@ -499,7 +508,9 @@ def housekeeping(ws: Scoped, scan: Scan, now) -> int:
             by_group.setdefault((row.person_id, row.kind, event_identity.representative(ws, original).id), row)
     for row in open_rows:
         reason = None
-        if row.kind in EVENT_KINDS:
+        if row.kind in EVENT_KINDS and row.event_link == 'user' and row.event_id is None:
+            pass  # the user said it is not about an event: no event can make it obsolete
+        elif row.kind in EVENT_KINDS:
             original = ws.get(Event, row.event_id) if row.event_id else None
             rep = event_identity.representative(ws, original) if original else None
             status = next((p.get('status') for p in ((rep.details or {}).get('participants', []) if rep else [])
@@ -566,8 +577,8 @@ def scan(wid: uuid.UUID, payload: dict | None = None, heartbeat=lambda: None) ->
             if row is not None and row.state in TERMINAL:
                 state.result, state.checked_at = 'handled', now
                 continue
-            if row is not None and row.state == 'snoozed':
-                continue
+            if row is not None and row.state == 'snoozed' and row.snoozed_until and row.snoozed_until > now:
+                continue  # an expired snooze is open again and may be refreshed
             others = [r for r in open_by_person.get(c.person.id, []) if r.action_key != c.action_key]
             if others:
                 # One open prepared message per recipient. An event may replace an unedited
@@ -707,8 +718,20 @@ def publish(ws: Scoped, c: Candidate, review, row, out, data, fingerprint):
         ws.s.flush()
     row.title, row.reason, row.rationale, row.stale = out['title'].strip()[:200], out['reason'].strip(), rationale, False
     row.target_account, row.target_chat, row.review_id = c.dest.account, c.dest.chat, review.id
-    row.event_id = c.event.id if c.event else None
-    row.event_link = 'auto' if c.event else None
+    corrected, chosen = user_event(ws, row)
+    if corrected:
+        # The user's correction is never overwritten by background preparation.
+        if chosen is not None:
+            from . import event_identity
+            rep_ = event_identity.representative(ws, chosen)
+            row.rationale = {**rationale, 'summary': f'You linked this to {rep_.title}'
+                             + (f' on {_fmt(rep_.starts_at, ac.tz(ws))}.' if rep_.starts_at else '.')}
+        else:
+            row.rationale = {**rationale, 'summary': 'You marked this as not related to an event.'}
+    else:
+        row.event_id = c.event.id if c.event else None
+        row.event_link = 'auto' if c.event else None
+    row.context_sources = data['_sources']
     row.due_at = None  # a policy checkpoint is not a deadline; the event link shows its date
     if row.state == 'invalidated':
         row.state = 'active'

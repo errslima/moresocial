@@ -88,8 +88,10 @@ def test_assistant_migration_preserves_suggestions_and_enforces_invariants(brows
         insert()  # a valid proactive action
         with pytest.raises(RuntimeError, match='proactive_suggestions_present'):
             command.downgrade(cfg, '0013')
-        with db.engine().connect() as c:
-            assert c.execute(text('SELECT version_num FROM alembic_version')).scalar() == '0014'
+        from alembic.script import ScriptDirectory
+        head = ScriptDirectory.from_config(cfg).get_current_head()
+        with db.engine().connect() as c:  # the refused downgrade changed nothing
+            assert c.execute(text('SELECT version_num FROM alembic_version')).scalar() == head
         with db.engine().begin() as c:
             c.execute(text("DELETE FROM suggestions WHERE producer = 'proactive'"))
             c.execute(text("INSERT INTO assistant_settings (workspace_id, warmth) VALUES (:w, 'warm')"), {'w': wid})

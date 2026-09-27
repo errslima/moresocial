@@ -871,3 +871,22 @@ def test_person_page_explains_missing_target(world, browser):
         pid = person(ws, 'robin@example.test')
     assert 'data-destination="no_whatsapp_identity"' in browser.get(f'/people/{pid}').text
     assert 'data-destination' not in browser.get(f'/people/{ids["mickael"]}').text
+
+
+def test_prepared_message_marked_not_about_an_event_stays_open(world, browser, monkeypatch):
+    wid, ids = world
+    Clock(monkeypatch, saturday_evening(ids))
+    run_scan(wid)
+    drain(kinds=['prepare_message'])
+    [row] = laser(wid, ids)
+    assert browser.post(f'/suggestions/{row.id}/event', {'csrf': browser.csrf(f'/suggestions/{row.id}'),
+                                                          'event': 'none'}).status_code == 303
+    with db.session() as s:
+        assistant.save_settings(Scoped(s, wid), settings_form(warmth='warm'))
+    run_scan(wid)
+    drain(kinds=['prepare_message'])
+    with db.session() as s:
+        after = s.get(Suggestion, row.id)
+        assert after.state == 'active' and after.event_id is None and after.event_link == 'user'
+        assert 'Aloha' not in after.draft and after.draft.startswith('Hey')  # re-prepared without the event
+        assert suggestions.draft_current(Scoped(s, wid), after)[0]

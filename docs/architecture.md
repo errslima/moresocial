@@ -106,7 +106,8 @@ accounting fields; `0006` resumes jobs deferred by the retired shared token allo
 `0007` diary sources and observation groups; `0008` Suggestions; `0009` WhatsApp send
 receipts; `0010` automatic events; `0011` event identity; `0012` retires the empty manual
 gathering tables; `0013` connector heartbeat health; `0014` assistant settings, preferences,
-shareable updates, proactive state and suggestion producers/event links/targets. Pipeline `v2-segments`
+shareable updates, proactive state and suggestion producers/event links/targets; `0015`
+suggestion context sources (erasing derived text when any contributing source is removed). Pipeline `v2-segments`
 rebuilds legacy chunks, which are excluded from retrieval until rebuilt. Account deletion
 leaves only an opaque cleanup identifier until the host removes connector resources and
 acknowledges it.

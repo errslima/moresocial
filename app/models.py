@@ -278,6 +278,9 @@ class Suggestion(Base):
     input_fingerprint: Mapped[str | None] = mapped_column(String(64))
     draft_origin: Mapped[str | None] = mapped_column(String(10))  # generated | user
     draft_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    # Every source whose text or facts reached this action's title, reason or draft, including
+    # event evidence from other conversations, so excluding one erases the derived text.
+    context_sources: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False)
     kind: Mapped[str] = mapped_column(String(20), nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)

@@ -79,8 +79,9 @@ The link stores the **original** record whose evidence overlaps, so it follows t
 record after a split; the card shows its current group title, date and place. Several
 overlapping groups stay unlinked and are shown as "Possibly related". The detail page lets
 the user choose among eligible events or "Not related"; that correction is never
-overridden. Event regrouping, splits, reschedules, cancellations, dismissal and source
-exclusion re-link affected actions without a model call; a changed link or event
+overridden, including by background re-preparation of a prepared message. Event regrouping,
+splits, reschedules, cancellations, dismissal and source exclusion re-link affected actions
+without a model call; a changed link or event
 projection marks the action stale and schedules one fresh review. Unchanged messages alone
 no longer clear `stale` when the linked event changed.
 
@@ -94,11 +95,20 @@ override the persona's initiative. Settings are user-authored instructions about
 only; imported text never becomes a setting, and nothing can grant sending.
 
 Every draft records a fingerprint of its context (messages, linked event, persona,
-person preferences, updates, destination). Copy and composer prefill require the saved
+person preferences, updates, destination, and the workspace-local date, so a draft saying
+"tomorrow" stops being current at local midnight). Copy and composer prefill require the saved
 draft to match the current context; after a change the text stays exactly as written and
 shows "The context changed since this draft was written" until the user checks and saves
 it. Saves submit the fingerprint shown on the page and fail with 409 if it moved.
 **Preview my style** makes one accounted model call on a fictional scenario.
+
+Each action also records `context_sources`: every source whose text or facts reached its
+title, reason or draft, including the sources behind every event in its context (so a
+venue from a booking email in another conversation counts). When any of them is edited,
+excluded or deleted, that derived text is erased, edited drafts included, the action is
+taken out of view and refreshed from what remains (a chat review, or re-preparation).
+Migration `0015` adds the column and backfills event-linked actions with their group's
+sources; text written earlier from unlinked event candidates is refreshed on review.
 
 ## Prepared messages (proactive)
 
@@ -126,7 +136,10 @@ At most five new prepared drafts per workspace per local day (three at low, seve
 initiative); manual preparation adds one bounded batch of five. One open prepared message
 per recipient; an event may replace an unedited generic one. Identities are
 server-created from recipient + purpose + original event, contact cycle or update, so
-reruns, restarts, rescheduling and grouping never recreate a dismissed action. Publication
+reruns, restarts, rescheduling and grouping never recreate a dismissed action. A snoozed
+prepared message is left alone until its snooze ends; after that it is open again and is
+refreshed when its context changed. If the user corrects its event (or marks it as not
+about an event), preparation uses that choice and never resets it. Publication
 rechecks the lease, candidate revision, full fingerprint, pauses and terminal identities;
 edited drafts are never replaced. Housekeeping closes actions for cancelled, past, paused
 or dismissed events, declined participants, duplicates and expired updates. Policy

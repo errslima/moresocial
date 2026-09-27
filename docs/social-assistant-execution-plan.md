@@ -718,3 +718,21 @@ suggestions and a fresh connector heartbeat were verified server-side; the first
 created 4 prepared drafts for the day's confirmed outing participants. Authenticated live
 UI checks and inspection of those drafts are pending. Details:
 [implementation status](implementation-status.md#social-assistant-deployment--2026-09-27).
+
+### Review follow-up — 2026-09-27 (local, not deployed)
+
+`tests/test_review_assistant_regressions.py` reproduced four defects; all now pass:
+
+- Cross-conversation privacy: suggestions record `context_sources` (every source behind
+  their messages and context events; migration `0015`, backfilled for event-linked rows).
+  `ingest.invalidate` calls `suggestions.erase_dependents`, which erases titles, reasons
+  and drafts (edited ones too), invalidates open rows and schedules a refresh.
+- A user's event correction on a prepared message (including "not related") is kept by
+  preparation and housekeeping; the draft context follows the user's choice.
+- An expired snooze no longer blocks refreshing a prepared message.
+- Draft and preparation contexts include the workspace-local date, so relative-day
+  drafts stop being current at local midnight (open prepared drafts refresh daily).
+
+Added tests for legacy cross-conversation erasure with an edited draft, the `0015`
+backfill and "not related" prepared messages. `bash scripts/test.sh`: **408 Python
+passed**, **40 connector passed**, compile check passed.

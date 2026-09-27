@@ -207,8 +207,10 @@ def invalidate(ws: Scoped, source_ids: list[uuid.UUID], rebuild: bool = True) ->
     cached answers and draft evidence; clear RSVP suggestions citing them."""
     if not source_ids:
         return
-    from . import events
+    from . import events, suggestions as suggestion_actions
     events.invalidate(ws, source_ids)
+    # Text derived from these sources in any conversation's suggestions is erased too.
+    suggestion_actions.erase_dependents(ws, source_ids)
     chunk_ids = list(ws.s.scalars(ws.q(ChunkSource, ChunkSource.chunk_id).where(ChunkSource.source_id.in_(source_ids))))
     convs = set(ws.s.execute(ws.q(Source, Source.provider, Source.conversation_id).where(Source.id.in_(source_ids))).all())
     from . import suggestions

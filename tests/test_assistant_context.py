@@ -306,3 +306,43 @@ def test_draft_uses_event_facts_and_goes_stale_when_event_changes(world, browser
     assert browser.post(f'/suggestions/{row.id}/draft/save', {'csrf': csrf, 'revision': rev, 'review_revision': rrev,
         'text': 'See you at Aloha at 17:00!', 'context': context_value}).status_code == 303
     assert 'data-copy="suggestion-draft"' in browser.get(f'/suggestions/{row.id}').text
+
+
+def test_excluding_event_evidence_elsewhere_erases_derived_titles_and_edited_drafts(world, browser):
+    wid, ids = world
+    row = run_review(wid)[0]
+    suggestions.draft(wid, row.id)
+    csrf = browser.csrf(f'/suggestions/{row.id}')
+    page = browser.get(f'/suggestions/{row.id}').text
+    with db.session() as s:
+        d = s.get(Suggestion, row.id)
+        rev, rrev = d.draft_revision, s.get(SuggestionReview, d.review_id).revision
+        assert str(ids['mail'][0]) in d.context_sources  # the booking fed the title and draft
+    context_value = re.search(r'name="context" value="([^"]*)"', page).group(1)
+    assert browser.post(f'/suggestions/{row.id}/draft/save', {'csrf': csrf, 'revision': rev, 'review_revision': rrev,
+        'text': 'See you at Aloha Amsterdam!', 'context': context_value}).status_code == 303
+    with db.session() as s:
+        ws = Scoped(s, wid)
+        ingest.exclude(ws, ws.get(Source, ids['mail'][0]), 'object')
+    with db.session() as s:
+        after = s.get(Suggestion, row.id)
+        assert 'Aloha' not in after.title + after.reason + after.draft and after.draft == ''
+        assert after.state == 'invalidated' and after.context_sources == []
+    rows = run_review(wid)  # the reply returns, written without the excluded booking
+    assert rows[0].state == 'active' and rows[0].title == 'Meet Mickaël there on Sunday'
+
+
+def test_backfill_links_existing_event_suggestions_to_their_group_sources(world, database):
+    from pathlib import Path
+    from alembic import command
+    from alembic.config import Config
+    wid, ids = world
+    row = run_review(wid)[0]
+    cfg = Config(str(Path(__file__).resolve().parents[1] / 'alembic.ini'))
+    cfg.attributes['database_url'] = database['runtime_url']
+    command.downgrade(cfg, '0014')
+    command.upgrade(cfg, 'head')
+    with db.session() as s:
+        backfilled = set(s.get(Suggestion, row.id).context_sources)
+    assert {str(ids['mail'][0])} | {str(x) for x in ids['chat']} <= backfilled
+    assert not {str(x) for x in ids['group_chat']} & backfilled  # the dinner is another group

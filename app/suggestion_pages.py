@@ -189,6 +189,8 @@ def save(sid: uuid.UUID, text: str = Form(''), revision: int = Form(...), review
         raise Problem(409, 'The context of this suggestion changed. Reload, check it and save again.')
     row.draft, row.draft_revision, row.draft_review_revision = text.strip(), revision + 1, review.revision
     row.draft_origin, row.draft_fingerprint = 'user', built[1]
+    # The edit was written against this context: excluding any of it later erases the edit too.
+    row.context_sources = sorted(set(row.context_sources or []) | set(built[0]['_sources']))
     return redirect(f'/suggestions/{sid}')
 
 

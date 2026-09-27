@@ -72,6 +72,22 @@ and embeddings in use by the 2026-09-26 Suggestions and Events releases); Docker
 the Compose stack and the provisioner with a paired connector. Obsolete: live checks for
 personal AI keys and for Anthropic/Voyage keys, whose features were retired.
 
+## Social assistant review follow-up — 2026-09-27 (implemented locally, not deployed)
+
+Fixes for four defects reproduced by `tests/test_review_assistant_regressions.py`:
+
+- Excluding a source used in another conversation's event context (for example a booking
+  email) left derived text, such as the venue, in prepared and ordinary drafts. Actions now
+  record `context_sources` (migration `0015`, backfilled for event-linked actions) and
+  `ingest.invalidate` erases dependent titles, reasons and drafts, edited ones included,
+  then refreshes them.
+- Background re-preparation overwrote a user's event correction on a prepared message; it
+  now keeps the user's link (including "not related to an event") for context and display.
+- A prepared message whose snooze had expired was never refreshed; an expired snooze is now
+  treated as open.
+- Drafts had no notion of today; the local date is now part of draft and preparation
+  context, so relative days ("tomorrow") stop being current at local midnight.
+
 ## Social assistant deployment — 2026-09-27
 
 Released `901bc09` (previous `79304e9`) following the

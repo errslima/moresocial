@@ -253,6 +253,10 @@ Not yet deployed as of 2026-09-27. Order and compatibility:
 4. Existing suggestions keep their data, dispositions and drafts; drafts saved before the
    release show "needs a review" once, because they carry no context fingerprint.
 
+Migration `0015` (review follow-up) only adds `suggestions.context_sources` with a default
+and backfills event-linked rows; it needs no worker stop. Images from `901bc09` keep
+working on it but report a migration mismatch on `/ready`.
+
 Proactive preparation starts automatically in the local 08:00–23:00 window (defaults:
 event preparation and check-ins on, balanced initiative, pinned contacts only). Operator
 switch, effective within one scan and without a restart:

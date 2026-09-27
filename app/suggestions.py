@@ -144,7 +144,8 @@ def changed(ws, conversation, *, erase=False):
     review = ws.first(ws.q(SuggestionReview).where(SuggestionReview.conversation_id == conversation))
     values = {'stale': True}
     if erase:
-        values.update(title='Source context changed', reason='', draft='', draft_revision=Suggestion.draft_revision + 1)
+        values.update(title='Source context changed', reason='', draft='', draft_revision=Suggestion.draft_revision + 1,
+                      context_sources=[])
     ws.update(Suggestion, Suggestion.review_id == review.id, **values)
     if erase:
         ws.update(Suggestion, Suggestion.review_id == review.id, Suggestion.state.in_(OPEN), state='invalidated')
@@ -226,6 +227,7 @@ def snapshot(ws, review):
         'language': ac.settings(ws).language or 'the conversation\'s language',
         'messages': lines, 'notes': [n.body[:1500] for n in notes],
         'events': evc.events, 'event_messages': evc.messages, 'event_coverage': evc.coverage, '_events': evc.internal,
+        '_context_sources': ac.sources_of(lines, evc),
         'existing': [{'id': str(x.id), 'kind': x.kind, 'anchor': labels.get(str(x.anchor_id)),
                       'state': x.state, 'title': x.title, 'reason': x.reason, 'needs_update': x.stale and x.state in OPEN,
                       'event': event_labels.get(str(x.event_id))} for x in existing]}
@@ -374,6 +376,8 @@ def publish(ws, review, data, ctx):
         link_event(ws, row, item, ctx, [sid for sid, _ in refs] + [anchor['id']])
         ws.s.flush()
         row.input_fingerprint = input_fingerprint(refs, linked_projection(ws, row))
+        # The title and reason were written from this whole context, events included.
+        row.context_sources = ctx.get('_context_sources', [])
     for item in data['resolved']:
         row = by_id.get(item['id'])
         if row and row.state in (*OPEN, 'invalidated'):
@@ -477,6 +481,7 @@ def draft_context(ws, row, review=None):
                            chat=review.conversation_id, message_labels=labels)
     linked = evc.events[0]['label'] if primary is not None and evc.internal and evc.internal[0]['basis'] == 'primary' else None
     data = {'purpose': 'suggestion_draft', 'person': ctx['person'], 'timezone': ctx['timezone'], 'partial_history': True,
+            'today': ac.today(ws), '_sources': ac.sources_of(ctx['messages'], evc),
             'action': {'kind': row.kind, 'title': row.title, 'reason': row.reason, 'event': linked},
             'messages': ctx['messages'], 'notes': ctx['notes'], 'events': evc.events, 'event_messages': evc.messages,
             'event_coverage': evc.coverage, 'relationship': {'style_and_boundaries': rel['style_and_boundaries']},
@@ -532,6 +537,39 @@ def draft(wid, sid):
             return
         row.draft, row.draft_revision, row.draft_review_revision = text.strip(), draft_rev + 1, rev
         row.draft_origin, row.draft_fingerprint = 'generated', fingerprint
+        row.context_sources = sorted(set(row.context_sources or []) | set(data['_sources']))
+
+
+def erase_dependents(ws, source_ids) -> int:
+    """A source changed, was excluded or deleted. Any action whose title, reason or draft was
+    written from it (for example a venue from a booking email in another conversation)
+    loses that derived text, edited drafts included, and is refreshed from what remains."""
+    from sqlalchemy.dialects import postgresql
+    ids = sorted({str(x) for x in source_ids})
+    if not ids:
+        return 0
+    rows = ws.all(ws.q(Suggestion).where(Suggestion.context_sources.op('?|')(postgresql.array(ids)))
+                  .order_by(Suggestion.id).with_for_update())
+    reviews, people = set(), set()
+    for row in rows:
+        row.title, row.reason, row.draft = 'Source context changed', '', ''
+        row.draft_revision += 1
+        row.draft_origin = row.draft_fingerprint = row.input_fingerprint = None
+        row.stale, row.context_sources = True, []
+        if row.producer == 'proactive':
+            closed = (row.rationale or {}).get('closed_at')
+            row.rationale = {'closed_at': closed} if closed else {}
+            people.add(row.person_id)
+        if row.state in OPEN:
+            row.state = 'invalidated'
+        reviews.add(row.review_id)
+    now = utcnow()
+    for review in ws.all(ws.q(SuggestionReview).where(SuggestionReview.id.in_(reviews), SuggestionReview.paused.is_(False))):
+        review.next_review_at = now + timedelta(minutes=2)
+    from . import proactive
+    for pid in people:
+        proactive.invalidate(ws, person_id=pid)
+    return len(rows)
 
 
 def events_changed(ws, rep_ids) -> int:

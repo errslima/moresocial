@@ -54,6 +54,24 @@ def tz(ws: Scoped) -> ZoneInfo:
     return ZoneInfo(ws.s.get(Workspace, ws.wid).timezone)
 
 
+def today(ws: Scoped) -> dict:
+    """The workspace-local date. Part of every draft context, so words like "tomorrow" are
+    written against a known day and a draft stops being current at local midnight."""
+    local = utcnow().astimezone(tz(ws))
+    return {'date': local.date().isoformat(), 'weekday': local.strftime('%A')}
+
+
+def sources_of(messages=(), evc: 'EventContext | None' = None) -> list[str]:
+    """Every source whose text or facts enter a context: the messages supplied and all
+    sources supporting each supplied event (its projected facts derive from them)."""
+    ids = {str(m['id']) for m in messages}
+    if evc is not None:
+        ids |= {m['id'] for m in evc.messages}
+        for e in evc.internal:
+            ids |= set(e['sources'])
+    return sorted(ids)
+
+
 # ---------------- explicit user settings
 
 DEFAULTS = dict(instructions='', warmth='friendly', directness='balanced', humour='light', brevity='short', emoji='sparing',
