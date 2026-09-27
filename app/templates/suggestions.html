@@ -3,9 +3,10 @@
 {% block title %}Suggestions{% endblock %}
 {% block content %}
 <h1>Suggestions</h1>
-<p class="muted">Who might you want to contact, and why now? Replies, promises and follow-ups from recent one-to-one WhatsApp chats.</p>
+<p class="muted">Who might you want to contact, and why now? Replies, promises and follow-ups from recent one-to-one WhatsApp chats, plus messages the assistant prepared for your events and check-ins. Nothing is sent until you press Send message in a conversation.</p>
 {% if not ai_ready %}<p class="warn">Suggestions are waiting for AI to be configured. Your saved suggestions remain available.</p>{% endif %}
-{% if stale_sync %}<p class="warn">WhatsApp is not currently syncing or its status is stale. New replies may be missing. <a href="{{ url('/connections') }}">Check Connections</a>.</p>{% endif %}
+{% if health.warning %}<p class="warn" data-wa-health="{{ health.code }}">{{ health.message }}{% if health.checked_at %} Last report {{ health.checked_at|suggestion_time(timezone) }}.{% endif %} <a href="{{ url('/connections') }}">Check Connections</a>.</p>
+{% elif health.level == 'info' %}<p class="small muted" data-wa-health="{{ health.code }}">{{ health.message }}</p>{% endif %}
 <p class="small muted">Based on available synced history, which may be incomplete. Reviews use the last 30 days, up to 80 recent messages plus open commitments. Times shown in {{ timezone }}.</p>
 <div class="row">
 <form method="post" action="{{ url('/suggestions/review') }}" data-busy="Queuing…">{{ csrf_field() }}<button>Review conversations</button></form>
@@ -22,17 +23,23 @@
 <div class="row"><span class="tag">{{ kinds[s.kind] }}</span><a href="{{ url('/people/' ~ s.person_id) }}">{{ card.person.display_name }}</a>{% if tab == 'history' %}<span class="tag">{{ s.state }}</span>{% endif %}</div>
 <h2><a href="{{ url('/suggestions/' ~ s.id) }}">{{ s.title }}</a></h2>
 <p>{{ s.reason }}</p>
+{% if card.event %}<p class="small" data-event-link>Event: <a href="{{ url('/events/' ~ card.event.id) }}">{{ card.event.title }}</a>{% if card.event.starts_at %} · {{ card.event.starts_at|suggestion_time(timezone) }}{% endif %}{% if card.event.details.get('place') %} · {{ card.event.details.get('place') }}{% endif %}{% if card.event.status == 'cancelled' %} · cancelled{% endif %}</p>{% endif %}
+{% if s.producer == 'proactive' and s.draft %}<blockquote class="excerpt" data-prepared-draft>{{ s.draft[:300] }}{% if s.draft|length > 300 %}…{% endif %}</blockquote>{% endif %}
 {% if s.due_at %}<p class="small">Due {{ s.due_at|suggestion_time(timezone) }}</p>{% endif %}
 {% if s.state == 'snoozed' %}<p class="small muted">Remind me {{ s.snoozed_until|suggestion_time(timezone) }}</p>{% endif %}
 {% if s.stale %}<p class="warn">Conversation changed. Waiting for a fresh review.</p>{% endif %}
-{% if card.evidence %}<details><summary>Why this appeared</summary>{% for src in card.evidence %}
+{% if card.evidence or card.event or s.rationale %}<details><summary>Why this appeared</summary>
+{% if s.rationale %}<p class="small">{{ s.rationale.get('summary', '') }}</p>{% endif %}
+{% for src in card.evidence %}
 <blockquote class="excerpt">{{ src.body[:500] }}{% if src.body|length > 500 %}…{% endif %}</blockquote>
 <p class="small"><a href="{{ url('/sources/' ~ src.id) }}">{{ 'You' if src.from_me else card.person.display_name }} · {{ src.occurred_at|suggestion_time(timezone) }} · WhatsApp</a></p>
-{% endfor %}</details>{% endif %}
+{% endfor %}
+{% if card.event %}<p class="small">Related event: <a href="{{ url('/events/' ~ card.event.id) }}">{{ card.event.title }}</a>{% for src in card.event_sources %} · <a href="{{ url('/sources/' ~ src.id) }}">{{ 'time and place' if loop.first else 'place' }} from this {{ 'email' if src.provider == 'gmail' else 'message' }}</a>{% endfor %}</p>{% endif %}
+</details>{% endif %}
 <div class="row"><a href="{{ url('/suggestions/' ~ s.id) }}">View context{% if s.draft %} & draft{% endif %}</a>
 {% if card.conversation_url %}<a class="button" href="{{ card.conversation_url }}">Open conversation</a>{% endif %}
 {% if s.state in ['active','snoozed'] %}
-{% if not s.stale and card.evidence and not s.draft %}<form method="post" action="{{ url('/suggestions/' ~ s.id ~ '/draft') }}" data-busy="Drafting…">{{ csrf_field() }}<button class="primary">Draft a reply</button></form>{% endif %}
+{% if s.producer == 'conversation' and not s.stale and card.evidence_ok and not s.draft %}<form method="post" action="{{ url('/suggestions/' ~ s.id ~ '/draft') }}" data-busy="Drafting…">{{ csrf_field() }}<button class="primary">Draft a reply</button></form>{% endif %}
 <form method="post" action="{{ url('/suggestions/' ~ s.id ~ '/state') }}">{{ csrf_field() }}<button name="action" value="done">Done</button><button name="action" value="dismiss">Dismiss</button></form>
 {% endif %}</div>
 {% if s.state in ['active','snoozed'] %}<form class="row" method="post" action="{{ url('/suggestions/' ~ s.id ~ '/state') }}">{{ csrf_field() }}

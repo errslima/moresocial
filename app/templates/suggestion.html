@@ -3,28 +3,41 @@
 {% block title %}{{ row.title }}{% endblock %}
 {% block content %}
 <p><a href="{{ url('/suggestions') }}">← Suggestions</a></p>
-<div class="row"><span class="tag">{{ kinds[row.kind] }}</span><a href="{{ url('/people/' ~ person.id) }}">{{ person.display_name }}</a><span class="tag">{{ row.state }}</span></div>
+<div class="row"><span class="tag">{{ kinds[row.kind] }}</span><a href="{{ url('/people/' ~ person.id) }}">{{ person.display_name }}</a><span class="tag">{{ row.state }}</span>{% if row.producer == 'proactive' %}<span class="tag">Prepared by your assistant</span>{% endif %}</div>
 <h1>{{ row.title }}</h1><p>{{ row.reason }}</p>
 {% if conversation_url %}<p><a class="button" href="{{ conversation_url }}">Open conversation</a></p>{% endif %}
 {% if error %}<p class="warn" role="alert">{{ error }}</p>{% endif %}
-{% if review.paused %}<p class="warn">Suggestions for this conversation are paused.</p>{% elif row.stale %}<p class="warn">The conversation changed. A fresh review is needed before drafting.</p>{% endif %}
+{% if review.paused %}<p class="warn">Suggestions for this conversation are paused.</p>{% elif row.stale %}<p class="warn">The conversation or its context changed. A fresh review is needed before drafting.</p>{% endif %}
 {% if row.due_at %}<p>Due {{ row.due_at|suggestion_time(timezone) }}</p>{% endif %}
+<section aria-labelledby="related-event"><h2 id="related-event">Related event</h2>
+{% if event %}<p data-event-link><a href="{{ url('/events/' ~ event.id) }}">{{ event.title }}</a>{% if event.starts_at %} · {{ event.starts_at|suggestion_time(timezone) }}{% endif %}{% if event.details.get('place') %} · {{ event.details.get('place') }}{% endif %}{% if event.status == 'cancelled' %} · <strong>cancelled</strong>{% endif %}</p>
+{% if event.details.get('needs_clarification') %}<p class="small warn">Needs checking: confirmations give different times.</p>{% endif %}
+<p class="small muted">{{ 'You chose this event.' if row.event_link == 'user' else 'Linked because this suggestion shares messages with the event.' }}{% for src in event_sources %} <a href="{{ url('/sources/' ~ src.id) }}">{{ 'Time and place' if loop.first else 'Place' }} from this {{ 'email' if src.provider == 'gmail' else 'message' }}</a>.{% endfor %}</p>
+{% elif row.event_link == 'user' %}<p class="muted">You marked this as not related to an event.</p>
+{% elif possible_events %}<p class="small">Possibly related: {% for e in possible_events %}<a href="{{ url('/events/' ~ e.id) }}">{{ e.title }}</a>{{ ', ' if not loop.last }}{% endfor %}. Several events share these messages, so none was chosen automatically.</p>
+{% else %}<p class="muted small">No related event found in its messages.</p>{% endif %}
+{% if event_choices %}<form class="row" method="post" action="{{ url('/suggestions/' ~ row.id ~ '/event') }}">{{ csrf_field() }}
+<label for="event-choice">Correct the event</label><select id="event-choice" name="event">{% for e in event_choices %}<option value="{{ e.id }}" {% if event and e.id == event.id %}selected{% endif %}>{{ e.title }}{% if e.starts_at %} — {{ e.starts_at|suggestion_time(timezone) }}{% endif %}</option>{% endfor %}<option value="none" {% if not event and row.event_link == 'user' %}selected{% endif %}>Not related to an event</option></select><button>Save</button></form>{% endif %}
+</section>
 <h2>Why this appeared</h2>
-{% for src in evidence %}<blockquote class="excerpt">{{ src.body[:1500] }}{% if src.body|length > 1500 %}…{% endif %}</blockquote><p class="small"><a href="{{ url('/sources/' ~ src.id) }}">{{ 'You' if src.from_me else person.display_name }} · {{ src.occurred_at|suggestion_time(timezone) }} · WhatsApp</a></p>{% else %}<p class="muted">The original evidence is no longer available.</p>{% endfor %}
-{% if row.state in ['active','snoozed'] and not row.stale and not review.paused and evidence %}
+{% if row.rationale %}<p data-rationale>{{ row.rationale.get('summary', '') }}</p><p class="small muted">This is your own preference or schedule, not a request from {{ person.display_name }}.</p>{% endif %}
+{% for src in evidence %}<blockquote class="excerpt">{{ src.body[:1500] }}{% if src.body|length > 1500 %}…{% endif %}</blockquote><p class="small"><a href="{{ url('/sources/' ~ src.id) }}">{{ 'You' if src.from_me else person.display_name }} · {{ src.occurred_at|suggestion_time(timezone) }} · WhatsApp</a></p>{% else %}{% if not row.rationale %}<p class="muted">The original evidence is no longer available.</p>{% endif %}{% endfor %}
+{% if row.state in ['active','snoozed'] and not row.stale and not review.paused and evidence_ok %}
 <h2>Your message</h2>
 {% if row.draft %}
-{% if row.draft_review_revision != review.revision %}<p class="warn">This draft predates the latest conversation update. Check the context, edit and save before copying.</p>{% endif %}
+{% if row.producer == 'conversation' and row.draft_review_revision != review.revision %}<p class="warn">This draft predates the latest conversation update. Check the context, edit and save before copying.</p>
+{% elif not draft_is_current %}<p class="warn" data-draft-stale>The context changed since this draft was written (for example the event details or your assistant style). Check it, edit and save before copying or sending.</p>{% endif %}
 <form method="post" action="{{ url('/suggestions/' ~ row.id ~ '/draft/save') }}">
-{{ csrf_field() }}<input type="hidden" name="revision" value="{{ row.draft_revision }}"><input type="hidden" name="review_revision" value="{{ review.revision }}">
+{{ csrf_field() }}<input type="hidden" name="revision" value="{{ row.draft_revision }}"><input type="hidden" name="review_revision" value="{{ review.revision }}"><input type="hidden" name="context" value="{{ context_fingerprint or '' }}">
 <label for="suggestion-draft">Edit your message</label><textarea id="suggestion-draft" name="text" rows="6" maxlength="4000" required>{{ row.draft }}</textarea>
-<div class="row"><button>Save edits</button>{% if row.draft_review_revision == review.revision %}<button type="button" data-copy="suggestion-draft">Copy message</button>{% endif %}</div>
+<div class="row"><button>Save edits</button>{% if draft_is_current %}<button type="button" data-copy="suggestion-draft">Copy message</button>{% endif %}</div>
 <p data-copy-status="suggestion-draft" role="status" class="small muted">Save your edits, then open the conversation to send. Check any [placeholders] first. Copying does not send anything or mark this suggestion done.</p>
 </form>
+{% elif row.producer == 'proactive' %}<p class="muted">The prepared message was removed because its context changed. It is prepared again if it is still relevant.</p>
 {% else %}<form method="post" action="{{ url('/suggestions/' ~ row.id ~ '/draft') }}" data-busy="Drafting…">{{ csrf_field() }}<button class="primary">Draft a reply</button></form>{% endif %}
 {% endif %}
 {% if row.state in ['active','snoozed','invalidated'] %}
-<h2>Handle this suggestion</h2><form class="row" method="post" action="{{ url('/suggestions/' ~ row.id ~ '/state') }}">{{ csrf_field() }}<button name="action" value="done">Done</button><button name="action" value="already_handled">Already handled</button><button name="action" value="no_reply_needed">No reply needed</button><button name="action" value="dismiss">Don't suggest this again</button></form>
+<h2>Handle this suggestion</h2><form class="row" method="post" action="{{ url('/suggestions/' ~ row.id ~ '/state') }}">{{ csrf_field() }}<button name="action" value="done">Done</button><button name="action" value="already_handled">Already handled</button>{% if row.producer == 'conversation' %}<button name="action" value="no_reply_needed">No reply needed</button>{% endif %}<button name="action" value="dismiss">Don't suggest this again</button></form>
 <form class="row" method="post" action="{{ url('/suggestions/' ~ row.id ~ '/state') }}">{{ csrf_field() }}<label for="days">Remind me in</label><select name="days" id="days"><option value="1">1 day</option><option value="3">3 days</option><option value="7">1 week</option></select><button name="action" value="snooze">Remind me later</button></form>
 {% endif %}
 <details class="card"><summary>Recent conversation context</summary><p class="small muted">Up to 30 of the messages used for review. Available history may be incomplete.</p>{% for message in messages %}<p class="small muted">{{ 'You' if message.from_me else person.display_name }} · {{ message.at }}</p><p class="excerpt">{{ message.text }}</p>{% if message.partial %}<p class="small muted">Some text or media content is unavailable.</p>{% endif %}<a class="small" href="{{ url('/sources/' ~ message.id) }}">Open source</a>{% endfor %}</details>

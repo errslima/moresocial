@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+{% from 'macros.html' import csrf_field with context %}
+{% block title %}Assistant{% endblock %}
+{% block content %}
+<h1>Assistant</h1>
+<p data-send-rule><strong>Prepares drafts; messages are sent only when you press Send message.</strong></p>
+<p class="muted">Your assistant writes suggestion drafts in your style. If you allow it, it also prepares messages before your events and check-ins with people you chose. Everything appears in <a href="{{ url('/suggestions') }}">Suggestions</a> for you to review, edit, send yourself or dismiss.</p>
+{% if error %}<p class="warn" role="alert">{{ error }}</p>{% endif %}
+{% if not ai_ready %}<p class="warn">AI is not configured, so drafts and preparation wait. Your settings are kept.</p>{% endif %}
+<section class="card" aria-labelledby="status">
+  <h2 id="status">Status</h2>
+  {% if settings.paused %}<p class="warn" data-assistant-state="paused">Paused. No new messages are prepared; existing suggestions stay.</p>
+  {% elif state.mode == 'off' %}<p class="warn" data-assistant-state="off">Preparation is switched off by the operator.</p>
+  {% else %}<p data-assistant-state="active">Active. Background preparation runs {{ '%02d:00'|format(window[0]) }}–{{ '%02d:00'|format(window[1]) }} ({{ timezone }}); you can ask for more at any time.</p>{% endif %}
+  <p class="small muted">Prepared today: {{ state.prepared_today }} of {{ state.limit }} automatic.{% if state.queued %} {{ state.queued }} being prepared.{% endif %}{% if state.last_scan %} Last check {{ state.last_scan|suggestion_time(timezone) }}.{% endif %}</p>
+  {% if state.failed %}<p class="warn small">{{ state.failed }} preparation(s) failed in the last day. Use Prepare messages now to retry.</p>{% endif %}
+  <div class="row">
+    <form method="post" action="{{ url('/assistant/pause') }}">{{ csrf_field() }}<button name="action" value="{{ 'resume' if settings.paused else 'pause' }}">{{ 'Resume assistant' if settings.paused else 'Pause assistant' }}</button></form>
+    {% if not settings.paused %}<form method="post" action="{{ url('/assistant/prepare') }}" data-busy="Queuing…">{{ csrf_field() }}<button>Prepare messages now</button></form>{% endif %}
+  </div>
+</section>
+<form class="card stack" method="post" action="{{ url('/assistant') }}">
+  {{ csrf_field() }}
+  <h2>Style</h2>
+  <label for="instructions">How I like to write</label>
+  <textarea id="instructions" name="instructions" rows="4" maxlength="4000" placeholder="For example: casual, first names, no exclamation marks.">{{ settings.instructions }}</textarea>
+  <p class="small muted">Shapes wording and initiative only. It cannot change facts, a contact's boundaries, what is shared, or the rule that you send messages yourself.</p>
+  {% for field, options in style.items() %}
+  <label for="style-{{ field }}">{{ {'warmth':'Warmth','directness':'Directness','humour':'Humour','brevity':'Length','emoji':'Emoji'}[field] }}</label>
+  <select id="style-{{ field }}" name="{{ field }}">{% for o in options %}<option value="{{ o }}" {% if settings[field] == o %}selected{% endif %}>{{ o|capitalize }}</option>{% endfor %}</select>
+  {% endfor %}
+  <label for="language">Language</label>
+  <input id="language" name="language" value="{{ settings.language }}" maxlength="40" placeholder="Empty: match each conversation">
+  <details><summary>Examples of wording (optional)</summary>
+    <label for="ex-yes">Wording I like</label><textarea id="ex-yes" name="examples_preferred" rows="3" maxlength="2000">{{ settings.examples_preferred }}</textarea>
+    <label for="ex-no">Wording to avoid</label><textarea id="ex-no" name="examples_avoid" rows="3" maxlength="2000">{{ settings.examples_avoid }}</textarea>
+    <p class="small muted">Up to 2,000 characters in total.</p>
+  </details>
+  <h2>Initiative</h2>
+  <label for="initiative">How often to prepare messages</label>
+  <select id="initiative" name="initiative">{% for o in initiatives %}<option value="{{ o }}" {% if settings.initiative == o %}selected{% endif %}>{{ {'low':'Low: fewer, only at checkpoints','balanced':'Balanced','high':'High: a few more'}[o] }}</option>{% endfor %}</select>
+  <label><input type="checkbox" name="event_preparation" value="yes" {% if settings.event_preparation %}checked{% endif %}> Prepare messages before events for confirmed participants</label>
+  <label><input type="checkbox" name="check_ins" value="yes" {% if settings.check_ins %}checked{% endif %}> Prepare check-ins and updates for people I chose</label>
+  <p class="small muted">Check-ins are only for pinned people or people where you turned them on (People › a person). Updates are only those you write under About me.</p>
+  <button class="primary">Save settings</button>
+</form>
+<section class="card" aria-labelledby="preview">
+  <h2 id="preview">Preview</h2>
+  <p class="small muted">Writes one example reply to a fictional dinner invitation with your saved style. It uses the AI service and no contact data, and sends nothing.</p>
+  <form method="post" action="{{ url('/assistant/preview') }}" data-busy="Writing…">{{ csrf_field() }}<button>Preview my style</button></form>
+  {% if preview %}<blockquote class="excerpt" data-preview>{{ preview }}</blockquote>{% endif %}
+</section>
+{% endblock %}

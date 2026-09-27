@@ -7,7 +7,11 @@ with independent application files and state under `/srv/moresocial`.
 
 The first release (milestones M0–M6) was deployed at the URL above on 2026-09-25. Later
 releases added the shared OpenRouter AI configuration, the Suggestions inbox, explicit
-WhatsApp sending, automatically recognized Events and event identity grouping. See
+WhatsApp sending, automatically recognized Events and event identity grouping. The social
+assistant (event-aware suggestions, an editable persona, prepared event reminders,
+check-ins and shareable updates, heartbeat-based WhatsApp health) is implemented locally;
+see the [execution plan and log](docs/social-assistant-execution-plan.md). It prepares
+drafts only: messages are sent solely when the user presses **Send message**. See
 [implementation status](docs/implementation-status.md) for the last recorded release and
 the live checks that remain open.
 

@@ -186,7 +186,16 @@ def refresh(ws: Scoped, event_ids=()) -> set:
         e = ws.get(Event, rep)
         if e and e.canonical_event_id is None:
             ev.recompute_group(ws, e)
+    ws.s.flush()
+    notify(ws, reps)
     return reps
+
+
+def notify(ws: Scoped, reps) -> None:
+    """Suggestions and proactive preparation follow event changes (see app/suggestions.py)."""
+    from . import suggestions
+    if reps:
+        suggestions.events_changed(ws, reps)
 
 
 def state_token(ws: Scoped, rep_id) -> str:

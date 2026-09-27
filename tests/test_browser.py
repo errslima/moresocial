@@ -338,7 +338,8 @@ def test_sidebar_and_whatsapp_browser(live, chromium, viewport):
         assert menu.locator('summary').is_hidden()
         logout = page.get_by_role('button', name='Sign out').bounding_box()
         assert logout['y'] > 780  # anchored at the bottom of the sidebar
-    assert [l.strip() for l in labels] == ['Home', 'WhatsApp', 'Suggestions', 'People', 'Ask', 'Events', 'About me', 'Connections']
+    assert [l.strip() for l in labels] == ['Home', 'WhatsApp', 'Suggestions', 'Assistant', 'People', 'Ask', 'Events', 'About me',
+                                         'Connections']
     assert page.get_by_role('link', name='Admin').count() == 0  # not an administrator
     assert page.get_by_role('link', name='Home', exact=True).get_attribute('aria-current') == 'page'
     home_main = page.locator('main').bounding_box()
@@ -650,3 +651,81 @@ def test_event_identity_review_group_split_undo(live, chromium, viewport, monkey
     page.get_by_role('button', name='Restore event').click()
     playwright.expect(page.get_by_role('heading', name='Lasergame – 2 rounds')).to_be_visible()
     context.close()
+
+
+@pytest.mark.parametrize('viewport', [{'width': 1440, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])
+def test_assistant_settings_prepared_draft_pause_and_composer(live, chromium, viewport, monkeypatch):
+    """Settings, an event-linked prepared card, editing it, pausing an event and handing the
+    draft to the composer. Nothing is sent: the send boundaries are spied on throughout."""
+    import os
+    import tempfile
+    from datetime import timedelta, timezone
+    from app import db, proactive, whatsapp, whatsapp_send
+    from app.repo import Scoped
+    from assistant_fixtures import aloha, at, link_connector
+    from conftest import workspace_of
+    from worker.main import drain as run_jobs
+    shots = os.environ.get('MORESOCIAL_SCREENSHOTS', tempfile.gettempdir())
+    sent = []
+    monkeypatch.setattr(whatsapp_send, 'fake_send', lambda *a, **kw: sent.append(a) or {'state': 'rejected'})
+    real_call = whatsapp.call
+    monkeypatch.setattr(whatsapp, 'call', lambda row, m, path, *a, **kw: sent.append(path) if path == '/send' else real_call(row, m, path, *a, **kw))
+    ctx = chromium.new_context(viewport=viewport)
+    page = ctx.new_page()
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+
+    def fits():
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), page.url
+
+    sign_in(page, live)
+    wid = workspace_of('alex@example.test')
+    with db.session() as s:
+        ws = Scoped(s, wid)
+        link_connector(ws)
+        ids = aloha(ws)
+    evening = (at(ids['sunday'], 16, 15) - timedelta(hours=20)).astimezone(timezone.utc)
+    monkeypatch.setattr(proactive, 'utcnow', lambda: evening)
+
+    nav_to(page, 'Assistant')
+    playwright.expect(page.locator('[data-send-rule]')).to_contain_text('messages are sent only when you press Send message')
+    page.get_by_label('Warmth').select_option('warm')
+    page.get_by_label('Emoji').select_option('often')
+    page.get_by_role('button', name='Save settings').click()
+    playwright.expect(page.locator('.notice')).to_contain_text('Assistant settings saved')
+    assert page.get_by_label('Warmth').input_value() == 'warm'
+    fits()
+    page.screenshot(path=f'{shots}/moresocial-assistant-{viewport["width"]}.png', full_page=True)
+
+    proactive.scan(wid, {'trigger': 'scheduled'})
+    run_jobs(kinds=['prepare_message'])
+    page.goto(live + '/suggestions')
+    card = page.locator('article.suggestion-card', has_text='Event reminder')
+    playwright.expect(card.locator('[data-event-link]')).to_contain_text('Lasergame – 2 rondes')
+    playwright.expect(card.locator('[data-prepared-draft]')).to_contain_text('Aloha Amsterdam')
+    fits()
+    page.screenshot(path=f'{shots}/moresocial-prepared-card-{viewport["width"]}.png', full_page=True)
+
+    card.get_by_role('link', name='View context & draft').click()
+    playwright.expect(page.locator('[data-rationale]')).to_contain_text('confirmed Lasergame – 2 rondes')
+    page.get_by_label('Edit your message').fill('Hey Mickaël, see you at Aloha at 16:15 on Sunday!')
+    page.get_by_role('button', name='Save edits').click()
+    playwright.expect(page.get_by_role('button', name='Copy message')).to_be_visible()
+    fits()
+    page.screenshot(path=f'{shots}/moresocial-prepared-draft-{viewport["width"]}.png', full_page=True)
+
+    page.get_by_role('link', name='Open conversation', exact=True).click()
+    page.wait_for_url('**/whatsapp?account=*')
+    assert page.locator('#wa-message').input_value() == 'Hey Mickaël, see you at Aloha at 16:15 on Sunday!'
+    playwright.expect(page.get_by_role('button', name='Send message', exact=True)).to_be_visible()
+    fits()
+
+    rep = ids['lasergame_chat']
+    page.goto(live + f'/events/{rep}')
+    playwright.expect(page.locator('[data-prep-status]')).to_contain_text('Draft prepared')
+    page.get_by_role('button', name='Pause message preparation').click()
+    playwright.expect(page.locator('[data-prep-state]')).to_contain_text('Paused for this event')
+    fits()
+    page.screenshot(path=f'{shots}/moresocial-event-prep-{viewport["width"]}.png', full_page=True)
+    assert sent == [] and errors == []
+    ctx.close()

@@ -19,6 +19,14 @@ if [ "$gatherings_removed" = t ]; then
     'from pathlib import Path; import sys; sys.exit(not Path("migrations/versions/0012_retire_manual_gatherings.py").is_file())' \
     || { echo "Schema 0012 requires a coordinated downgrade before this image. See docs/cleanup/schema-rollout.md." >&2; exit 2; }
 fi
+# 0014 adds proactive suggestions (no anchor, new kinds) that older images cannot display.
+assistant_schema=$(docker exec moresocial-db-1 psql -U moresocial_admin -d moresocial -tAc \
+  "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'suggestions' AND column_name = 'producer')")
+if [ "$assistant_schema" = t ]; then
+  docker run --rm --entrypoint python "moresocial-web:$sha" -c \
+    'from pathlib import Path; import sys; sys.exit(not Path("migrations/versions/0014_assistant.py").is_file())' \
+    || { echo "Schema 0014 (assistant) requires a coordinated downgrade before this image. Prefer 'python -m app.proactive mode off' and a forward fix; see docs/operator-setup.md." >&2; exit 2; }
+fi
 printf 'MORESOCIAL_REVISION=%s\n' "$sha" > "$ROOT/release.env"
 docker compose -p moresocial -f "$dest/deploy/compose.yaml" --env-file "$ROOT/release.env" up -d web worker
 ln -sfn "$dest" "$ROOT/src.next" && mv -T "$ROOT/src.next" "$ROOT/src"

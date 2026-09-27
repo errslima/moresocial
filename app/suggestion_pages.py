@@ -5,9 +5,10 @@ import uuid
 from fastapi import APIRouter, Depends, Form, Request
 from sqlalchemy import String, cast, func, or_, select
 
-from . import ai, suggestions, whatsapp_send
+from . import ai, assistant_context as ac, suggestions, whatsapp_health, whatsapp_send
 from .whatsapp_pages import page_url
-from .models import Job, Person, PersonIdentifier, Suggestion, SuggestionReview, WhatsAppConnector, Workspace
+from .models import (Event, Job, Person, PersonIdentifier, Source, Suggestion, SuggestionReview, WhatsAppConnector,
+                     Workspace)
 from .pages import ai_error, ai_failure, found
 from .web import Ctx, Problem, redirect, render, require_mutation, require_user
 
@@ -25,11 +26,21 @@ def locked_item(ctx, sid):
     return row, review
 
 
+def event_sources(ws, event):
+    """Visible messages establishing the linked event's schedule and place."""
+    prov = (event.details or {}).get('provenance') or {}
+    ids = list(dict.fromkeys((prov.get('schedule') or [])[:1] + (prov.get('place') or [])[:1]))
+    rows = [ws.get(Source, sid) for sid in ids]
+    return [r for r in rows if r and r.included and not r.deleted_at]
+
+
 def view_data(ctx, row, review):
     target = whatsapp_send.suggestion_target(ctx.ws, row, review)
+    event = ac.linked_event(ctx.ws, row)
     return {'conversation_url': page_url(**target, suggestion=row.id) if target else None,
             'row': row, 'person': ctx.ws.get(Person, row.person_id), 'review': review,
-            'evidence': suggestions.evidence(ctx.ws, row)}
+            'evidence': suggestions.evidence(ctx.ws, row), 'evidence_ok': suggestions.evidence_ok(ctx.ws, row),
+            'event': event, 'event_sources': event_sources(ctx.ws, event) if event else []}
 
 
 @router.get('/suggestions')
@@ -48,8 +59,8 @@ def inbox(request: Request, tab: str = 'active', page: int = 1, ctx: Ctx = Depen
     rows = ws.all(q.order_by(Suggestion.due_at.asc().nulls_last(), Suggestion.created_at.desc(), Suggestion.id)
                   .offset((page - 1) * 5).limit(6))
     cards = [view_data(ctx, r, reviews[r.review_id]) for r in rows[:5]]
-    connector = ws.first(ws.q(WhatsAppConnector))
-    stale_sync = not connector or connector.observed != 'ready' or connector.updated_at < now - timedelta(minutes=10)
+    # Heartbeat-based health: row age (updated_at) is not a sync signal.
+    health = whatsapp_health.classify(ws.first(ws.q(WhatsAppConnector)), now)
     pending = ws.s.scalar(ws.q(Job, func.count()).where(Job.kind == 'review_suggestions', Job.status.in_(['queued', 'running'])))
     # Count unresolved conversations, not every historical failed attempt. A later
     # queued/successful review supersedes an old failure without erasing its audit trail.
@@ -67,9 +78,9 @@ def inbox(request: Request, tab: str = 'active', page: int = 1, ctx: Ctx = Depen
         .where(PersonIdentifier.kind == 'whatsapp')).all())
     chats = [{'review': r, 'name': labels.get(r.conversation_id, 'WhatsApp conversation')} for r in reviews.values()]
     last = max((r.checked_at for r in reviews.values() if r.checked_at), default=None)
-    return render(request, 'suggestions.html', ctx, cards=cards, kinds=suggestions.KINDS, tab=tab, page=page,
+    return render(request, 'suggestions.html', ctx, cards=cards, kinds=suggestions.KIND_LABELS, tab=tab, page=page,
         more=len(rows) > 5, chats=sorted(chats, key=lambda x: x['name']), pending=pending, failures=failures,
-        stale_sync=stale_sync, last_checked=last, ai_ready=ai.provider().can_generate(),
+        health=health, last_checked=last, ai_ready=ai.provider().can_generate(),
         timezone=ctx.s.get(Workspace, ws.wid).timezone)
 
 
@@ -105,12 +116,34 @@ def detail(request: Request, sid: uuid.UUID, ctx: Ctx = Depends(require_user)):
     return detail_page(request, ctx, row)
 
 
+def event_choices(ws, row, message_ids):
+    """Events the user may link: groups sharing this conversation's messages or where the
+    person takes part, upcoming ones, and the current link. Never legacy or dismissed plans."""
+    primary = ws.get(Event, row.event_id) if row.event_id else None
+    found = {c['rep'].id: c['rep'] for c in ac.event_candidates(ws, source_ids=message_ids, person_id=row.person_id,
+                                                                primary=primary)}
+    from . import events as automatic_events
+    for rep in automatic_events.cards(ws)[:10]:
+        found.setdefault(rep.id, rep)
+    return list(found.values())[:10]
+
+
 def detail_page(request, ctx, row, error=None, status=200):
     review = ctx.ws.get(SuggestionReview, row.review_id)
     snap = suggestions.snapshot(ctx.ws, review) if not review.paused else None
-    return render(request, 'suggestion.html', ctx, status=status, **view_data(ctx, row, review),
-        kinds=suggestions.KINDS, messages=snap[0]['messages'][-30:] if snap else [], error=error,
-        timezone=ctx.s.get(Workspace, ctx.ws.wid).timezone)
+    if row.producer == 'proactive' and not review.paused:
+        from . import proactive
+        messages = proactive.recent_messages(ctx.ws, row)
+    else:
+        messages = snap[0]['messages'][-30:] if snap else []
+    current, fingerprint = suggestions.draft_current(ctx.ws, row, review)
+    data = view_data(ctx, row, review)
+    evidence_ids = [m.id for m in data['evidence']] + ([row.anchor_id] if row.anchor_id else [])
+    possible = [c['rep'] for c in ac.related_candidates(ctx.ws, row, evidence_ids)] if not data['event'] else []
+    choices = event_choices(ctx.ws, row, [m['id'] for m in messages])
+    return render(request, 'suggestion.html', ctx, status=status, **data,
+        kinds=suggestions.KIND_LABELS, messages=messages, error=error, draft_is_current=current, context_fingerprint=fingerprint,
+        possible_events=possible, event_choices=choices, timezone=ctx.s.get(Workspace, ctx.ws.wid).timezone)
 
 
 @router.post('/suggestions/{sid}/state')
@@ -142,13 +175,34 @@ def generate(request: Request, sid: uuid.UUID, ctx: Ctx = Depends(require_mutati
 
 @router.post('/suggestions/{sid}/draft/save')
 def save(sid: uuid.UUID, text: str = Form(''), revision: int = Form(...), review_revision: int = Form(...),
-         ctx: Ctx = Depends(require_mutation)):
+         context: str = Form(''), ctx: Ctx = Depends(require_mutation)):
     row, review = locked_item(ctx, sid)
     if row.draft_revision != revision or review.revision != review_revision:
         raise Problem(409, 'This draft or conversation changed. Reload before saving your edit.')
-    if row.stale or review.paused or row.state not in suggestions.OPEN or not suggestions.evidence(ctx.ws, row):
+    if row.stale or review.paused or row.state not in suggestions.OPEN or not suggestions.evidence_ok(ctx.ws, row):
         raise Problem(409, 'This suggestion needs a fresh review before editing its draft.')
     if not text.strip() or len(text) > 4000:
         raise Problem(400, 'Enter a message of 1–4000 characters.')
+    # Saving means the user reviewed the draft against the context shown on the page.
+    built = suggestions.draft_context(ctx.ws, row, review)
+    if not built or built[1] != context:
+        raise Problem(409, 'The context of this suggestion changed. Reload, check it and save again.')
     row.draft, row.draft_revision, row.draft_review_revision = text.strip(), revision + 1, review.revision
+    row.draft_origin, row.draft_fingerprint = 'user', built[1]
+    return redirect(f'/suggestions/{sid}')
+
+
+@router.post('/suggestions/{sid}/event')
+def correct_event(sid: uuid.UUID, event: str = Form(...), ctx: Ctx = Depends(require_mutation)):
+    """Correct the related event among eligible ones; a user choice is never overridden."""
+    row, review = locked_item(ctx, sid)
+    if event == 'none':
+        row.event_id, row.event_link = None, 'user'
+        return redirect(f'/suggestions/{sid}')
+    snap = suggestions.snapshot(ctx.ws, review) if not review.paused else None
+    ids = [m['id'] for m in snap[0]['messages']] if snap else []
+    chosen = next((e for e in event_choices(ctx.ws, row, ids) if str(e.id) == event), None)
+    if chosen is None:
+        raise Problem(400, 'Choose one of the listed events.')
+    row.event_id, row.event_link = chosen.id, 'user'
     return redirect(f'/suggestions/{sid}')

@@ -284,8 +284,16 @@ def link_people(ws: Scoped, keep: Person, other: Person) -> None:
     ws.update(SourceParticipant, SourceParticipant.person_id == other.id, person_id=keep.id)
     ws.update(Claim, Claim.person_id == other.id, person_id=keep.id)
     ws.update(RelationshipNote, RelationshipNote.person_id == other.id, person_id=keep.id)
-    from .models import Suggestion
+    from .models import (PersonPreference, ProactiveReview, ShareableUpdatePerson, Suggestion, UpdateProposal)
     ws.update(Suggestion, Suggestion.person_id == other.id, person_id=keep.id)
+    # Assistant preferences follow the kept person; duplicates of an existing row stay with
+    # `other` and are removed with it. Proactive state is recomputed on the next scan.
+    if not ws.first(ws.q(PersonPreference).where(PersonPreference.person_id == keep.id)):
+        ws.update(PersonPreference, PersonPreference.person_id == other.id, person_id=keep.id)
+    for model in (UpdateProposal, ShareableUpdatePerson):
+        kept = ws.q(model, model.update_id).where(model.person_id == keep.id)
+        ws.update(model, model.person_id == other.id, model.update_id.not_in(kept), person_id=keep.id)
+    ws.delete(ProactiveReview, ProactiveReview.person_id == other.id)
     keep.pinned = keep.pinned or other.pinned
     ws.s.flush()
     ws.s.delete(other)

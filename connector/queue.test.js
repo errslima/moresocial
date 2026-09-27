@@ -19,3 +19,16 @@ test('packets survive a failed delivery and a restart, then drain in order',asyn
   assert.deepEqual(sent,['a','b']);assert.equal(restarted.length,0);
   fs.rmSync(dir,{recursive:true,force:true});
 });
+
+test('reports how long packets wait and whether delivery is failing',async()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'moresocial-queue-'));
+  let t=1000000,fail=true;
+  const q=createQueue(path.join(dir,'pending.json'),{post:async()=>{if(fail)throw Error('down');},now:()=>t});
+  assert.equal(q.age(),0);assert.equal(q.failing,false);
+  q.push({chat:{id:'a'},messages:[]});t+=90000;
+  await q.flush();
+  assert.equal(q.failing,true);assert.equal(q.age(),90);assert.equal(q.length,1);
+  fail=false;await q.flush();
+  assert.equal(q.failing,false);assert.equal(q.age(),0);assert.equal(q.length,0);
+  fs.rmSync(dir,{recursive:true,force:true});
+});

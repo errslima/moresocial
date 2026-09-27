@@ -569,3 +569,20 @@ def set_dismissed(ws, rep, value):
     lock(ws)
     for m in event_identity.members(ws, rep.id):
         m.dismissed = value
+    ws.s.flush()
+    event_identity.notify(ws, {rep.id})
+
+
+def group_preparation_paused(ws, rep):
+    from . import event_identity
+    return any(m.preparation_paused for m in event_identity.members(ws, rep.id))
+
+
+def set_preparation_paused(ws, rep, value):
+    """Pause/resume message preparation for the whole group, like dismissal."""
+    from . import event_identity
+    lock(ws)
+    for m in event_identity.members(ws, rep.id):
+        m.preparation_paused = value
+    ws.s.flush()
+    event_identity.notify(ws, {rep.id})

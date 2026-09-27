@@ -50,6 +50,10 @@ NOTICES = {
     'events-separated': 'Separated. Each part keeps its own messages and will not be regrouped automatically.',
     'events-undone': 'Correction undone. The detected records are separate again.',
     'events-undone-connected': 'Correction undone. Another correction still keeps these records together.',
+    'assistant-saved': 'Assistant settings saved. Existing drafts stay as they are and show when they need a review.',
+    'assistant-preparing': 'Preparation queued. Prepared drafts appear in Suggestions; nothing is sent.',
+    'update-saved': 'Update saved. It is only suggested to the people you chose.',
+    'update-revoked': 'Update withdrawn. Drafts that used it were cleared.',
 }
 
 
@@ -246,9 +250,10 @@ def create_app() -> FastAPI:
             security.emit('readiness_failed', level='error', check=failed)
         return JSONResponse({'status': 'ready' if ok else 'not_ready', 'checks': checks}, status_code=200 if ok else 503)
 
-    from . import admin, auth_routes, pages, suggestion_pages, whatsapp_pages
+    from . import admin, assistant_pages, auth_routes, pages, suggestion_pages, whatsapp_pages
     app.include_router(auth_routes.router)
     app.include_router(pages.router)
+    app.include_router(assistant_pages.router)
     app.include_router(admin.router)
     app.include_router(suggestion_pages.router)
     app.include_router(whatsapp_pages.router)

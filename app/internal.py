@@ -51,19 +51,35 @@ def create_internal_app() -> FastAPI:
     def health():
         return {'status': 'ok'}
 
+    def authenticate(request: Request):
+        with db.session() as s:
+            row = whatsapp.connector_for_key(s, bearer(request))
+            if row is None:
+                return None
+            active = s.get(Workspace, row.workspace_id)
+            if active is None or active.status != 'active':
+                return None
+            return row.workspace_id, row.account_wid
+
+    @app.post('/internal/connector/health')
+    async def health_report(request: Request):
+        # The key alone scopes the workspace; nothing in the report can name another one.
+        access = await run_in_threadpool(authenticate, request)
+        if access is None:
+            security.emit('connector_auth_failed', level='warn', route='/internal/connector/health')
+            return JSONResponse({'error': 'unauthorized'}, status_code=401)
+        try:
+            report = await body(request, 4096)
+            stored = await run_in_threadpool(whatsapp.record_health, access[0], report)
+        except ValueError as exc:
+            security.emit('connector_health_refused', level='warn', code=str(exc)[:40] if str(exc) else 'invalid',
+                          workspace_id=access[0])
+            return JSONResponse({'error': 'invalid report'}, status_code=400)
+        return {'ok': True, 'stored': stored}
+
     @app.post('/internal/connector/ingest')
     async def ingest(request: Request):
-        def authenticate():
-            with db.session() as s:
-                row = whatsapp.connector_for_key(s, bearer(request))
-                if row is None:
-                    return None
-                active = s.get(Workspace, row.workspace_id)
-                if active is None or active.status != 'active':
-                    return None
-                return row.workspace_id, row.account_wid
-
-        access = await run_in_threadpool(authenticate)
+        access = await run_in_threadpool(authenticate, request)
         if access is None:
             security.emit('connector_auth_failed', level='warn', route='/internal/connector/ingest')
             return JSONResponse({'error': 'unauthorized'}, status_code=401)

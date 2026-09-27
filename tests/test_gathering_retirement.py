@@ -74,12 +74,25 @@ def structure():
         return out
 
 
+def existing(now, reference):
+    """Later additive migrations add tables and columns; every earlier value must remain."""
+    out = {}
+    for table, rows in reference.items():
+        keys = set().union(*(json.loads(r).keys() for r in rows)) if rows else set()
+        out[table] = sorted(json.dumps({k: v for k, v in json.loads(r).items() if k in keys}, sort_keys=True)
+                            for r in now.get(table, []))
+    return out
+
+
 def test_empty_gathering_upgrade_and_structural_downgrade_preserve_active_data(predecessor, database):
     cfg, ids = predecessor
     before, old_structure = contents(), structure()
+    command.upgrade(cfg, '0012')
+    assert contents() == before
     command.upgrade(cfg, 'head')
     command.check(cfg)
-    assert contents() == before
+    assert existing(contents(), before) == before
+    command.downgrade(cfg, '0012')
     report = legacy_inventory.run(database['runtime_url'])
     assert report['groups']['G']['status'] == 'removed'
     assert report['groups']['K']['status'] == 'ineligible'
@@ -91,7 +104,7 @@ def test_empty_gathering_upgrade_and_structural_downgrade_preserve_active_data(p
     assert contents() == before
     command.upgrade(cfg, 'head')
     command.check(cfg)
-    assert contents() == before
+    assert existing(contents(), before) == before
 
 
 @pytest.mark.parametrize('kind', ['drafts', 'event_candidates', 'event_people', 'orphan_reference', 'draft_reference', 'both_references'])

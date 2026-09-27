@@ -7,8 +7,11 @@ import sys
 import pytest
 
 
-@pytest.mark.parametrize('removed,compatible,success', [('t', False, False), ('t', True, True), ('f', False, True)])
-def test_rollback_checks_schema_before_changing_release(tmp_path, removed, compatible, success):
+@pytest.mark.parametrize('removed,compatible,success,assistant,assistant_image', [
+    ('t', False, False, 'f', True), ('t', True, True, 'f', True), ('f', False, True, 'f', True),
+    # Schema 0014 present: an image without the assistant migration is refused.
+    ('t', True, False, 't', False), ('t', True, True, 't', True)])
+def test_rollback_checks_schema_before_changing_release(tmp_path, removed, compatible, success, assistant, assistant_image):
     root = tmp_path / 'moresocial'
     old = root / 'releases' / 'aaaaaaa' / 'src'
     target = root / 'releases' / 'bbbbbbb' / 'src'
@@ -23,8 +26,8 @@ def test_rollback_checks_schema_before_changing_release(tmp_path, removed, compa
     docker.write_text('''#!/bin/sh
 printf '%s\\n' "$*" >> "$ROLLBACK_CALLS"
 case "$1" in
-  exec) printf '%s\\n' "$SCHEMA_REMOVED" ;;
-  run) exit "$IMAGE_STATUS" ;;
+  exec) case "$*" in *producer*) printf '%s\\n' "$ASSISTANT_SCHEMA" ;; *) printf '%s\\n' "$SCHEMA_REMOVED" ;; esac ;;
+  run) case "$*" in *0014_assistant*) exit "$ASSISTANT_IMAGE_STATUS" ;; *) exit "$IMAGE_STATUS" ;; esac ;;
 esac
 ''')
     docker.chmod(0o755)
@@ -38,7 +41,8 @@ esac
     move.chmod(0o755)
     calls = tmp_path / 'calls'
     env = {**os.environ, 'PATH': str(bins) + ':' + os.environ['PATH'], 'MORESOCIAL_ROOT': str(root),
-           'ROLLBACK_CALLS': str(calls), 'SCHEMA_REMOVED': removed, 'IMAGE_STATUS': '0' if compatible else '1'}
+           'ROLLBACK_CALLS': str(calls), 'SCHEMA_REMOVED': removed, 'IMAGE_STATUS': '0' if compatible else '1',
+           'ASSISTANT_SCHEMA': assistant, 'ASSISTANT_IMAGE_STATUS': '0' if assistant_image else '1'}
     result = subprocess.run(['bash', str(Path(__file__).resolve().parents[1] / 'deploy/rollback.sh'), 'bbbbbbb'],
                             env=env, capture_output=True, text=True)
     if success:

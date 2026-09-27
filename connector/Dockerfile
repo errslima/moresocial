@@ -8,7 +8,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY patch-library.cjs ./
 RUN node patch-library.cjs
-COPY diagnostics.js index.js contacts.js normalize.js protocol.js history.js queue.js server.js send.js ./
+COPY diagnostics.js index.js contacts.js normalize.js protocol.js history.js queue.js server.js send.js health.js ./
 USER 1000:1000
 ENTRYPOINT ["/usr/bin/tini","--"]
 # The lock prevents two processes from opening the same WhatsApp session directory.

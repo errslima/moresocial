@@ -13,6 +13,43 @@
   <textarea id="diary-body" name="body" rows="5" maxlength="30000" required placeholder="Anything you want to remember about yourself…"></textarea>
   <button type="submit" class="primary">Add diary entry</button>
 </form>
+<section aria-labelledby="updates"><h2 id="updates">Updates I can share</h2>
+<p class="small muted">Diary entries and observations stay private. Only short updates you write here can appear in prepared messages, and only for the people you choose. Proposing an update is not sending it.</p>
+{% for item in updates %}{% set u = item.row %}
+<article class="card" data-update="{{ u.state }}">
+  {% if u.state == 'revoked' %}<p class="muted">Withdrawn update</p>{% else %}
+  <p>{{ u.text }}</p>
+  <p class="small muted">For {{ 'people with check-ins on' if u.audience == 'eligible' else (item.people|length ~ ' selected ' ~ ('person' if item.people|length == 1 else 'people')) }}{% if u.expires_at %} · until {{ u.expires_at.astimezone(tz).strftime('%d %b %Y') }}{% if u.expires_at <= now %} (expired){% endif %}{% endif %}</p>
+  <details><summary>Edit update</summary>
+    <form method="post" action="{{ url('/me/updates/' ~ u.id) }}" class="stack">
+      {{ csrf_field() }}
+      <label for="update-{{ u.id }}">Update</label><textarea id="update-{{ u.id }}" name="text" rows="2" maxlength="300" required>{{ u.text }}</textarea>
+      <label for="audience-{{ u.id }}">Who may hear about it</label>
+      <select id="audience-{{ u.id }}" name="audience"><option value="eligible" {% if u.audience == 'eligible' %}selected{% endif %}>People with check-ins on</option><option value="selected" {% if u.audience == 'selected' %}selected{% endif %}>Only the people I select</option></select>
+      <label for="people-{{ u.id }}">Selected people</label>
+      <select id="people-{{ u.id }}" name="people" multiple size="5">{% for p in update_people %}<option value="{{ p.id }}" {% if p.id in item.people %}selected{% endif %}>{{ p.display_name }}</option>{% endfor %}</select>
+      <label for="expires-{{ u.id }}">Stop suggesting it after (optional)</label><input id="expires-{{ u.id }}" type="date" name="expires" value="{{ u.expires_at.astimezone(tz).strftime('%Y-%m-%d') if u.expires_at else '' }}">
+      <button type="submit">Save update</button>
+    </form>
+  </details>
+  <form method="post" action="{{ url('/me/updates/' ~ u.id ~ '/revoke') }}">{{ csrf_field() }}<button type="submit" class="link danger">Stop sharing</button></form>
+  {% endif %}
+</article>
+{% endfor %}
+<details class="card"><summary>Write an update I can share</summary>
+<form method="post" action="{{ url('/me/updates') }}" class="stack">
+  {{ csrf_field() }}
+  <label for="new-update">Update (up to 300 characters)</label>
+  <textarea id="new-update" name="text" rows="2" maxlength="300" required placeholder="For example: I started a new job at the library."></textarea>
+  <label for="new-audience">Who may hear about it</label>
+  <select id="new-audience" name="audience"><option value="eligible">People with check-ins on</option><option value="selected">Only the people I select</option></select>
+  <label for="new-people">Selected people</label>
+  <select id="new-people" name="people" multiple size="5">{% for p in update_people %}<option value="{{ p.id }}">{{ p.display_name }}</option>{% endfor %}</select>
+  <label for="new-expires">Stop suggesting it after (optional)</label><input id="new-expires" type="date" name="expires">
+  <button type="submit">Save update</button>
+</form>
+</details>
+</section>
 <h2>Observations about you</h2>
 <p class="small muted">From your messages and diary. Similar observations are grouped with their evidence. Interpretations stay unconfirmed until you confirm them; your corrections take priority.</p>
 {{ claim_list(observations, '/people/self') }}

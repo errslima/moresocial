@@ -20,12 +20,31 @@ def person_identifiers(ws: Scoped, person_id) -> list[str]:
 
 
 def next_steps(ws: Scoped, limit: int = 3) -> list[dict]:
-    """Up to three optional catch-up steps for pinned contacts not heard from in 30 days."""
+    """Up to three optional steps. People whose check-ins the assistant prepares are shown
+    through their prepared suggestion instead, so one person never gets two competing
+    reminders; other pinned contacts not heard from in 30 days keep the simple catch-up."""
+    from . import assistant_context as ac
+    from .models import PersonPreference, Suggestion
     now = utcnow()
     hidden = {n.step_key for n in ws.all(ws.q(NextStepState).where(
         or_(NextStepState.snoozed_until.is_(None), NextStepState.snoozed_until > now)))}
     steps = []
+    prepared = ws.all(ws.q(Suggestion).where(Suggestion.producer == 'proactive', Suggestion.kind.in_(['check_in', 'share_update']),
+                                             Suggestion.state == 'active').order_by(Suggestion.created_at.desc()).limit(3))
+    handled = {row.person_id for row in ws.all(ws.q(Suggestion).where(Suggestion.producer == 'proactive',
+                                                                     Suggestion.state.in_(['active', 'snoozed'])))}
+    for row in prepared:
+        person = ws.get(Person, row.person_id)
+        steps.append({'key': f'prepared:{row.id}', 'text': f'A check-in for {person.display_name} is ready to review',
+                      'href': f'/suggestions/{row.id}'})
+    settings = ac.settings(ws)
+    assistant_active = settings.check_ins and not settings.paused
+    prefs = {p.person_id: p for p in ws.all(ws.q(PersonPreference))}
     for person in ws.all(ws.q(Person).where(Person.pinned.is_(True)).limit(20)):
+        # The assistant covers people it can actually prepare for (a one-to-one chat exists).
+        if person.id in handled or (assistant_active and ac.check_ins_enabled(person, prefs.get(person.id))
+                                    and ac.destination(ws, person.id).ok):
+            continue
         ids = person_identifiers(ws, person.id)
         last = ws.s.scalar(select(Source.occurred_at).where(Source.workspace_id == ws.wid, Source.author.in_(ids))
                            .order_by(Source.occurred_at.desc()).limit(1)) if ids else None

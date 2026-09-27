@@ -13,6 +13,11 @@ from .web import Problem
 
 def suggestion_target(ws, row, review):
     # Use the actual evidence account, never a phone guessed from a person's name.
+    if row.producer == 'proactive':
+        # Resolved from stored messages when prepared; the database ties it to this review's chat.
+        if not row.target_account or row.target_chat != review.conversation_id:
+            return None
+        return {'account': row.target_account, 'chat': row.target_chat}
     src = ws.get(Source, row.anchor_id)
     if (not src or src.provider != 'whatsapp' or src.deleted_at or not src.included
             or src.conversation_id != review.conversation_id):

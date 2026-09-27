@@ -145,4 +145,23 @@ duplicate cards again, and their `/ready` reports a migration mismatch; prefer t
 a forward fix. Never drop the new tables or delete evidence as an emergency rollback.
 
 Limitations: resolver accuracy was evaluated on a bounded sample, not proven in general; ambiguous
-records stay separate until you decide. There is no automatic external messaging or reminder.
+records stay separate until you decide. Nothing is ever sent automatically: the assistant only
+prepares drafts (below).
+
+## Suggestions and message preparation
+
+Suggestions receive Event context through source overlap across all grouped members and link to
+the original record whose evidence they share ([Suggestions](suggestions.md#event-context)). Group
+changes (grouping, split, undo, dismissal, reschedule, source exclusion) notify Suggestions through
+`event_identity.refresh`/`notify`, which re-links deterministically and schedules a fresh review
+only when the linked projection changed.
+
+The event page has a **Message preparation** section: per confirmed participant it shows whether a
+draft is prepared (with a link), waiting for the ~24-hour checkpoint, paused, or impossible and why
+(no WhatsApp identity, no one-to-one conversation, several linked accounts). **Pause message
+preparation** applies to the whole group like dismissal (`events.preparation_paused`; any paused
+member pauses the group) and closes open prepared messages for it on the next scan; dismissal also
+suppresses preparation. **Prepare messages** requests a bounded manual batch for this event. Only
+explicit attendance counts: invited, tentative, declined and silent group members are not
+confirmed participants. Prepared drafts appear in Suggestions and are sent only by **Send message**.
+Migration `0014` adds `events.preparation_paused`.

@@ -20,12 +20,18 @@ KEY_CANARY = 'sk-ant-api03-InventoryCanaryKey-0001-wxyz'
 TEXT_CANARY = 'Inventory canary: Sam likes secret lasergame'
 
 
+def alembic_config():
+    from app import config
+    cfg = Config(str(Path(__file__).resolve().parents[1] / 'alembic.ini'))
+    cfg.attributes['database_url'] = config.get().database_url
+    return cfg
+
+
 @pytest.fixture(autouse=True)
 def legacy_schema(clean, database):
-    """Inspect historical data at 0011, even after head has retired its empty tables."""
-    cfg = Config(str(Path(__file__).resolve().parents[1] / 'alembic.ini'))
-    cfg.attributes['database_url'] = database['runtime_url']
-    command.downgrade(cfg, '0011')
+    """Inspect historical data at 0011, even after head has retired its empty tables.
+    Application data is created at head (the ORM maps later columns), then downgraded."""
+    cfg = alembic_config()
     try:
         yield
     finally:
@@ -41,7 +47,9 @@ def setup_workspace(browser):
     drain()
     r = browser.post('/ask', {'question': 'Does Sam like lasergame?', 'csrf': browser.csrf('/ask')})
     assert r.status_code == 303
-    return workspace_of('alex@example.test')
+    wid = workspace_of('alex@example.test')
+    command.downgrade(alembic_config(), '0011')
+    return wid
 
 
 def seed_legacy(wid):
@@ -83,9 +91,11 @@ def seed_legacy(wid):
 
 
 def snapshot() -> dict[str, list[str]]:
+    from sqlalchemy import inspect
     with db.engine().connect() as c:
+        present = set(inspect(c).get_table_names())
         return {t.name: c.execute(text(f'SELECT t::text FROM {t.name} t ORDER BY 1')).scalars().all()
-                for t in Base.metadata.sorted_tables}
+                for t in Base.metadata.sorted_tables if t.name in present}
 
 
 def run_cli(capsys) -> tuple[int, dict, str]:
@@ -100,7 +110,7 @@ def test_empty_candidates_are_eligible(browser, capsys):
     assert rc == 0 and report['status'] == 'ok'
     assert report['transaction'] == {'read_only': True, 'isolation': 'repeatable read'}
     schema = report['schema']
-    assert schema['revision'] == '0011' and schema['code_head'] == '0012'
+    assert schema['revision'] == '0011' and schema['code_head'] == '0014'
     assert {t: schema[t] for t in ('event_candidates', 'event_people', 'drafts')} == {
         t: {'state': 'present', 'rows': 0} for t in ('event_candidates', 'event_people', 'drafts')}
     answers = schema['answer_sources']

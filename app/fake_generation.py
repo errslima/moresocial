@@ -34,7 +34,11 @@ def respond(ctx: dict) -> dict:
     if ctx['purpose'] == 'suggestions':
         return suggestion_review(ctx)
     if ctx['purpose'] == 'suggestion_draft':
-        return {'text': f"Hi {ctx['person']}, [your answer here]."}
+        return {'text': draft_text(ctx, "[your answer here].")}
+    if ctx['purpose'] == 'assistant_preview':
+        return {'text': draft_text(ctx, 'thanks for the invitation! [your answer here].')}
+    if ctx['purpose'] == 'proactive':
+        return proactive(ctx)
     return {'extract': extract, 'answer': answer, 'group_observations': group_observations}[ctx['purpose']](ctx)
 
 
@@ -57,11 +61,73 @@ def event_identity(ctx):
             'conflicting': [], 'explanation': 'The evidence does not settle it.'}
 
 
+def styled(ctx, greeting_name, body):
+    """Persona-dependent wording: enough to show that style settings reach the model input."""
+    style = (ctx.get('persona') or {}).get('style') or {}
+    greet = {'reserved': 'Hello', 'warm': 'Hey'}.get(style.get('warmth'), 'Hi')
+    text = f'{greet} {greeting_name}, {body}'
+    if style.get('directness') == 'direct':
+        text = text.replace('Would you like to', 'Let us').replace('Shall we', 'Let us')
+    if style.get('emoji') == 'often':
+        text += ' 😊'
+    return text
+
+
+def linked_event(ctx):
+    label = (ctx.get('action') or ctx.get('candidate') or {}).get('event')
+    return next((e for e in ctx.get('events', []) if e['label'] == label), None)
+
+
+def draft_text(ctx, fallback):
+    name = ctx.get('person') or 'there'
+    ev = linked_event(ctx)
+    if ev and ev.get('place') and ev['status'] == 'planned' and not ev.get('needs_checking'):
+        when = ev['weekday'] + (f" at {ev['booked_start']}" if ev.get('booked_start') else '')
+        return styled(ctx, name, f"see you at {ev['place']} on {when}! {fallback}")
+    return styled(ctx, name, fallback)
+
+
+def proactive(ctx):
+    """Synthetic preparation: a message for the supplied candidate using only supplied facts."""
+    c = ctx['candidate']
+    name = ctx['person']
+    ev = linked_event(ctx)
+    update = next(iter(ctx.get('updates') or []), None)
+    if c['kind'] == 'event_question':
+        title, body = f'Check a detail with {name}', f"is the time for {ev['title']} still [time]?" if ev else '[question]'
+    elif ev:
+        place = f" at {ev['place']}" if ev.get('place') else ''
+        start = f" {ev['booked_start']}" if ev.get('booked_start') else ''
+        title = f"Remind {name} about {ev['title']}"
+        body = f"looking forward to {ev['title']}{place} on {ev['weekday']}{start}!"
+    elif c['kind'] == 'share_update' and update:
+        title, body = f'Share your news with {name}', f"a quick update: {update['text']}"
+    else:
+        title, body = f'Check in with {name}', 'how are you doing? It has been a while.'
+        if update:
+            body += f" News from me: {update['text']}"
+    evidence = [m['label'] for m in ctx.get('messages', [])[-1:]]
+    return {'action': 'prepare', 'title': title[:200], 'reason': 'Prepared from your own schedule and preferences.',
+            'draft': styled(ctx, name, body), 'evidence': evidence, 'event': ev['label'] if ev else None,
+            'update': update['label'] if update and c['kind'] in ('check_in', 'share_update') else None, 'skip_reason': None}
+
+
+def event_reply(ctx, m):
+    """The Aloha fixture: a question about meeting at an event. Uses the one event that shares
+    messages with this chat; participation alone is not enough."""
+    related = [e for e in ctx.get('events', []) if e['relation'] == 'shares messages with this conversation']
+    if len(related) != 1:
+        return f"Reply to {ctx['person']} about Sunday", None
+    ev = related[0]
+    where = f" at {ev['place'].split()[0]}" if ev.get('place') else ' there'
+    return f"Meet {ctx['person']}{where} on {ev['weekday']}", ev['label']
+
+
 def suggestion_review(ctx):
     """Intentionally narrow synthetic fixtures, not a production heuristic."""
     items, resolved = [], []
     for m in ctx['messages']:
-        kind = ('reply' if not m['from_me'] and m['text'].startswith('Can you join dinner') else
+        kind = ('reply' if not m['from_me'] and m['text'].startswith(('Can you join dinner', 'Are we meeting')) else
                 'promise' if m['from_me'] and m['text'].startswith("I'll send you the photos") else None)
         if not kind:
             continue
@@ -72,9 +138,12 @@ def suggestion_review(ctx):
             if old and old['state'] in ('active', 'snoozed'):
                 resolved.append({'id': old['id'], 'evidence': [later[0]['label']]})
             continue
-        items.append({'id': old['id'] if old else None, 'kind': kind, 'anchor': m['label'],
-            'title': 'Reply about dinner' if kind == 'reply' else 'Send the photos',
-            'reason': "I couldn't find this handled in the synced messages.", 'evidence': [m['label']], 'due_at': None})
+        title, event = ('Reply about dinner' if kind == 'reply' else 'Send the photos'), None
+        if m['text'].startswith('Are we meeting'):
+            title, event = event_reply(ctx, m)
+        items.append({'id': old['id'] if old else None, 'kind': kind, 'anchor': m['label'], 'title': title,
+            'reason': "I couldn't find this handled in the synced messages.", 'evidence': [m['label']], 'due_at': None,
+            'event': event})
     return {'items': items[:8], 'resolved': resolved[:30]}
 
 

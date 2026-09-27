@@ -41,6 +41,12 @@ validation or deployment.
   `0007`) preceded the Suggestions release below; its verification notes are in the
   archived [diary notes](archive/development/diary-observations.md).
 
+- **Implemented locally, not deployed (2026-09-27):** the social assistant per
+  [its execution plan](social-assistant-execution-plan.md): heartbeat-based WhatsApp
+  health (`0013`), event-aware suggestions, persona, preferences, shareable updates and
+  proactive event/check-in/update drafts (`0014`), on branch `whatsapp-sidebar`.
+  Production still runs `79304e9`, schema `0012`, at the time of writing.
+
 ## Pending live checks and operator actions
 
 Consolidated on 2026-09-27 from the dated entries below and the archived plans.
@@ -55,6 +61,8 @@ Consolidated on 2026-09-27 from the dated entries below and the archived plans.
 | Retired variables in production `runtime.env` (`USER_AI_KEYS`, `ANTHROPIC_MODEL` and `OPENAI_MODEL` were added on 2026-09-25) | optional: ignored by the application; no record of removal | operator |
 | Log volume re-measurement after the first busy week, before extending the 14-day retention | **pending**, from the diagnostics release | operator |
 | Split/undo of a real event group | not exercised live by design; covered by synthetic tests | none |
+| Social assistant release (`0013`/`0014`, new connector image) | **pending**: not deployed; follow the [runbook](operator-setup.md#social-assistant-release-migrations-00130014) | operator |
+| Quality of event-aware titles and prepared drafts with the live model | **pending**: only synthetic contracts verified; read prepared drafts, never send test messages to real people | owner |
 | Read-only legacy schema inventory on production (`python -m app.legacy_inventory`, [cleanup plan 3](cleanup/03-historical-schema.md)) | **pending**: needed before any retired-table or key-column removal; only local synthetic inventories exist | operator |
 
 Resolved according to later entries: WhatsApp QR pairing, history sync and session
@@ -63,6 +71,31 @@ and restarts keeping the session); the real-key OpenRouter **Test and save** (ge
 and embeddings in use by the 2026-09-26 Suggestions and Events releases); Docker builds,
 the Compose stack and the provisioner with a paired connector. Obsolete: live checks for
 personal AI keys and for Anthropic/Voyage keys, whose features were retired.
+
+## Social assistant — 2026-09-27 (implemented locally, not deployed)
+
+Implemented milestones M0–M6 of [the execution plan](social-assistant-execution-plan.md);
+its implementation log has the details and deviations. Summary:
+
+- WhatsApp health: connector heartbeat every 60 s to `POST /internal/connector/health`,
+  receipt-time freshness, one classifier for Suggestions and Connections (migration `0013`).
+  The 42-minute-old row with a fresh ready report no longer warns.
+- Event-aware suggestions through `app/assistant_context.py` (source overlap across grouped
+  members; deterministic links to original records; corrections; distinct booked and
+  meeting times; bounded evidence; other guests' messages never supplied).
+- Assistant page (persona, initiative, switches, pause, preview), check-in preferences on
+  People, event preparation pause/**Prepare messages**, **Updates I can share** on About me.
+- Proactive drafts (`app/proactive.py`): event reminders/questions ~24 h before start for
+  confirmed participants, check-ins for chosen contacts, updates for their audience; five
+  new drafts per day by default; one open per recipient; fingerprinted, race-checked
+  publication; operator switch `python -m app.proactive mode off`. Migration `0014`.
+- **No unattended sending**: no auto-send code path, setting, queue or permission. Tests
+  spy on the connector `/send` call, the synthetic send and the send service across
+  scheduled and manual preparation, retries, drafting, preview, copy and composer prefill.
+
+Verification (local, synthetic providers only): see the final entry of the plan's log for
+the full `bash scripts/test.sh` result. Real-language quality is **not evaluated**; no model
+call was made against production data and no message was sent. Nothing was deployed.
 
 ## Event identity — 2026-09-27
 

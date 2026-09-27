@@ -13,6 +13,7 @@ import {LIMITS,selectChats,boundMessages} from './history.js';
 import {createQueue} from './queue.js';
 import {createHandler,listen} from './server.js';
 import {createSender} from './send.js';
+import {createHeartbeat} from './health.js';
 const {Client,LocalAuth}=wweb;
 
 const SESSION=process.env.SESSION_DIR||'/session';
@@ -20,7 +21,8 @@ const WEB=process.env.WEB_INTERNAL_URL||'http://web:8001';
 const key=fs.readFileSync(process.env.CONNECTOR_KEY_FILE||'/run/secrets/connector_key','utf8').trim();
 let client=null, desired=true, starting=false, syncing=false;
 let selfChat=null;
-let status={state:'starting',qr:null,last_sync:null,chats_synced:0,error:null};
+let status={state:'starting',qr:null,last_sync:null,chats_synced:0,error:null,error_code:null,
+  sweep:{last_at:null,outcome:null,failed_chats:0,last_complete_at:null}};
 const historyPath=SESSION+'/history.json';
 let history=fs.existsSync(historyPath)?JSON.parse(fs.readFileSync(historyPath,'utf8')):{};
 const persistHistory=()=>{fs.writeFileSync(historyPath+'.tmp',JSON.stringify(history),{mode:0o600});fs.renameSync(historyPath+'.tmp',historyPath);};
@@ -31,7 +33,7 @@ async function post(packet){
   if(!r.ok){record('ingest_refused',{status:r.status});throw Error('ingest HTTP '+r.status);}
 }
 const queue=createQueue(SESSION+'/pending.json',{post,onError:e=>{record('ingest_failed',{},e);
-  status.error='Message storage unavailable; pending messages will retry';}});
+  status.error='Message storage unavailable; pending messages will retry';status.error_code='ingest_unavailable';}});
 
 const contactResolver=createContactResolver({lookup:async id=>{
   if(!client||status.state!=='ready')return null;
@@ -110,15 +112,21 @@ async function sync(){
     }
     persistHistory();
     status.history_done=chats.filter(c=>history[c.id]?.done).length;
-    status.last_sync=new Date().toISOString();
+    // last_sync keeps its old meaning (sweep finished, possibly partially); sweep.* says how it went.
+    const at=new Date().toISOString();
+    status.last_sync=at;
+    status.sweep={last_at:at,outcome:errors?'partial':'ok',failed_chats:errors,
+      last_complete_at:errors?status.sweep.last_complete_at:at};
     status.error=errors?`${errors} chats could not be synced; will retry`:queue.length?'Messages pending storage':null;
-  }catch(e){record('history_sync_failed',{},e);status.error='History sync failed; will retry';}
+    status.error_code=errors?'sync_partial':null;
+  }catch(e){record('history_sync_failed',{},e);status.error='History sync failed; will retry';status.error_code='sync_failed';
+    status.sweep={...status.sweep,last_at:new Date().toISOString(),outcome:'failed'};}
   finally{syncing=false;record('history_sync_completed',{count:status.chats_synced,outcome:errors?'partial':'ok'});}
 }
 
 async function connect(){
   if(starting||client)return;
-  desired=true;starting=true;status.state='starting';status.error=null;
+  desired=true;starting=true;status.state='starting';status.error=null;status.error_code=null;
   // After a container restart Chromium's Singleton* symlinks point at a dead container.
   for(const name of ['SingletonLock','SingletonCookie','SingletonSocket']){
     const p=SESSION+'/auth/session/'+name;
@@ -135,7 +143,7 @@ async function connect(){
       const me=window.require('WAWebUserPrefsMeUser');
       return me.getMaybeMeLidUser?.()?._serialized||me.getMaybeMePnUser?.()?._serialized||null;
     }).catch(()=>null);
-    status.state='ready';status.qr=null;status.error=null;void withOperation(sync);
+    status.state='ready';status.qr=null;status.error=null;status.error_code=null;void withOperation(sync);
   });
   instance.on('auth_failure',()=>{record('whatsapp_auth_failed');status.state='auth_failure';status.qr=null;});
   instance.on('disconnected',()=>{record('whatsapp_disconnected');status.state='disconnected';status.qr=null;});
@@ -144,6 +152,7 @@ async function connect(){
   instance.on('message_edit',m=>void withOperation(()=>event(m)));
   try{await instance.initialize();}
   catch(e){record('browser_connection_failed',{},e);status.state='error';status.error='Browser connection failed';
+    status.error_code='browser_failed';
     try{await instance.destroy();}catch{}client=null;}
   finally{starting=false;}
 }
@@ -169,6 +178,16 @@ listen(createHandler({key,
   connect:async()=>{desired=true;if(client){try{await client.destroy();}catch{}client=null;}await connect();},
   sync,disconnect,send}));
 setInterval(()=>void withOperation(()=>queue.flush()),10000);
+// Health reports use their own request, so a slow or failing web app never blocks ingestion.
+const heartbeat=createHeartbeat({record,
+  snapshot:()=>desired?{...status,syncing,pending:queue.length,pending_age_s:queue.age(),ingest_failing:queue.failing}:null,
+  post:async report=>{
+    const r=await fetch(WEB+'/internal/connector/health',{method:'POST',headers:{'Content-Type':'application/json',
+      Authorization:'Bearer '+key,'X-Request-ID':current()},body:JSON.stringify(report),signal:AbortSignal.timeout(10000)});
+    if(!r.ok)throw Error('health HTTP '+r.status);
+  }});
+heartbeat.start();
+setInterval(()=>heartbeat.changed(desired?status.state:'stopped'),1000);
 setInterval(()=>void withOperation(sync),15*60*1000);
 setInterval(()=>{if(desired&&!starting&&['disconnected','error'].includes(status.state)){client=null;void connect();}},60000);
 void connect();

@@ -16,7 +16,7 @@ import uuid
 
 from sqlalchemy import and_, exists, func, select, text
 
-from app import accounts, ai, config, db, diagnostics, google_sync, jobs, memory, observation_groups, operator_settings, security, suggestions, events, event_resolver
+from app import accounts, ai, config, db, diagnostics, google_sync, jobs, memory, observation_groups, operator_settings, proactive, security, suggestions, events, event_resolver
 from app.google import GoogleError
 from app.models import Chunk, Claim, Connection, Embedding, Job, SyncStream, Workspace, PIPELINE_VERSION
 
@@ -63,6 +63,10 @@ def handle(job: Job):
         return event_resolver.run(wid, beat, p)
     elif job.kind == 'review_suggestions':
         return suggestions.review_conversation(wid, uuid.UUID(p['review_id']), beat)
+    elif job.kind == 'proactive_scan':
+        return proactive.scan(wid, p, beat)
+    elif job.kind == 'prepare_message':
+        return proactive.prepare(wid, uuid.UUID(p['state_id']), beat)
     else:
         raise ValueError('unknown job kind')
 
@@ -189,6 +193,7 @@ def schedule() -> int:
             n += jobs.enqueue(s, stream.workspace_id, 'sync_' + stream.stream, key, {'stream_id': str(stream.id)},
                               max_attempts=3)
         n += suggestions.schedule(s)
+        n += proactive.schedule(s)
     return n
 
 

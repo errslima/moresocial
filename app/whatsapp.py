@@ -15,7 +15,7 @@ import uuid
 import httpx
 from sqlalchemy import func, select
 
-from . import config, db, diagnostics, security
+from . import config, db, diagnostics, security, whatsapp_health
 from .ingest import IngestResult, Participant, SourceRecord, register_contacts, schedule_rebuilds, self_identifiers, upsert
 from .models import WhatsAppConnector, Account
 from .repo import Scoped
@@ -150,6 +150,24 @@ def status(ws: Scoped) -> dict:
     return {'state': state, 'qr': qr, 'detail': row.detail, 'history': history}
 
 
+def record_health(workspace_id: uuid.UUID, report: dict) -> bool:
+    """Store one authenticated heartbeat, stamped with server receipt time. Raises ValueError
+    for a malformed report. It may update the observed connection state (as the Connections
+    probe does) but never the linked account, error detail, ingested data or any jobs."""
+    clean = whatsapp_health.validate(report)
+    with db.session() as s:
+        row = s.scalars(select(WhatsAppConnector).where(WhatsAppConnector.workspace_id == workspace_id)
+                        .with_for_update()).first()
+        if row is None or row.desired != 'running':
+            return False
+        if row.observed != clean['state']:
+            security.emit('connector_state_changed', level='warn' if clean['state'] in ('error', 'auth_failure') else 'info',
+                          workspace_id=row.workspace_id, state=clean['state'], previous_state=row.observed)
+            row.observed = clean['state']
+        row.health, row.health_checked_at = clean, utcnow()
+    return True
+
+
 def connector_for_key(s, raw_key: str | None) -> WhatsAppConnector | None:
     if not raw_key or len(raw_key) > 200:
         return None
@@ -246,8 +264,27 @@ class _FakeConnector:
                     upsert(ws, rec, self_ids, result)
                 schedule_rebuilds(ws, result)
         n = len(synthetic_data.whatsapp(user))
+        now = utcnow().isoformat()
+        # Synthetic stand-in for the real connector's periodic heartbeat.
+        row = ws.first(ws.q(WhatsAppConnector))
+        row.health, row.health_checked_at = whatsapp_health.validate(fake_health('ready', n, now)), utcnow()
         return {'state': 'ready', 'account': me, 'chats_total': n, 'history_chats': n, 'history_done': n, 'chats_synced': n,
-                'last_sync': utcnow().isoformat()}
+                'last_sync': now}
 
 
 FAKE_CONNECTOR = _FakeConnector()
+
+
+def fake_health(state: str = 'ready', chats: int = 3, at: str | None = None, **overrides) -> dict:
+    """A heartbeat shaped like connector/health.js reports (synthetic connector and tests)."""
+    at = at or utcnow().isoformat()
+    report = {'version': 1, 'state': state, 'pending': 0, 'pending_age_s': 0, 'ingest_failing': False, 'syncing': False,
+              'sweep': {'last_at': at, 'outcome': 'ok', 'failed_chats': 0, 'last_complete_at': at},
+              'history': {'chats_total': chats, 'history_chats': chats, 'history_done': chats, 'chats_synced': chats},
+              'error_code': None}
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(report.get(key), dict):
+            report[key] = {**report[key], **value}
+        else:
+            report[key] = value
+    return report

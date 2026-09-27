@@ -14,7 +14,7 @@ from sqlalchemy import func, or_, select
 from . import (accounts, ai, config, diagnostics, events as automatic_events, ingest, memory, next_steps, retrieval,
                security, whatsapp)
 from .models import (Answer, AnswerSource, Claim, Connection, Event, Exclusion, Job, Person, PersonIdentifier,
-                     RelationshipNote, Source, SourceParticipant, SyncStream, WhatsAppConnector)
+                     RelationshipNote, Source, SourceParticipant, SyncStream, WhatsAppConnector, Workspace)
 from .web import SESSION_COOKIE, Ctx, Problem, optional_user, redirect, render, require_mutation, require_user
 
 router = APIRouter()
@@ -115,8 +115,12 @@ def person(request: Request, pid: str, ctx: Ctx = Depends(require_user)):
         SourceParticipant.workspace_id == ws.wid, SourceParticipant.person_id == p.id)), Source.deleted_at.is_(None))
         .order_by(Source.occurred_at.desc()).limit(50))
     others = ws.all(ws.q(Person).where(Person.id != p.id).order_by(Person.display_name).limit(500))
+    from . import assistant_context
+    pref = assistant_context.preference(ws, p.id)
     return render(request, 'person.html', ctx, person=p, identifiers=identifiers, claims=claim_view(ws, claims), notes=notes,
-                  timeline=timeline, others=others)
+                  timeline=timeline, others=others, pref=pref,
+                  check_ins_on=assistant_context.check_ins_enabled(p, pref),
+                  destination=assistant_context.destination(ws, p.id))
 
 
 @router.post('/people/{pid}/claims/{cid}')
@@ -332,7 +336,10 @@ def gathering(request: Request, eid: str, ctx: Ctx = Depends(require_user)):
                 names[x] = other
     choices = [c for c in automatic_events.cards(ctx.ws) + automatic_events.cards(ctx.ws, 'past')
                + automatic_events.cards(ctx.ws, 'dismissed') if c.id != e.id and c.origin != 'legacy'][:100]
-    return render(request, 'event.html', ctx, event=e, evidence=evidence, people=people_,
+    from . import proactive
+    prep = {'paused': automatic_events.group_preparation_paused(ctx.ws, e),
+            'status': proactive.event_status(ctx.ws, e) if e.origin != 'legacy' else []}
+    return render(request, 'event.html', ctx, event=e, evidence=evidence, people=people_, prep=prep,
                   tz=ZoneInfo(e.timezone), roles=automatic_events.ROLES, statuses=automatic_events.LABELS, source_names=source_names,
                   records=records, history=event_identity.history(ctx.ws, e.id), history_events=names,
                   state=event_identity.state_token(ctx.ws, e.id), dismissed=automatic_events.group_dismissed(ctx.ws, e),
@@ -461,8 +468,16 @@ def me(request: Request, page: int = 1, saved: str = '', ctx: Ctx = Depends(requ
     page = max(1, page)
     observations = ws.all(ws.q(Claim).where(Claim.subject == 'self').order_by(Claim.status, Claim.created_at.desc()))
     entries = diary.entries(ws, (page - 1) * 20, 21)
+    from . import assistant
+    from .models import ShareableUpdate
+    from zoneinfo import ZoneInfo
+    updates = [{'row': u, 'people': assistant.audience_ids(ws, u)} for u in
+               ws.all(ws.q(ShareableUpdate).order_by(ShareableUpdate.state, ShareableUpdate.created_at.desc()).limit(20))]
+    choices = ws.all(ws.q(Person).order_by(Person.pinned.desc(), Person.display_name).limit(200))
     return render(request, 'me.html', ctx, observations=claim_view(ws, observations), entries=entries[:20],
-                  more=len(entries) > 20, page=page, entry_token=str(uuid.uuid4()), saved=saved == 'yes')
+                  more=len(entries) > 20, page=page, entry_token=str(uuid.uuid4()), saved=saved == 'yes',
+                  updates=updates, update_people=choices, now=utcnow(),
+                  tz=ZoneInfo(ctx.s.get(Workspace, ws.wid).timezone))
 
 
 @router.post('/me')
@@ -526,7 +541,10 @@ def connections_page(request: Request, ctx: Ctx, status: int = 200):
                  'generation_model': operator.generation_model,
                  'embedding_model': operator.embedding_model,
                  'shared': True}
+    from . import whatsapp_health
+    tz = ctx.s.get(Workspace, ws.wid).timezone
     return render(request, 'connections.html', ctx, status=status, conn=conn, streams=streams, counts=counts, wa=wa,
+                  wa_health=whatsapp_health.classify(wa) if wa and wa.desired == 'running' else None, timezone=tz,
                   exclusions=exclusions, scopes={'gmail': config.GMAIL_SCOPE, 'calendar': config.CALENDAR_SCOPE},
                   pending=sum(r[2] for r in ai_jobs), usage=ai.usage_state(ws.wid), limits=settings,
                   ai_configured=assistant['tier'] != 'none', assistant=assistant)

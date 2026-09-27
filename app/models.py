@@ -146,6 +146,10 @@ class WhatsAppConnector(Base):
     detail: Mapped[str | None] = mapped_column(String(300))
     requested_at: Mapped[datetime] = now_col()
     updated_at: Mapped[datetime] = now_col(onupdate=func.now())
+    # Last authenticated connector heartbeat, stamped with server receipt time (NULL: never
+    # reported, e.g. a connector image from before heartbeats). See app/whatsapp_health.py.
+    health_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    health: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
 
 
 class ConnectorCleanup(Base):
@@ -216,7 +220,9 @@ class Source(Base):
 class SuggestionReview(Base):
     __tablename__ = 'suggestion_reviews'
     __table_args__ = (UniqueConstraint('workspace_id', 'id'),
-                     UniqueConstraint('workspace_id', 'conversation_id'))
+                     UniqueConstraint('workspace_id', 'conversation_id'),
+                     # Lets proactive suggestions prove their target is this review's conversation.
+                     UniqueConstraint('workspace_id', 'id', 'conversation_id', name='uq_suggestion_reviews_target'))
     id: Mapped[uuid.UUID] = pk()
     workspace_id: Mapped[uuid.UUID] = ws_fk()
     conversation_id: Mapped[str] = mapped_column(String(400), nullable=False)
@@ -226,18 +232,52 @@ class SuggestionReview(Base):
     next_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+LEGACY_KINDS_SQL = "('reply', 'promise', 'follow_up')"
+
+
 class Suggestion(Base):
+    """One action in the Suggestions inbox. `conversation` rows come from chat reviews and are
+    anchored to a message; `proactive` rows are prepared by the assistant from policy (event
+    checkpoint, contact rhythm, a shareable update) for an exact one-to-one target. Nothing
+    here can send: only the WhatsApp composer's explicit Send message does."""
     __tablename__ = 'suggestions'
     __table_args__ = (UniqueConstraint('workspace_id', 'id'),
                      UniqueConstraint('workspace_id', 'review_id', 'anchor_id', 'kind'),
+                     UniqueConstraint('workspace_id', 'action_key', name='uq_suggestions_action_key'),
                      owned('suggestion_reviews', 'review_id', ondelete='CASCADE'),
                      owned('sources', 'anchor_id', ondelete='CASCADE'),
-                     owned('people', 'person_id', ondelete='CASCADE'))
+                     owned('people', 'person_id', ondelete='CASCADE'),
+                     owned('events', 'event_id', ondelete='CASCADE', name='fk_suggestions_event'),
+                     owned('shareable_updates', 'update_id', ondelete='CASCADE', name='fk_suggestions_update'),
+                     ForeignKeyConstraint(['workspace_id', 'review_id', 'target_chat'],
+                                          ['suggestion_reviews.workspace_id', 'suggestion_reviews.id',
+                                           'suggestion_reviews.conversation_id'], name='fk_suggestions_target_review'),
+                     CheckConstraint("producer IN ('conversation', 'proactive')", name='ck_suggestions_producer'),
+                     CheckConstraint(f"(producer = 'conversation') = (kind IN {LEGACY_KINDS_SQL})", name='ck_suggestions_producer_kind'),
+                     CheckConstraint(f"kind NOT IN {LEGACY_KINDS_SQL} OR anchor_id IS NOT NULL", name='ck_suggestions_legacy_anchor'),
+                     CheckConstraint("producer = 'conversation' OR (target_account IS NOT NULL AND target_chat IS NOT NULL)",
+                                     name='ck_suggestions_proactive_target'),
+                     CheckConstraint("event_link IS NULL OR event_link IN ('auto', 'user')", name='ck_suggestions_event_link'),
+                     CheckConstraint("event_link IS DISTINCT FROM 'auto' OR event_id IS NOT NULL", name='ck_suggestions_auto_event'),
+                     CheckConstraint("draft_origin IS NULL OR draft_origin IN ('generated', 'user')", name='ck_suggestions_draft_origin'))
     id: Mapped[uuid.UUID] = pk()
     workspace_id: Mapped[uuid.UUID] = ws_fk()
     review_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    anchor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    anchor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     person_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    producer: Mapped[str] = mapped_column(String(20), default='conversation', server_default='conversation', nullable=False)
+    # Server-created identity: legacy (review, anchor, kind); proactive recipient + purpose + event/cycle/update.
+    action_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Primary ORIGINAL event identity (not a representative, which a split can change).
+    event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    event_link: Mapped[str | None] = mapped_column(String(10))  # auto | user (user with NULL event = "not related")
+    target_account: Mapped[str | None] = mapped_column(String(255))
+    target_chat: Mapped[str | None] = mapped_column(String(400))
+    update_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    rationale: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
+    input_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    draft_origin: Mapped[str | None] = mapped_column(String(10))  # generated | user
+    draft_fingerprint: Mapped[str | None] = mapped_column(String(64))
     kind: Mapped[str] = mapped_column(String(20), nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
@@ -436,6 +476,8 @@ class Event(Base):
     locked_fields: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     # Materialized group membership (see app/event_identity.py): NULL = represents its group.
     canonical_event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # The user paused message preparation; like dismissal, any paused member pauses its group.
+    preparation_paused: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text('false'), nullable=False)
 
 
 class EventScan(Base):
@@ -628,4 +670,128 @@ class WhatsAppSend(Base):
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     state: Mapped[str] = mapped_column(String(20), nullable=False)
     message_id: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = now_col()
+
+
+class AssistantSettings(Base):
+    """The workspace's one editable assistant persona. User-authored instructions shape wording
+    and initiative only; they cannot change facts, boundaries, privacy or the explicit-send rule."""
+    __tablename__ = 'assistant_settings'
+    __table_args__ = (
+        CheckConstraint("warmth IN ('reserved', 'friendly', 'warm')", name='ck_assistant_warmth'),
+        CheckConstraint("directness IN ('gentle', 'balanced', 'direct')", name='ck_assistant_directness'),
+        CheckConstraint("humour IN ('none', 'light', 'playful')", name='ck_assistant_humour'),
+        CheckConstraint("brevity IN ('brief', 'short', 'detailed')", name='ck_assistant_brevity'),
+        CheckConstraint("emoji IN ('none', 'sparing', 'often')", name='ck_assistant_emoji'),
+        CheckConstraint("initiative IN ('low', 'balanced', 'high')", name='ck_assistant_initiative'),
+        CheckConstraint('char_length(instructions) <= 4000', name='ck_assistant_instructions'),
+        CheckConstraint('char_length(examples_preferred) + char_length(examples_avoid) <= 2000', name='ck_assistant_examples'))
+    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('workspaces.id', ondelete='CASCADE'),
+                                                    primary_key=True)
+    instructions: Mapped[str] = mapped_column(Text, default='', server_default='', nullable=False)
+    warmth: Mapped[str] = mapped_column(String(12), default='friendly', server_default='friendly', nullable=False)
+    directness: Mapped[str] = mapped_column(String(12), default='balanced', server_default='balanced', nullable=False)
+    humour: Mapped[str] = mapped_column(String(12), default='light', server_default='light', nullable=False)
+    brevity: Mapped[str] = mapped_column(String(12), default='short', server_default='short', nullable=False)
+    emoji: Mapped[str] = mapped_column(String(12), default='sparing', server_default='sparing', nullable=False)
+    language: Mapped[str] = mapped_column(String(40), default='', server_default='', nullable=False)  # '' = match conversation
+    examples_preferred: Mapped[str] = mapped_column(Text, default='', server_default='', nullable=False)
+    examples_avoid: Mapped[str] = mapped_column(Text, default='', server_default='', nullable=False)
+    initiative: Mapped[str] = mapped_column(String(10), default='balanced', server_default='balanced', nullable=False)
+    event_preparation: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text('true'), nullable=False)
+    check_ins: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text('true'), nullable=False)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text('false'), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default='1', nullable=False)
+    updated_at: Mapped[datetime] = now_col(onupdate=func.now())
+
+
+class PersonPreference(Base):
+    """Explicit per-contact preparation preferences. check_ins NULL = default (pinned only)."""
+    __tablename__ = 'person_preferences'
+    __table_args__ = (UniqueConstraint('workspace_id', 'id'), UniqueConstraint('workspace_id', 'person_id'),
+                      owned('people', 'person_id', ondelete='CASCADE'),
+                      CheckConstraint('interval_days BETWEEN 1 AND 365', name='ck_person_preferences_interval'),
+                      CheckConstraint('char_length(style) <= 1000', name='ck_person_preferences_style'))
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    person_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    check_ins: Mapped[bool | None] = mapped_column(Boolean)
+    interval_days: Mapped[int] = mapped_column(Integer, default=30, server_default='30', nullable=False)
+    style: Mapped[str] = mapped_column(Text, default='', server_default='', nullable=False)  # preferred style / boundaries
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default='1', nullable=False)
+    updated_at: Mapped[datetime] = now_col(onupdate=func.now())
+
+
+class ShareableUpdate(Base):
+    """A short update about the user that they explicitly chose to share, with an audience.
+    Diary entries and observations are private unless the user writes one of these."""
+    __tablename__ = 'shareable_updates'
+    __table_args__ = (UniqueConstraint('workspace_id', 'id'),
+                      CheckConstraint("audience IN ('eligible', 'selected')", name='ck_shareable_updates_audience'),
+                      CheckConstraint("state IN ('active', 'revoked')", name='ck_shareable_updates_state'),
+                      CheckConstraint("state = 'revoked' OR char_length(text) BETWEEN 1 AND 300", name='ck_shareable_updates_text'))
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    text: Mapped[str] = mapped_column(String(300), nullable=False)
+    audience: Mapped[str] = mapped_column(String(10), nullable=False)  # eligible (check-in contacts) | selected
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    state: Mapped[str] = mapped_column(String(10), default='active', server_default='active', nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default='1', nullable=False)
+    created_at: Mapped[datetime] = now_col()
+    updated_at: Mapped[datetime] = now_col(onupdate=func.now())
+
+
+class ShareableUpdatePerson(Base):
+    __tablename__ = 'shareable_update_people'
+    __table_args__ = (UniqueConstraint('workspace_id', 'update_id', 'person_id'),
+                      owned('shareable_updates', 'update_id', ondelete='CASCADE'),
+                      owned('people', 'person_id', ondelete='CASCADE'))
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    update_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    person_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+
+
+class UpdateProposal(Base):
+    """Which update was already proposed to which person, so rewording never repeats it.
+    Proposal is not delivery: `delivered_at` is set only from a confirmed send receipt."""
+    __tablename__ = 'update_proposals'
+    __table_args__ = (UniqueConstraint('workspace_id', 'update_id', 'person_id'),
+                      owned('shareable_updates', 'update_id', ondelete='CASCADE'),
+                      owned('people', 'person_id', ondelete='CASCADE'))
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    update_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    person_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    update_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = now_col()
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivery_receipt: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))  # whatsapp_sends.id
+
+
+class ProactiveReview(Base):
+    """Durable state for one proactive candidate identity (recipient + purpose + event, contact
+    cycle or update). Work runs as ordinary jobs; this row remembers what was last evaluated so
+    unchanged input never repeats a model call."""
+    __tablename__ = 'proactive_reviews'
+    __table_args__ = (UniqueConstraint('workspace_id', 'id'), UniqueConstraint('workspace_id', 'scope_key'),
+                      owned('people', 'person_id', ondelete='CASCADE'),
+                      owned('events', 'event_id', ondelete='CASCADE', name='fk_proactive_reviews_event'),
+                      owned('shareable_updates', 'update_id', ondelete='CASCADE', name='fk_proactive_reviews_update'),
+                      CheckConstraint("kind IN ('event_reminder', 'event_question', 'check_in', 'share_update')",
+                                      name='ck_proactive_reviews_kind'),
+                      Index('ix_proactive_reviews_due', 'workspace_id', 'next_check_at'))
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    scope_key: Mapped[str] = mapped_column(String(64), nullable=False)  # = the suggestion action_key it would create
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    person_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    event_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    update_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    cycle_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default='1', nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), default='', server_default='', nullable=False)
+    result: Mapped[str] = mapped_column(String(30), default='pending', server_default='pending', nullable=False)
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = now_col()

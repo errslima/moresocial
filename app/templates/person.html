@@ -36,6 +36,25 @@
   <button type="submit">Add</button>
 </form>
 </section>
+<section aria-labelledby="assistant-prefs"><h2 id="assistant-prefs">Check-ins and style</h2>
+<form method="post" action="{{ url('/people/' ~ person.id ~ '/assistant') }}" class="stack">
+  {{ csrf_field() }}
+  {% set choice = 'default' if not pref or pref.check_ins is none else ('on' if pref.check_ins else 'off') %}
+  <label for="check-ins">Prepare check-ins with {{ person.display_name }}</label>
+  <select id="check-ins" name="check_ins">
+    <option value="default" {% if choice == 'default' %}selected{% endif %}>Default ({{ 'on, because pinned' if person.pinned else 'off' }})</option>
+    <option value="on" {% if choice == 'on' %}selected{% endif %}>On</option>
+    <option value="off" {% if choice == 'off' %}selected{% endif %}>Off</option>
+  </select>
+  <label for="interval">Keep in touch about every (days)</label>
+  <input id="interval" name="interval_days" type="number" min="1" max="365" value="{{ pref.interval_days if pref else 30 }}">
+  <label for="pref-style">Preferred style and boundaries</label>
+  <textarea id="pref-style" name="style" rows="2" maxlength="1000" placeholder="For example: prefers short messages; no messages during exam weeks.">{{ pref.style if pref else '' }}</textarea>
+  {% if not destination.ok %}<p class="small warn" data-destination="{{ destination.reason }}">{{ {'no_whatsapp_identity':'No WhatsApp identity is linked to this person, so no message can be prepared.','no_conversation':'No one-to-one WhatsApp conversation with this person was found, so no message can be prepared.','ambiguous_account':'Conversations exist on more than one linked WhatsApp account, so no target is chosen.'}[destination.reason] }}</p>{% endif %}
+  <p class="small muted">Check-ins are {{ 'on' if check_ins_on else 'off' }}. Only you write these preferences; boundaries win over the assistant's initiative. Prepared messages wait in Suggestions and are sent only when you press Send message.</p>
+  <button type="submit">Save preferences</button>
+</form>
+</section>
 <section aria-labelledby="notes"><h2 id="notes">Your notes</h2>
 {% for n in notes %}<div class="note"><span class="tag">{{ n.kind.replace('_',' ') }}</span> {{ n.body }}
   <form method="post" action="{{ url('/people/' ~ person.id ~ '/notes/' ~ n.id ~ '/delete') }}" class="inline">{{ csrf_field() }}<button class="link">Delete</button></form></div>{% endfor %}

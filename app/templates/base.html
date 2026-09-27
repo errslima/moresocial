@@ -24,7 +24,7 @@
       <nav aria-label="Main">
         <ul>
           {% set here = request.url.path %}
-          {% for path, label, ic in [('/home','Home','home'),('/whatsapp','WhatsApp','whatsapp'),('/suggestions','Suggestions','suggestions'),('/people','People','people'),('/ask','Ask','ask'),('/events','Events','gatherings'),('/me','About me','me'),('/connections','Connections','connections')] + ([('/admin','Admin','admin')] if is_admin else []) %}
+          {% for path, label, ic in [('/home','Home','home'),('/whatsapp','WhatsApp','whatsapp'),('/suggestions','Suggestions','suggestions'),('/assistant','Assistant','assistant'),('/people','People','people'),('/ask','Ask','ask'),('/events','Events','gatherings'),('/me','About me','me'),('/connections','Connections','connections')] + ([('/admin','Admin','admin')] if is_admin else []) %}
           <li><a href="{{ url(path) }}" {% if here.endswith(path) or (path != '/home' and (path ~ '/') in here) %}aria-current="page"{% endif %}>{{ icon(ic) }}<span>{{ label }}</span></a></li>
           {% endfor %}
         </ul>

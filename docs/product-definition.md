@@ -30,6 +30,13 @@ manual gathering creation and invitation drafting are retired. Suggestions offer
 editable drafts for replies, promises and follow-ups, and a WhatsApp text is sent only
 when the user explicitly presses send. Gmail and Calendar remain read-only.
 
+Confirmed on 2026-09-27: *"I never want moresocial to send messages unattended. so the
+scope remains taking the initiative to prepare messages, nothing more."* The assistant
+may identify opportunities, prepare drafts in the user's editable style (before events,
+for chosen check-ins and for updates the user chose to share) and refresh its
+understanding. There is no auto-send, delayed send, bulk approval, background send or
+future auto-send milestone, and no setting or persona instruction can grant one.
+
 ## Proposed product promise
 
 Moresocial helps people turn social intentions into manageable next steps, using
@@ -72,6 +79,8 @@ message volume.
 
 - Initial interaction: conversation assistant, event workspace, or a daily action view.
 - Where texting becomes difficult: deciding whom to contact, wording, sending, or waiting for replies.
-- Reminder behavior, and any sending beyond explicit WhatsApp text messages.
+- Reminder cadence beyond the current defaults (checkpoint ~24 h before events, 30-day
+  check-ins, five prepared drafts per day). Sending beyond an explicit **Send message** is
+  ruled out, not open.
 - Future hosting scale beyond the initial shared-server deployment.
 - Initial history depth and which conversations/calendars users choose to include.

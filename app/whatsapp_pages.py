@@ -49,8 +49,8 @@ def conversation_page(request, ctx, q="", page=1, account="", chat="", before=""
         target = whatsapp_send.suggestion_target(ws, suggestion_row, review) if review else None
         if target != {'account': account, 'chat': chat}:
             raise Problem(404, 'That suggestion does not belong to this conversation.')
-        if (suggestion_row.state in suggestions.OPEN and not suggestion_row.stale and not review.paused
-                and suggestion_row.draft_review_revision == review.revision and suggestions.evidence(ws, suggestion_row)):
+        # Only a draft generated or saved against the current context is carried over.
+        if suggestions.draft_current(ws, suggestion_row, review)[0]:
             draft = suggestion_row.draft
     result = ws.get(WhatsAppSend, receipt) if receipt else None
     if receipt and (not result or result.account != account or result.chat != chat):
@@ -71,7 +71,7 @@ def conversation_page(request, ctx, q="", page=1, account="", chat="", before=""
 
 @router.post('/whatsapp/send')
 def send_message(request: Request, account: str = Form(...), chat: str = Form(...), text: str = Form(''),
-                 request_id: uuid.UUID = Form(...), ctx: Ctx = Depends(require_mutation)):
+                 request_id: uuid.UUID = Form(...), suggestion: str = Form(''), ctx: Ctx = Depends(require_mutation)):
     try:
         receipt = whatsapp_send.send(ctx.ws, account, chat, text, request_id)
     except Problem as exc:
@@ -83,4 +83,9 @@ def send_message(request: Request, account: str = Form(...), chat: str = Form(..
         return conversation_page(request, ctx, account=account, chat=chat, receipt=str(receipt.id),
                                  status=202 if receipt.state == 'unknown' else 409, compose_text=text,
                                  request_id=request_id if receipt.state == 'unknown' else None)
+    if suggestion:
+        # Only a confirmed receipt records that a shared update reached this person. It never
+        # marks the suggestion done: a sent message is not proof the task is complete.
+        from . import proactive
+        proactive.record_delivery(ctx.ws, suggestion, receipt)
     return redirect('/whatsapp', account=receipt.account, chat=receipt.chat, receipt=str(receipt.id))

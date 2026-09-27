@@ -54,6 +54,18 @@
 </li>{% endfor %}</ul></details>{% endif %}
 </section>
 {% endif %}
+{% if event.origin != 'legacy' %}
+<section aria-labelledby="prep"><h2 id="prep">Message preparation</h2>
+<p class="small muted">About a day before the event, the assistant prepares a reminder or a question about a missing detail for each confirmed participant. Drafts wait in Suggestions; nothing is sent until you press Send message.</p>
+{% if prep.paused %}<p class="warn" data-prep-state="paused">Paused for this event.</p>{% endif %}
+{% if prep.status %}<ul class="list" data-prep-status>{% for item in prep.status %}<li><a href="{{ url('/people/' ~ item.person.id) }}">{{ item.person.display_name }}</a> · <span class="small">{{ item.text }}</span>{% if item.suggestion %} · <a class="small" href="{{ url('/suggestions/' ~ item.suggestion.id) }}">Open draft</a>{% endif %}</li>{% endfor %}</ul>
+{% else %}<p class="muted small">No confirmed participants to prepare messages for.</p>{% endif %}
+<div class="row">
+  <form method="post" action="{{ url('/events/' ~ event.id ~ '/preparation') }}">{{ csrf_field() }}<button name="action" value="{{ 'resume' if prep.paused else 'pause' }}">{{ 'Resume message preparation' if prep.paused else 'Pause message preparation' }}</button></form>
+  {% if not prep.paused and not dismissed %}<form method="post" action="{{ url('/events/' ~ event.id ~ '/prepare') }}" data-busy="Queuing…">{{ csrf_field() }}<button>Prepare messages</button></form>{% endif %}
+</div>
+</section>
+{% endif %}
 <form class="event-dismiss" method="post" action="{{ url('/events/' ~ event.id ~ '/dismiss') }}">{{ csrf_field() }}
 {% if dismissed %}<button name="action" value="restore">Restore event</button>{% else %}<button name="action" value="dismiss">Dismiss event</button><span class="small muted">Future mentions will keep attaching, without returning it to Upcoming.</span>{% endif %}</form>
 {% endblock %}

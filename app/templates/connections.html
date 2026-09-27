@@ -41,11 +41,12 @@
 </section>
 
 <section aria-labelledby="w" class="card"><h2 id="w">WhatsApp</h2>
-<p class="small">Link WhatsApp Web by scanning a QR code with your phone (WhatsApp › Linked devices). This is an unofficial integration: WhatsApp may change and could restrict accounts that use linked-device automation. Moresocial only reads; it has no way to send.</p>
+<p class="small">Link WhatsApp Web by scanning a QR code with your phone (WhatsApp › Linked devices). This is an unofficial integration: WhatsApp may change and could restrict accounts that use linked-device automation. Moresocial imports your chats and sends a message only when you press Send message in a conversation.</p>
 <div id="wa" data-status-url="{{ url('/api/whatsapp/status.json') }}" data-active="{{ 'yes' if wa and wa.desired == 'running' else 'no' }}">
   <p data-wa-state role="status" aria-live="polite">{% if wa and wa.desired == 'running' %}Checking status…{% elif wa and wa.observed == 'capacity' %}{{ wa.detail }}{% else %}Not linked.{% endif %}</p>
   <img data-wa-qr alt="WhatsApp pairing QR code" width="240" height="240" hidden>
   <p data-wa-history class="small muted"></p>
+  {% if wa_health %}<p class="small{{ ' warn' if wa_health.warning else ' muted' }}" data-wa-health="{{ wa_health.code }}">{{ wa_health.message }}{% if wa_health.checked_at %} Last health report {{ wa_health.checked_at|suggestion_time(timezone) }}.{% endif %}{% if wa_health.last_sweep_at %} Last history check {{ wa_health.last_sweep_at|suggestion_time(timezone) }}{% if wa_health.last_complete_at != wa_health.last_sweep_at %}{% if wa_health.last_complete_at %}; last complete check {{ wa_health.last_complete_at|suggestion_time(timezone) }}{% else %}; no complete check yet{% endif %}{% endif %}.{% endif %} Connected does not mean all older history is available.</p>{% endif %}
 </div>
 <div class="row">
   {% if not wa or wa.desired != 'running' %}

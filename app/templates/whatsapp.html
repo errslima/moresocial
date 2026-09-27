@@ -101,6 +101,7 @@
         <input type="hidden" name="account" value="{{ selected.account }}">
         <input type="hidden" name="chat" value="{{ selected.chat }}">
         <input type="hidden" name="request_id" value="{{ request_id }}">
+        {% if suggestion_row %}<input type="hidden" name="suggestion" value="{{ suggestion_row.id }}">{% endif %}
         <label for="wa-message">Message {{ selected.name }}</label>
         <textarea id="wa-message" name="text" rows="2" maxlength="4000" required placeholder="Write a message…">{{ compose_text }}</textarea>
         <div class="row"><button class="primary" type="submit" {% if receipt and receipt.state == 'unknown' %}disabled{% endif %}>Send message</button>{% if receipt and receipt.state == 'unknown' %}<a href="{{ wa_url(account=selected.account, chat=selected.chat) }}">Check latest messages</a>{% else %}<span class="small muted">Sends from your linked WhatsApp account.</span>{% endif %}</div>

@@ -232,6 +232,44 @@ $R withdraw-automatic --email you@example.com [--events A,B] [--apply]   # rollb
 Release with mode `observe`; review the Possible duplicates and `report` counts on a bounded sample
 before `mode --value apply`. Mode `off` stops new automatic decisions but keeps existing groups.
 
+## Social assistant release (migrations 0013–0014)
+
+Not yet deployed as of 2026-09-27. Order and compatibility:
+
+1. Encrypted backup first: `sudo systemctl start moresocial-backup.service`.
+2. Stop the old worker before running `deploy/release.sh`
+   (`sudo docker compose -p moresocial -f /srv/moresocial/src/deploy/compose.yaml --env-file
+   /srv/moresocial/release.env stop worker`). Migration `0014` makes
+   `suggestions.action_key` NOT NULL; an old worker publishing a chat review during the
+   migration window would fail that job (it retries later, so this is a precaution, not a
+   data risk). The migration takes a `SHARE ROW EXCLUSIVE` lock on `suggestions` with a
+   5-second lock timeout; rerun the release if it times out.
+3. `deploy/release.sh <sha>` migrates (`0013` connector health, `0014` assistant), starts
+   the new web and worker, checks readiness, then restarts the provisioner, which recreates
+   connectors with the new image. Until a connector runs the new image it sends no
+   heartbeat and Suggestions/Connections show "WhatsApp status unavailable" (not a
+   disconnect). A new connector against an old web app gets 404 on its heartbeat, logs
+   `heartbeat_failed` and keeps ingesting.
+4. Existing suggestions keep their data, dispositions and drafts; drafts saved before the
+   release show "needs a review" once, because they carry no context fingerprint.
+
+Proactive preparation starts automatically in the local 08:00–23:00 window (defaults:
+event preparation and check-ins on, balanced initiative, pinned contacts only). Operator
+switch, effective within one scan and without a restart:
+
+```bash
+sudo docker compose -p moresocial -f /srv/moresocial/src/deploy/compose.yaml \
+  --env-file /srv/moresocial/release.env exec -T web python -m app.proactive mode off   # or on / status
+```
+
+`off` stops new scans and preparation; prepared drafts and all settings stay. Users can
+also pause the assistant on its page. Diagnostics: job events for `proactive_scan` and
+`prepare_message` (counts and outcomes only). Suggested live checks after release, using
+the [agent browser login](agent-browser-login.md) and browsing only: Connections shows a
+fresh heartbeat; Suggestions has no false sync warning; the Assistant page renders at
+desktop/mobile; a linked event appears on an event-related suggestion. **Never send a test
+message to a real person**; evaluate prepared drafts by reading them only.
+
 ## Diagnostics
 
 Every service writes one sanitized JSON event per line (`app/diagnostics.py`; the connector and
@@ -319,6 +357,13 @@ An older copy of the script does not contain that protection.
   duplicate event cards; their `/ready` reports a migration mismatch although pages are served.
   Prefer `reconcile-events.py mode --value off` / `withdraw-automatic` and a forward fix. Keep the
   new tables; never drop them or delete evidence as an emergency rollback.
+- Migrations `0013` (connector health) and `0014` (assistant) are additive for existing
+  data but **not rollback-compatible**: pre-0014 images cannot display proactive
+  suggestions (no anchor, new kinds) and report a migration mismatch. `rollback.sh`
+  refuses such images while the `0014` schema is present. Prefer
+  `python -m app.proactive mode off` (above) and a forward fix. The `0014` downgrade refuses
+  while any proactive suggestion or assistant data exists; never delete that user data or
+  restore an old database over newer messages to roll back.
 - Application: `sudo /srv/moresocial/src/deploy/rollback.sh <previous-sha>` switches images and
   source back, keeping all data (first-release migrations are additive).
 - If a future migration is not backward compatible, the previous release cannot run on the new

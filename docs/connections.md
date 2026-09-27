@@ -114,7 +114,29 @@ account for per-user browser resource costs in the multi-user design.
 
 Text messages are sent only when the signed-in user presses **Send message** in a
 MoreSocial conversation (see [Suggestions](suggestions.md#open-the-conversation-and-send)).
-Imported messages and model output never trigger a send. Gmail and Calendar stay read-only.
+Imported messages, model output and assistant preparation never trigger a send. Gmail and
+Calendar stay read-only.
+
+### Sync health
+
+Each connector posts a small authenticated heartbeat to `POST /internal/connector/health`
+every 60 seconds and about two seconds after a state change (`connector/health.js`). It
+reports connection state, pending ingest packets and their age, whether delivery is
+failing, whether a history sweep is running, the last sweep's time, outcome and failed
+chats, the last fully successful sweep, and history counts; never message text, QR data,
+account IDs or error text. The workspace comes from the connector key; the web app stamps
+server receipt time (`whatsapp_connectors.health_checked_at`) and validates every field.
+A heartbeat never changes the linked account, stored messages or jobs. A failed heartbeat
+is logged by the connector and retried by the next timer; ingestion is independent.
+
+`app/whatsapp_health.classify` drives Suggestions and Connections: a fresh `ready`
+report is healthy; no report for three minutes (or never, e.g. an older connector image)
+is "status unavailable", not a disconnect; disconnected/auth failure/pairing is
+actionable; packets pending for 60 seconds, failing delivery or a connector error are
+"delayed"; a partial or failed sweep is "incomplete"; an initial sweep is informational;
+the 15-minute sweep is only called overdue after 60 minutes. `last_sync` keeps its
+historical meaning (sweep finished, possibly partially); "connected" never implies that
+all older history is available.
 
 ## AI processing
 

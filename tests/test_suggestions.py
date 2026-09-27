@@ -36,6 +36,12 @@ def review(wid):
         return list(s.scalars(select(Suggestion).where(Suggestion.workspace_id == wid).order_by(Suggestion.created_at)))
 
 
+def page_context(browser, sid):
+    """The draft-context fingerprint the detail page submits with an edit."""
+    import re
+    return re.search(r'name="context" value="([^"]*)"', browser.get(f'/suggestions/{sid}').text).group(1)
+
+
 @pytest.fixture
 def setup(browser):
     browser.login('alex')
@@ -59,10 +65,11 @@ def test_evidence_page_and_draft_lifecycle(browser, setup):
         d = s.get(Suggestion, row.id)
         assert d.draft and d.state == 'active'
         rev, rrev = d.draft_revision, d.draft_review_revision
+    context = page_context(browser, row.id)
     assert browser.post(f'/suggestions/{row.id}/draft/save', {'csrf': csrf, 'revision': rev,
-        'review_revision': rrev, 'text': 'Yes, Friday works!'}).status_code == 303
+        'review_revision': rrev, 'text': 'Yes, Friday works!', 'context': context}).status_code == 303
     assert browser.post(f'/suggestions/{row.id}/draft/save', {'csrf': csrf, 'revision': rev,
-        'review_revision': rrev, 'text': 'Stale tab overwrites edit'}).status_code == 409
+        'review_revision': rrev, 'text': 'Stale tab overwrites edit', 'context': context}).status_code == 409
     assert browser.post(f'/suggestions/{row.id}/draft', {'csrf': csrf}).status_code == 303
     assert 'Yes, Friday works!' in browser.get(f'/suggestions/{row.id}').text
     with db.session() as s:
