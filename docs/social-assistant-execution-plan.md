@@ -736,3 +736,7 @@ UI checks and inspection of those drafts are pending. Details:
 Added tests for legacy cross-conversation erasure with an edited draft, the `0015`
 backfill and "not related" prepared messages. `bash scripts/test.sh`: **408 Python
 passed**, **40 connector passed**, compile check passed.
+
+Deployed as `218f18c` at 09:22 UTC after backup `moresocial-20260927T092145Z.tar.enc`;
+schema `0015`, readiness and a completed post-restart sweep with fresh heartbeats verified
+server-side. Authenticated live UI checks remain pending.

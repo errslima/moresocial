@@ -41,6 +41,8 @@ validation or deployment.
   `0007`) preceded the Suggestions release below; its verification notes are in the
   archived [diary notes](archive/development/diary-observations.md).
 
+- **Deployed 2026-09-27 09:22 UTC: `218f18c`, schema `0015`** (review follow-up; previous
+  `901bc09`). See the review follow-up entry below.
 - **Deployed 2026-09-27 08:24 UTC: `901bc09`, schema `0014`** — the social assistant per
   [its execution plan](social-assistant-execution-plan.md) (heartbeat-based WhatsApp
   health, event-aware suggestions, persona, preferences, shareable updates, proactive
@@ -72,7 +74,18 @@ and embeddings in use by the 2026-09-26 Suggestions and Events releases); Docker
 the Compose stack and the provisioner with a paired connector. Obsolete: live checks for
 personal AI keys and for Anthropic/Voyage keys, whose features were retired.
 
-## Social assistant review follow-up — 2026-09-27 (implemented locally, not deployed)
+## Social assistant review follow-up — 2026-09-27 (deployed `218f18c`)
+
+Deployment: encrypted backup `moresocial-20260927T092145Z.tar.enc` (success), then
+`deploy/release.sh 218f18c` from a fresh checkout of the bundle (worker not stopped:
+`0015` only adds a defaulted column). Readiness passed on every check; active at 09:22:16
+UTC. Server-side checks: alembic `0015`; web, worker and connector run `218f18c`; the
+backfill gave all 4 event-linked prepared drafts their context sources (the 21 ordinary
+suggestions had no event links yet); after its restart the connector reported `ready`,
+0 pending, and completed a history sweep `ok` (50 of 50 chats, none failed) with a fresh
+heartbeat. Authenticated UI checks remain pending, as for `901bc09`. No message was sent.
+
+Changes:
 
 Fixes for four defects reproduced by `tests/test_review_assistant_regressions.py`:
 
