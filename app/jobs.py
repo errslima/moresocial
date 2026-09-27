@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import uuid
 
-from sqlalchemy import select, text, update
+from sqlalchemy import text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -106,7 +106,7 @@ def fail(s: Session, job_id: uuid.UUID, owner: str, error: str, retry: bool = Tr
 
 
 def defer(s: Session, job_id: uuid.UUID, owner: str, until: datetime, reason: str) -> None:
-    """Pause without consuming an attempt (e.g. AI budget exhausted until tomorrow)."""
+    """Pause without consuming an attempt (e.g. waiting for a provider rate limit or AI configuration)."""
     s.execute(update(Job).where(Job.id == job_id, Job.lease_owner == owner)
               .values(status='queued', run_after=until, attempts=Job.attempts - 1, lease_owner=None,
                       lease_expires_at=None, last_error=reason[:300]))
@@ -117,7 +117,3 @@ def cancel(s: Session, workspace_id: uuid.UUID, kinds: list[str] | None = None) 
     if kinds:
         q = q.where(Job.kind.in_(kinds))
     return s.execute(q.values(status='cancelled', lease_owner=None, lease_expires_at=None)).rowcount
-
-
-def still_leased(s: Session, job_id: uuid.UUID, owner: str) -> bool:
-    return s.execute(select(Job.id).where(Job.id == job_id, Job.lease_owner == owner, Job.status == 'running')).first() is not None

@@ -161,38 +161,33 @@ def test_full_lasergame_scenario(live, chromium, viewport):
 
 
 @pytest.mark.parametrize('viewport', [{'width': 1280, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])
-def test_ai_key_rejection_add_and_remove(live, chromium, viewport):
-    config.override(dataclasses.replace(config.get(), user_ai_keys=('anthropic', 'openai'), openai_model='gpt-test'))
-    page = chromium.new_context(viewport=viewport).new_page()
-    errors = []
-    page.on('pageerror', lambda e: errors.append(str(e)))
-    page.goto(live + '/')
-    page.get_by_role('button', name='Continue with Google').click()
-    page.get_by_role('button', name='Allow').click()
-    page.wait_for_url(live + '/home')
-    nav_to(page, 'Connections')
-    key = page.locator('#key-anthropic')
-    assert key.get_attribute('type') == 'password' and key.get_attribute('autocomplete') == 'off'
+def test_connections_ai_status(live, chromium, viewport):
+    from app import ai
+    ctx = chromium.new_context(viewport=viewport)
+    try:
+        page = ctx.new_page()
+        errors = []
+        page.on('pageerror', lambda e: errors.append(str(e)))
+        sign_in(page, live)
+        nav_to(page, 'Connections')
+        section = page.locator('section', has_text='AI assistant')
+        playwright.expect(section).to_contain_text('shared OpenRouter account')
+        playwright.expect(section).to_contain_text('Spending limits are managed in OpenRouter')
+        assert page.locator('input[type=password]').count() == 0
+        assert page.locator('form[action*="/connections/ai/"]').count() == 0
+        assert 'API key' not in page.content()
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
 
-    key.fill('sk-ant-reject-SyntheticSecretValue-0001')
-    page.get_by_role('button', name='Add key').first.click()
-    playwright.expect(page.get_by_role('alert')).to_contain_text('did not accept this key')
-    assert 'SyntheticSecretValue' not in page.content() and page.locator('#key-anthropic').input_value() == ''
-
-    page.locator('#key-anthropic').fill('sk-ant-api03-SyntheticSecretValue-0002-abcd')
-    page.get_by_role('button', name='Add key').first.click()
-    playwright.expect(page.locator('.notice, [role=status]').first).to_be_visible()
-    assert 'Your API key works and is saved' in page.content()
-    section = page.locator('.ai-key', has_text='Anthropic (Claude)')
-    playwright.expect(section).to_contain_text('working')
-    playwright.expect(section).to_contain_text('abcd')
-    assert 'runs on your Anthropic key' in page.content() and 'SyntheticSecretValue' not in page.content()
-    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1')
-
-    section.get_by_role('button', name='Remove key').click()
-    assert 'Your API key was removed' in page.content()
-    playwright.expect(page.locator('.ai-key', has_text='Anthropic (Claude)')).to_contain_text('No key added')
-    assert errors == []
+        ai.set_provider(ai.OperatorTier(None, None))  # AI disabled by the operator
+        page.reload()
+        section = page.locator('section', has_text='AI assistant')
+        playwright.expect(section).to_contain_text('The assistant is temporarily unavailable')
+        playwright.expect(section).to_contain_text('An administrator can configure it in Admin')
+        playwright.expect(section).not_to_contain_text('shared OpenRouter account')
+        assert errors == []
+    finally:
+        ai.set_provider(None)
+        ctx.close()
 
 
 @pytest.mark.parametrize('viewport', [{'width': 1280, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])

@@ -1,5 +1,13 @@
 # Prompt for the implementing agent: automatic events (E1–E6)
 
+> **Archived 2026-09-27.** Historical development document, kept for its rationale and
+> evidence. Current docs and code take precedence wherever they conflict; its
+> instructions are not current tasks. See the [archive index](README.md).
+>
+> Completed prompt. Automatic Events were deployed on 2026-09-26 with an
+> automatic-only design; its manual-planning, migration-number and provider
+> assumptions are obsolete. Do not execute it again.
+
 You are continuing work on Moresocial, a deployed multi-user FastAPI app in
 `/Users/enzolima/Projects/1f517/moresocial` (its own Git repository, branch `main`).
 Implement milestones **E1–E6** of `docs/events-execution-plan.md`. E0 is already done and

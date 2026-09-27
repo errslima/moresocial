@@ -1,11 +1,11 @@
 """M4: extraction, embeddings, retrieval and cited answers (deterministic fake provider).
 These fixtures prove pipeline contracts and isolation, not answer quality."""
-import dataclasses
+import uuid
 
 import pytest
 from sqlalchemy import func, select, update
 
-from app import ai, config, db, memory, retrieval
+from app import ai, db, memory, retrieval
 from app.models import (Answer, AnswerSource, Chunk, Claim, ClaimSource, Embedding, Job, Person, PersonIdentifier,
                         Source)
 from app.repo import Scoped
@@ -205,27 +205,26 @@ def test_user_corrections_are_authoritative(browser):
     assert 'no longer current' in page and 'added or confirmed by you' in page
 
 
-def test_shared_ai_ignores_legacy_caps_and_keeps_processing(browser):
-    original = config.get()
-    config.override(dataclasses.replace(original, ai_daily_tokens_workspace=50, ai_daily_tokens_global=50))
-    try:
-        setup_user(browser, whatsapp=False)
-        with db.session() as s:
-            assert not s.scalars(select(Job).where(Job.last_error.like('AI paused%'))).all()
-            assert s.scalar(select(func.count()).select_from(Embedding)) > 0
-        page = browser.get('/connections').text
-        assert 'Paused' not in page and 'shared OpenRouter allowance' not in page
-        assert 'Spending limits are managed in OpenRouter' in page
-        state = ai.budget_state(workspace_of('alex@example.test'))
-        assert state['used'] > 50 and state['limit'] is None and not state['paused']
-        r = browser.post('/ask', {'question': 'Does Sam like lasergame?', 'csrf': browser.csrf('/ask')})
-        assert r.status_code == 303
-        assert browser.get(r.headers['location']).status_code == 200
-    finally:
-        config.override(original)
+def test_shared_ai_has_no_local_cap_and_keeps_processing(browser):
+    browser.login('alex')
+    wa = workspace_of('alex@example.test')
+    ai.reserve(wa, 'generate', 'fake', 3_000_000, provider_name='fake')  # far above any former daily cap
+    schedule()
+    drain()
+    with db.session() as s:
+        assert not s.scalars(select(Job).where(Job.last_error.like('AI paused%'))).all()
+        assert s.scalar(select(func.count()).select_from(Embedding)) > 0
+    page = browser.get('/connections').text
+    assert 'Paused' not in page and 'shared OpenRouter allowance' not in page
+    assert 'Spending limits are managed in OpenRouter' in page
+    state = ai.usage_state(wa)
+    assert state['used'] > 3_000_000 and state['billing'] == 'operator' and set(state) == {'billing', 'used'}
+    r = browser.post('/ask', {'question': 'Does Sam like lasergame?', 'csrf': browser.csrf('/ask')})
+    assert r.status_code == 303
+    assert browser.get(r.headers['location']).status_code == 200
 
 
-def test_global_budget_and_reconciliation(browser):
+def test_global_usage_and_reconciliation(browser):
     setup_user(browser, whatsapp=False)
     wa = workspace_of('alex@example.test')
     from app.models import ProviderUsage, UsageBudget
@@ -235,17 +234,40 @@ def test_global_budget_and_reconciliation(browser):
         total = sum((u.input_tokens or 0) + (u.output_tokens or 0) for u in usage)
         budgets = {b.scope: b.tokens for b in s.scalars(select(UsageBudget))}
     assert budgets['global'] == total and budgets['workspace:' + str(wa)] == total
-    original = config.get()
-    config.override(dataclasses.replace(original, ai_daily_tokens_global=total + 5))
-    try:
-        usage_id = ai.reserve(wa, 'generate', 'fake', 3_000_000)
-        assert not ai.budget_state(wa)['paused']
-        ai.reconcile(usage_id, 2_500_000, 100)
-        with db.session() as s:
-            assert s.get(UsageBudget, ('global', ai.today())).tokens == total + 2_500_100
-            assert s.get(UsageBudget, ('workspace:' + str(wa), ai.today())).tokens == total + 2_500_100
-    finally:
-        config.override(original)
+    usage_id = ai.reserve(wa, 'generate', 'fake', 3_000_000, provider_name='fake')
+    ai.reconcile(usage_id, 2_500_000, 100)
+    ai.reconcile(usage_id, 1, 1)  # at most once
+    with db.session() as s:
+        assert s.get(UsageBudget, ('global', ai.today())).tokens == total + 2_500_100
+        assert s.get(UsageBudget, ('workspace:' + str(wa), ai.today())).tokens == total + 2_500_100
+        row = s.get(ProviderUsage, usage_id)
+        assert (row.provider, row.billing, row.status, row.input_tokens, row.output_tokens) == (
+            'fake', 'operator', 'reconciled', 2_500_000, 100)
+    assert ai.usage_state(wa)['used'] == total + 2_500_100
+
+
+def test_historical_user_key_reservation_reconciles_only_its_own_scope(browser):
+    """A reservation left by the retired personal-key tier settles against its own scope,
+    without any cap, and never against the shared workspace/global totals."""
+    browser.login('alex', calendar=False)
+    wa = workspace_of('alex@example.test')
+    from app.models import ProviderUsage, UsageBudget
+    day = ai.today()
+    usage_id = uuid.uuid4()
+    with db.session() as s:
+        s.add(UsageBudget(scope='userkey:' + str(wa), day=day, tokens=5_000_000))
+        s.add(UsageBudget(scope='workspace:' + str(wa), day=day, tokens=700))
+        s.add(UsageBudget(scope='global', day=day, tokens=900))
+        s.add(ProviderUsage(id=usage_id, workspace_id=wa, day=day, operation='generate', model='claude-sonnet-5',
+                            provider='anthropic', billing='user', reserved_tokens=4_000, status='reserved'))
+    ai.reconcile(usage_id, 1_000, 200)
+    with db.session() as s:
+        assert s.get(UsageBudget, ('userkey:' + str(wa), day)).tokens == 5_000_000 - 4_000 + 1_200
+        assert s.get(UsageBudget, ('workspace:' + str(wa), day)).tokens == 700
+        assert s.get(UsageBudget, ('global', day)).tokens == 900
+        row = s.get(ProviderUsage, usage_id)
+        assert (row.status, row.billing, row.provider, row.input_tokens, row.output_tokens) == (
+            'reconciled', 'user', 'anthropic', 1_000, 200)
 
 
 def test_invalid_model_output_fails_boundedly(browser, monkeypatch):
@@ -342,7 +364,6 @@ def test_missing_configuration_defers_and_legacy_failures_recover(browser, monke
 
 
 def test_message_trace_is_scoped_and_omits_text_by_default(browser):
-    import uuid
     from app.trace_message import trace
     setup_user(browser, whatsapp=False)
     wid = workspace_of('alex@example.test')

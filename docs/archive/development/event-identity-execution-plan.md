@@ -1,5 +1,12 @@
 # Event identity: execution plan and agent handoff
 
+> **Archived 2026-09-27.** Historical development document, kept for its rationale and
+> evidence. Current docs and code take precedence wherever they conflict; its
+> instructions are not current tasks. See the [archive index](README.md).
+>
+> Implemented and released 2026-09-27 (M1–M6). The handoff prompt in
+> section 8 is historical; do not execute it again.
+
 Status: implemented and released (M1–M6); results recorded under each milestone.
 Prepared: 27 September 2026. Implemented: 27 September 2026 (branch `whatsapp-sidebar`, migration `0011`).
 Repository: `/Users/enzolima/Projects/1f517/moresocial`.

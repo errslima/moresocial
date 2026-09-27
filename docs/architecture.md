@@ -1,8 +1,9 @@
 # Current architecture and feature map
 
-Updated 2026-09-26. This describes the implemented first release. For the active
-revision, deployment evidence and outstanding checks, read
-[implementation status](implementation-status.md). The execution plan and original
+Updated 2026-09-27. This describes the implemented application. For the last recorded
+release, deployment evidence and outstanding checks, read
+[implementation status](implementation-status.md). The
+[archived development plans](archive/development/README.md) and original
 [review handover](handover-review.md) are historical inputs, not current status.
 
 ## User-facing features
@@ -10,14 +11,15 @@ revision, deployment evidence and outstanding checks, read
 | Area | Implemented behavior | Main code |
 | --- | --- | --- |
 | Onboarding | One Google flow for identity, Gmail read and Calendar read; partial consent, reconnect, beta allowlist | `app/auth_routes.py`, `app/accounts.py`, `app/google.py` |
-| Connections | Google connection status; WhatsApp QR linking, status and disconnect; shared-AI status; account deletion | `app/pages.py`, `app/whatsapp.py`, `app/templates/connections.html` |
+| Home | Upcoming detected events and up to three optional catch-up steps for pinned contacts, each with snooze/dismiss | `app/pages.py`, `app/next_steps.py`, `app/templates/home.html` |
+| Connections | Google connection status; WhatsApp QR linking, status and disconnect; shared-AI availability and today's token usage; account deletion | `app/pages.py`, `app/whatsapp.py`, `app/templates/connections.html` |
 | People and sources | Contact profiles, explicit identity linking/unlinking, source browsing, exclusions, relationship notes and claim corrections | `app/ingest.py`, `app/pages.py` |
-| Personal profile | Editable self-profile and evidence-backed memory | `app/pages.py`, `app/models.py` |
-| Gatherings | Invitees, candidate dates, conflicts with the user's calendar, manual drafts, RSVP tracking and optional next steps | `app/gatherings.py`, `app/pages.py` |
-| Admin | `ADMIN_EMAILS` only: encrypted OpenRouter key, pinned reasoning/embedding models, test/save, disable and rebuild status | `app/admin.py`, `app/operator_settings.py`, `app/templates/admin.html` |
-| AI assistance | Claim extraction, embeddings, hybrid retrieval, cited answers, invitation drafts, rewrites and RSVP suggestions | `app/memory.py`, `app/retrieval.py`, `app/ai.py`, `app/gatherings.py` |
-| Suggestions | Evidence-backed replies, promises and follow-ups from one-to-one WhatsApp; drafts, snooze, dismissal, resolution and per-chat pause | `app/suggestions.py`, `app/suggestion_pages.py`, [feature details](suggestions.md) |
-| WhatsApp | Read-only conversation browser over imported WhatsApp history: newest-first list (50 per page), name search, full chat history (100 messages per page with an older-messages cursor), media placeholders and links to each source | `app/conversations.py`, `app/whatsapp_pages.py`, `app/templates/whatsapp.html` |
+| About me | Dated diary entries (searchable sources feeding extraction), the editable self-profile and evidence-backed observations, conservatively grouped when equivalent | `app/diary.py`, `app/observation_groups.py`, `app/pages.py` |
+| Events | Recognized automatically from WhatsApp, Gmail and Calendar: evidence timeline, explicit attendance, dismissal, user corrections and reversible identity grouping. No manual creation; `/gatherings` redirects to `/events` and legacy events stay viewable | `app/events.py`, `app/event_identity.py`, `app/event_resolver.py`, [feature details](events.md) |
+| Admin | `ADMIN_EMAILS` only: encrypted OpenRouter key, pinned reasoning/embedding models, test/save, disable, key removal, rebuild status and known spend | `app/admin.py`, `app/operator_settings.py`, `app/templates/admin.html` |
+| AI assistance | Claim extraction, embeddings, hybrid retrieval, cited answers (Ask), suggestion drafts, event recognition/identity resolution and observation grouping | `app/memory.py`, `app/retrieval.py`, `app/ai.py` |
+| Suggestions | Evidence-backed replies, promises and follow-ups from one-to-one WhatsApp; editable AI drafts, **Open conversation** into the WhatsApp composer, snooze, dismissal, resolution and per-chat pause | `app/suggestions.py`, `app/suggestion_pages.py`, [feature details](suggestions.md) |
+| WhatsApp | Conversation browser over imported WhatsApp history: newest-first list (50 per page), name search, full chat history (100 messages per page with an older-messages cursor), media placeholders and links to each source; a text composer that sends only when the user presses **Send message** | `app/conversations.py`, `app/whatsapp_pages.py`, `app/whatsapp_send.py`, `app/templates/whatsapp.html` |
 
 AI generation and embeddings are **enabled in production**, verified by the live readiness
 check on 2026-09-26. Synthetic tests establish workflow behavior; recommendation quality
@@ -26,10 +28,18 @@ All generation and embeddings use the shared operator-owned OpenRouter key, with
 and no local workspace or global token allowance. The encrypted admin configuration overrides an optional bootstrap
 file and refreshes in each process within 30 seconds. Embedding-space identity includes the
 exact model, returned dimension and preprocessing contract; a changed model is staged and
-rebuilt before cutover, so vectors never mix spaces. Manual
-workflows remain available. Gmail and Calendar remain read-only. WhatsApp supports explicit text sends from
-the conversation page, with durable duplicate protection and no automatic retries.
-It does not know invitees' calendars merely because it can read the user's calendar.
+rebuilt before cutover, so vectors never mix spaces.
+
+Usage is still accounted: each call reserves an estimate and is reconciled to the actual
+tokens per workspace and globally per UTC day (the historically named `usage_budgets`
+table), and `provider_usage` records USD cost when OpenRouter reports it; unknown cost stays
+unknown. Connections shows today's tokens. An OpenRouter 429 starts a provider cooldown
+(honouring `retry-after`, at most 300 seconds) and background jobs are deferred without
+spending an attempt; `AI_CONCURRENCY` limits simultaneous calls. Without an AI configuration,
+imports, browsing and keyword search continue and AI jobs wait.
+
+Gmail and Calendar remain read-only. WhatsApp supports explicit text sends from the
+conversation page, with durable duplicate protection and no automatic retries.
 
 Authenticated pages share a left sidebar (`app/templates/base.html`); below 900px it collapses
 into a native `<details>` menu, so navigation needs no JavaScript. Ordinary signed-in pages
@@ -66,26 +76,33 @@ client-side routing. Unknown or foreign selections return the generic 404 page.
 3. `app/ingest.py` stores normalized sources and participants, resolves provider
    identifiers and invalidates derived data when sources change or are excluded.
 4. PostgreSQL jobs (`app/jobs.py`, `worker/main.py`) rebuild conversation chunks,
-   generate embeddings and extract claims when AI is enabled. Leases and idempotency
-   keys support retries; provider rate limits defer AI jobs.
+   generate embeddings, extract claims, group observations, review conversations for
+   Suggestions and detect/resolve events when AI is enabled. Leases and idempotency
+   keys support retries; provider rate limits and missing AI configuration defer AI jobs.
 5. Retrieval combines structured ownership filters with memory search. Citations
    refer to the actual source segments in the matching chunk, including later
    passages of long messages. Claims and answers retain source references.
 
 PostgreSQL with pgvector holds both relational records and vectors; there is no
 separate vector database service. `app/models.py` defines accounts, workspaces,
-connections, sources, people, chunks, embeddings, claims, gatherings, drafts,
-answers, jobs and usage budgets. Users' API keys are `connections` rows (provider
-`anthropic`/`openai`) holding only the encrypted key, a fingerprint and its last four
-characters; `provider_usage` records which provider and tier (`operator`/`user`) paid. Workspace scoping and composite foreign keys
-separate users' data; matching contacts do not create shared cross-user profiles.
+connections, sources, people, chunks, embeddings, claims and observation groups,
+suggestions, events (with mentions, identity decisions and pair scans), WhatsApp send
+receipts, answers, jobs, operator settings and usage accounting (`usage_budgets`,
+`provider_usage`). Tables and columns from retired features (manual-planner `drafts`,
+`event_people`, `event_candidates`; personal-key metadata) remain for historical rows;
+old `provider_usage` rows keep their historical provider/billing labels. Workspace scoping
+and composite foreign keys separate users' data; matching contacts do not create shared
+cross-user profiles.
 
-Migration `0008` adds the Suggestions inbox, conversation review state and evidence references.
-Migration `0001` creates the initial schema. `0002` adds source segments and the
-connector cleanup outbox. `0003` adds API-key metadata, the provider preference and usage
-billing columns and the `operator_settings` table (additive; downgrade removes stored keys). Pipeline `v2-segments` rebuilds legacy chunks, which are
-excluded from retrieval until rebuilt. Account deletion leaves only an opaque
-cleanup identifier until the host removes connector resources and acknowledges it.
+Migrations: `0001` initial schema; `0002` source segments and the connector cleanup
+outbox; `0003` personal-key metadata, usage billing columns and `operator_settings`
+(the key feature is retired); `0004` embedding-space identity; `0005` OpenRouter
+accounting fields; `0006` resumes jobs deferred by the retired shared token allowance;
+`0007` diary sources and observation groups; `0008` Suggestions; `0009` WhatsApp send
+receipts; `0010` automatic events; `0011` event identity. Pipeline `v2-segments`
+rebuilds legacy chunks, which are excluded from retrieval until rebuilt. Account deletion
+leaves only an opaque cleanup identifier until the host removes connector resources and
+acknowledges it.
 
 ## Runtime and operations
 
@@ -97,12 +114,13 @@ cleanup identifier until the host removes connector resources and acknowledges i
   ingestion uses the separate internal listener and workspace-specific credentials.
 - The host systemd provisioner manages per-workspace connectors, preserves session
   mounts during image upgrades/rollbacks, and retries durable account cleanup.
-- Secrets are mounted from `/srv/moresocial/secrets`, outside Git. Daily encrypted
+- Secret files are mounted from `/srv/moresocial/secrets`, outside Git; the OpenRouter
+  key saved in Admin is stored encrypted in the database. Daily encrypted
   backups include the database, configuration and WhatsApp sessions, with 14-day
   retention. Backups currently remain on the same server.
 
 See the [operator runbook](operator-setup.md) for deployment, secret configuration,
 backup/restore and rollback; [connections](connections.md) for OAuth/WhatsApp design;
 and [review findings](review-findings.md) for the six fixes and regression coverage.
-The validated local suite has 126 Python tests and 19 Node tests. Synthetic tests
-do not establish that real Google sync, WhatsApp pairing or AI quality work.
+Dated test results are recorded in [implementation status](implementation-status.md).
+Synthetic tests do not establish that real Google sync, WhatsApp pairing or AI quality work.

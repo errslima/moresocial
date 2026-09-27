@@ -79,7 +79,6 @@ button[disabled]{opacity:.6;cursor:progress}
 .claim.status-confirmed{border-color:var(--ok)}.claim.status-superseded,.claim.status-rejected{opacity:.7}.claim.status-conflicting{border-color:var(--warn)}
 .excerpt,.source-text{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border-left:3px solid var(--line);padding:8px 10px;margin:6px 0;font:inherit}
 .answer{white-space:pre-wrap;font-size:1.05rem}
-.suggest{background:var(--warn-bg);padding:8px;border-radius:6px}
 table.sync{width:100%;border-collapse:collapse;margin:10px 0}table.sync th,table.sync td{text-align:left;vertical-align:top;padding:8px 6px;border-top:1px solid var(--line)}
 .hero h1{font-size:1.9rem}.access li{margin:6px 0}
 code{overflow-wrap:anywhere}

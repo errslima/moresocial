@@ -1,5 +1,13 @@
 # User-supplied AI API keys — execution plan
 
+> **Archived 2026-09-27.** Historical development document, kept for its rationale and
+> evidence. Current docs and code take precedence wherever they conflict; its
+> instructions are not current tasks. See the [archive index](README.md).
+>
+> Implemented 2026-09-25, later retired: personal AI keys and the direct
+> Anthropic, OpenAI and Voyage adapters were replaced by the operator-owned
+> OpenRouter configuration. Its pending live checks are obsolete.
+
 Status: implemented 2026-09-25 (K0–K4, K5 docs); rollout and live checks pending. See
 `docs/implementation-status.md` for verification and deviations. Prepared against the
 deployed first release (migration head `0002`).
@@ -67,7 +75,7 @@ already filter `provider == 'google'` (`app/ingest.py:77`, `app/accounts.py:72,1
 
 ### 4.1 `app/ai.py` — split provider resolution
 
-Today a single process-wide `provider()` ([ai.py:275](../app/ai.py)) serves both
+Today a single process-wide `provider()` ([ai.py:275](../../../app/ai.py)) serves both
 generation and embeddings. Replace it with:
 
 - `embedder() -> Provider`: process-wide, operator-configured (current Voyage/fake

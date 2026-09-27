@@ -7,13 +7,13 @@ matched only by exact provider identifiers; similar names never merge.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
 import uuid
 
-from sqlalchemy import and_, delete, exists, func, or_, select, update
+from sqlalchemy import and_, delete, exists, func, or_, select
 
 from . import jobs
 from .models import (Answer, AnswerSource, Chunk, ChunkSource, Claim, ClaimSource, Draft, EventPerson, Exclusion,

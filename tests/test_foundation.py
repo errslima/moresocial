@@ -25,9 +25,16 @@ def test_production_requires_secret_files_and_https():
         config.load({**BASE, 'MORESOCIAL_MODE': 'production', 'PUBLIC_ORIGIN': 'http://1f517.com', 'GOOGLE_CLIENT_FILE': 'x',
                      'ENCRYPTION_KEY_FILE': 'x', 'OPERATOR_KEY_FILE': 'x'})
     s = config.load({**BASE, 'MORESOCIAL_MODE': 'production', 'GOOGLE_CLIENT_FILE': 'x', 'ENCRYPTION_KEY_FILE': 'x',
-                     'OPERATOR_KEY_FILE': 'x', 'AI_PROVIDER': 'anthropic'})
+                     'OPERATOR_KEY_FILE': 'x', 'AI_PROVIDER': 'none'})
     assert s.google_redirect_uri == 'https://1f517.com/moresocial/api/auth/google/callback'
     assert s.cookie_path == '/moresocial/' and s.cookie_secure
+
+
+@pytest.mark.parametrize('retired', ['anthropic', 'openai', 'voyage'])
+def test_retired_ai_providers_are_rejected(retired):
+    with pytest.raises(config.ConfigError, match='AI_PROVIDER'):
+        config.load({**BASE, 'MORESOCIAL_MODE': 'production', 'GOOGLE_CLIENT_FILE': 'x', 'ENCRYPTION_KEY_FILE': 'x',
+                     'OPERATOR_KEY_FILE': 'x', 'AI_PROVIDER': retired})
 
 
 def test_google_client_file_is_loaded_and_callback_validated(tmp_path):

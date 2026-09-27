@@ -18,12 +18,10 @@ import re
 import time
 from typing import Callable
 
-from sqlalchemy import select
-
-from . import accounts, config, db, diagnostics, security
+from . import accounts, config, db, diagnostics
 from .google import GoogleError, provider
 from .ingest import IngestResult, Participant, SourceRecord, schedule_rebuilds, self_identifiers, upsert
-from .models import Connection, Source, SyncStream
+from .models import Connection, SyncStream
 from .repo import Scoped
 
 BODY_LIMIT = 32 * 1024

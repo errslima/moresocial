@@ -1,5 +1,11 @@
 # Prompt for the implementing agent
 
+> **Archived 2026-09-27.** Historical development document, kept for its rationale and
+> evidence. Current docs and code take precedence wherever they conflict; its
+> instructions are not current tasks. See the [archive index](README.md).
+>
+> Completed prompt for the first release (M0–M6). Do not execute it again.
+
 Implement Moresocial v1 in this repository following `EXECUTION-PLAN.md`.
 Read that file first, then `docs/product-definition.md` and `docs/connections.md`.
 The execution plan supplies v1 defaults for previously open product choices.

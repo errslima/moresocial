@@ -3,7 +3,10 @@
 Follow-up: the six confirmed review findings have been fixed; see
 `review-findings.md`, `implementation-status.md`, and `tests/test_review_fixes.py`.
 This document preserves the original agent's handover; the numbered risks and
-implementation details below may describe code that has since been changed.
+implementation details below may describe code that has since been changed. The plan and
+prompt it cites are archived under [archive/development](archive/development/README.md);
+manual gatherings (`app/gatherings.py`) and the Anthropic/Voyage adapters have since been
+retired, and WhatsApp can now send text on an explicit user action.
 
 From the implementing agent, 2026-09-25. Scope: `IMPLEMENTATION-PROMPT.md` and
 `EXECUTION-PLAN.md`, milestones M0–M6. Nothing is committed or deployed. The working

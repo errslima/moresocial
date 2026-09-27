@@ -1,17 +1,16 @@
-"""Generation and embedding providers with daily token usage accounting.
+"""Generation and embedding through the shared OpenRouter account, with token usage accounting.
 
-Operator tier: Anthropic Messages API (structured JSON output) for generation and Voyage AI
-for embeddings, configured by the operator. User tier: a workspace's own Anthropic or OpenAI
-API key (see `ai_keys`) pays for that workspace's generation; embeddings always stay on the
-operator's embedder so every vector shares one model. The deterministic fake is for tests
-and local development only. Prompts, responses and keys are never logged. Imported content
-is passed as untrusted data; no tools are ever offered to the model.
+Production uses one operator-owned OpenRouter configuration (Admin page, optional file
+bootstrap) for every workspace; spending limits are set on that key in OpenRouter, so
+there is no local token cap. Usage is still reserved and reconciled per workspace and
+globally. The deterministic fake is for tests and local development only. Prompts,
+responses and keys are never logged. Imported content is passed as untrusted data; no
+tools are ever offered to the model.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
 import json
@@ -22,17 +21,16 @@ import time
 import uuid
 
 import httpx
-from sqlalchemy import select, text
+from sqlalchemy import text
 
 from . import config, db, security
-from .models import Connection, ProviderUsage, Workspace
-from .repo import Scoped
+from .models import ProviderUsage
 
 
 class AIUnavailable(Exception):
     """Provider not configured or failed after bounded retries. `not_billed` marks failures
     where the provider certainly charged nothing (not configured, rate limited, key refused),
-    so the budget reservation is released instead of kept."""
+    so the usage reservation is released instead of kept."""
 
     http_status: int | None = None  # the provider's HTTP status, when one was received
 
@@ -57,17 +55,11 @@ def _retry_after(headers) -> float | None:
 
 
 class KeyRejected(AIUnavailable):
-    """The provider refused a user's API key: invalid_key | no_credit | model_unavailable."""
+    """OpenRouter refused the operator key or model: invalid_key | no_credit | model_unavailable."""
 
     def __init__(self, reason: str):
         super().__init__('key_rejected:' + reason, not_billed=True)
         self.reason = reason
-
-
-class BudgetExhausted(Exception):
-    def __init__(self, scope: str):
-        super().__init__(scope)
-        self.scope = scope
 
 
 class InvalidOutput(Exception):
@@ -100,49 +92,41 @@ def estimate_tokens(text_: str) -> int:
     return max(1, math.ceil(len(text_) / 3.5))
 
 
-# ---------------- budgets ----------------
+# ---------------- usage accounting ----------------
 
 def today() -> date:
     return datetime.now(timezone.utc).date()
 
 
-def tomorrow_start() -> datetime:
-    t = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    return t + timedelta(days=1, minutes=1)
-
-
 RESERVE_SQL = text("""
 INSERT INTO usage_budgets(scope, day, tokens) VALUES (:scope, :day, 0) ON CONFLICT DO NOTHING;
 """)
-TAKE_SQL = text("""UPDATE usage_budgets SET tokens = tokens + :n WHERE scope = :scope AND day = :day AND (CAST(:limit AS BIGINT) IS NULL OR tokens + :n <= :limit)
-                   RETURNING tokens""")
+ADD_SQL = text('UPDATE usage_budgets SET tokens = tokens + :n WHERE scope = :scope AND day = :day')
 
 
-def _scopes(workspace_id: uuid.UUID, billing: str) -> list[tuple[str, int | None]]:
-    """Usage scopes. Shared AI has no local cap; spending is controlled in OpenRouter.
-    The retired user-key tier retains its historical accounting and limit."""
-    settings = config.get()
+def _scopes(workspace_id: uuid.UUID, billing: str) -> list[str]:
+    """Daily usage scopes (``usage_budgets`` is a historical name: nothing is capped locally;
+    spending limits are set in OpenRouter). A reservation left by the retired personal-key
+    tier (``billing='user'``) still reconciles against its own scope only, never against the
+    shared workspace and global totals."""
     if billing == 'user':
-        return [('userkey:' + str(workspace_id), settings.ai_daily_tokens_user_key)]
-    return [('workspace:' + str(workspace_id), None), ('global', None)]
+        return ['userkey:' + str(workspace_id)]
+    return ['workspace:' + str(workspace_id), 'global']
 
 
-def reserve(workspace_id: uuid.UUID, operation: str, model: str, tokens: int, job_id: uuid.UUID | None = None,
-            billing: str = 'operator', provider_name: str = 'anthropic') -> uuid.UUID:
-    """Atomically record estimated usage, enforcing a cap only for the retired user-key tier."""
+def reserve(workspace_id: uuid.UUID, operation: str, model: str, tokens: int, job_id: uuid.UUID | None = None, *,
+            provider_name: str) -> uuid.UUID:
+    """Atomically record estimated usage on the shared account; `reconcile` settles it."""
     day = today()
-    scopes = _scopes(workspace_id, billing)
+    scopes = _scopes(workspace_id, 'operator')
     with db.session() as s:
-        for scope, limit in scopes:
+        for scope in scopes:
             s.execute(RESERVE_SQL, {'scope': scope, 'day': day})
-        for scope, limit in scopes:
-            if s.execute(TAKE_SQL, {'scope': scope, 'day': day, 'n': tokens, 'limit': limit}).first() is None:
-                s.rollback()
-                security.emit('ai_budget_exhausted', level='warn', scope=scope.split(':', 1)[0], operation=operation,
-                              tokens=tokens, workspace_id=workspace_id)
-                raise BudgetExhausted(scope.split(':', 1)[0])
+        for scope in scopes:
+            s.execute(ADD_SQL, {'scope': scope, 'day': day, 'n': tokens})
         usage = ProviderUsage(id=uuid.uuid4(), workspace_id=workspace_id, job_id=job_id, day=day, operation=operation,
-                              model=model, provider=provider_name, billing=billing, reserved_tokens=tokens, status='reserved')
+                              model=model, provider=provider_name, billing='operator', reserved_tokens=tokens,
+                              status='reserved')
         s.add(usage)
         return usage.id
 
@@ -158,7 +142,7 @@ def reconcile(usage_id: uuid.UUID, input_tokens: int | None, output_tokens: int 
             delta = 0  # unknown provider-side cost: keep the reservation (conservative)
         else:
             delta = (input_tokens or 0) + (output_tokens or 0) - usage.reserved_tokens
-        for scope, _ in _scopes(usage.workspace_id, usage.billing):
+        for scope in _scopes(usage.workspace_id, usage.billing):
             s.execute(text('UPDATE usage_budgets SET tokens = GREATEST(0, tokens + :d) WHERE scope = :scope AND day = :day'),
                       {'d': delta, 'scope': scope, 'day': usage.day})
         usage.input_tokens, usage.output_tokens = input_tokens, output_tokens
@@ -166,17 +150,12 @@ def reconcile(usage_id: uuid.UUID, input_tokens: int | None, output_tokens: int 
         usage.status = 'failed' if failed else 'reconciled'
 
 
-def budget_state(workspace_id: uuid.UUID, billing: str | None = None) -> dict:
-    """Today's usage for the tier that currently pays for this workspace's generation."""
-    if billing is None:
-        billing = generator_for(workspace_id).billing
-    scopes = dict(_scopes(workspace_id, billing))
+def usage_state(workspace_id: uuid.UUID) -> dict:
+    """Today's shared-AI token usage for this workspace, for display only (no local cap)."""
     with db.session() as s:
-        rows = dict(s.execute(text('SELECT scope, tokens FROM usage_budgets WHERE day = :d AND scope = ANY(:scopes)'),
-                              {'d': today(), 'scopes': list(scopes)}).all())
-    key = next(iter(scopes))
-    paused = any(limit is not None and rows.get(scope, 0) >= limit * 0.98 for scope, limit in scopes.items()) if billing != 'none' else False
-    return {'billing': billing, 'used': rows.get(key, 0), 'limit': scopes[key], 'paused': paused}
+        used = s.scalar(text('SELECT tokens FROM usage_budgets WHERE scope = :scope AND day = :d'),
+                        {'scope': 'workspace:' + str(workspace_id), 'd': today()})
+    return {'billing': generator_for(workspace_id).billing, 'used': used or 0}
 
 
 _slots: threading.BoundedSemaphore | None = None
@@ -224,72 +203,6 @@ RATE_LIMIT_DEFAULT_WAIT = 30.0
 RATE_LIMIT_MAX_WAIT = 300.0
 
 
-def _anthropic_rejection(exc) -> str | None:
-    """Classify an Anthropic status error that means the key itself cannot be used."""
-    status = getattr(exc, 'status_code', None)
-    if status == 401:
-        return 'invalid_key'
-    if status == 402:
-        return 'no_credit'
-    if status in (403, 404):
-        return 'model_unavailable'
-    message = str(getattr(exc, 'message', '') or '').lower()
-    if status == 400 and ('credit balance' in message or 'spend limit' in message):
-        return 'no_credit'
-    return None
-
-
-class AnthropicGenerator(Provider):
-    """Messages API generation with one API key (the operator's or a user's)."""
-    name = 'anthropic'
-
-    def __init__(self, key: str, model: str, fallbacks: bool, http_client=None):
-        # http_client: an `httpx2.Client` (the SDK's HTTP library), for tests only.
-        self.generation_model = model
-        self.fallbacks = fallbacks
-        import anthropic
-        self._client = anthropic.Anthropic(api_key=key, timeout=90.0, max_retries=2, http_client=http_client)
-
-    def can_generate(self) -> bool:
-        return True
-
-    def generate(self, *, system, prompt, schema, max_tokens, effort, context) -> Generated:
-        import anthropic
-        request = dict(model=self.generation_model, max_tokens=max_tokens, system=system,
-                       messages=[{'role': 'user', 'content': prompt}],
-                       output_config={'effort': effort, 'format': {'type': 'json_schema', 'schema': schema}})
-        try:
-            if self.fallbacks:
-                # Server-side refusal fallback: a declined request is re-run on a fallback model.
-                response = self._client.beta.messages.create(**request, betas=['server-side-fallback-2026-07-01'],
-                                                             fallbacks='default')
-            else:
-                response = self._client.messages.create(**request)
-        except anthropic.RateLimitError as exc:
-            wait = _retry_after(getattr(getattr(exc, 'response', None), 'headers', None))
-            security.emit('ai_generation_failed', exc, provider='anthropic', status=429, code='rate_limited')
-            raise rate_limited(wait) from exc
-        except anthropic.APIStatusError as exc:
-            reason = _anthropic_rejection(exc)
-            if reason:
-                security.emit('ai_key_refused', exc, provider='anthropic', status=exc.status_code, code=reason)
-                raise KeyRejected(reason) from None
-            security.emit('ai_generation_failed', exc, provider='anthropic', status=exc.status_code, code='provider_error')
-            raise AIUnavailable('provider_error') from exc
-        except anthropic.APIConnectionError as exc:
-            security.emit('ai_generation_failed', exc, provider='anthropic', code='connection')
-            raise AIUnavailable('connection') from exc
-        usage = response.usage
-        tokens_in = (usage.input_tokens or 0) + (getattr(usage, 'cache_read_input_tokens', 0) or 0) + \
-            (getattr(usage, 'cache_creation_input_tokens', 0) or 0)
-        tokens_out = usage.output_tokens or 0
-        if response.stop_reason in ('refusal', 'max_tokens'):
-            raise InvalidOutput(response.stop_reason, tokens_in, tokens_out)
-        text_ = next((b.text for b in response.content if getattr(b, 'type', '') == 'text'), None)
-        return Generated(data=_json_object(text_, tokens_in, tokens_out), input_tokens=tokens_in, output_tokens=tokens_out,
-                         model=response.model)
-
-
 def _json_object(text_: str | None, tokens_in: int, tokens_out: int) -> dict:
     try:
         data = json.loads(text_ or '')
@@ -298,129 +211,6 @@ def _json_object(text_: str | None, tokens_in: int, tokens_out: int) -> dict:
     if not isinstance(data, dict):
         raise InvalidOutput('invalid_json', tokens_in, tokens_out)
     return data
-
-
-def _openai_rejection(r: httpx.Response) -> str | None:
-    if r.status_code == 401:
-        return 'invalid_key'
-    if r.status_code in (403, 404):
-        return 'model_unavailable'
-    if r.status_code == 429:
-        try:
-            code = (r.json().get('error') or {}).get('code')
-        except (ValueError, AttributeError):
-            code = None
-        if code == 'insufficient_quota':
-            return 'no_credit'
-    return None
-
-
-class OpenAIGenerator(Provider):
-    """OpenAI Responses API with strict JSON-schema output, using a user's API key."""
-    name = 'openai'
-    URL = 'https://api.openai.com/v1/responses'
-    REASONING_HEADROOM = 4000  # reasoning tokens count toward max_output_tokens
-
-    def __init__(self, key: str, model: str, reasoning: bool, transport: httpx.BaseTransport | None = None):
-        self._key = key
-        self.generation_model = model
-        self.reasoning = reasoning
-        self._transport = transport
-
-    def __repr__(self) -> str:
-        return f'OpenAIGenerator(model={self.generation_model!r})'
-
-    def can_generate(self) -> bool:
-        return True
-
-    def generate(self, *, system, prompt, schema, max_tokens, effort, context) -> Generated:
-        body = {'model': self.generation_model, 'instructions': system, 'input': prompt, 'store': False,
-                'max_output_tokens': max_tokens + (self.REASONING_HEADROOM if self.reasoning else 0),
-                'text': {'format': {'type': 'json_schema', 'name': 'result', 'schema': schema, 'strict': True}}}
-        if self.reasoning:
-            body['reasoning'] = {'effort': effort}
-        r = None
-        for attempt in range(3):
-            try:
-                with httpx.Client(timeout=90, transport=self._transport) as h:
-                    r = h.post(self.URL, json=body, headers={'Authorization': 'Bearer ' + self._key})
-            except httpx.HTTPError as exc:
-                security.emit('ai_generation_failed', exc, provider='openai', attempt=attempt, code='connection')
-                r = None
-            if r is not None:
-                if r.is_success:
-                    break
-                reason = _openai_rejection(r)
-                if reason:
-                    security.emit('ai_key_refused', provider='openai', status=r.status_code, code=reason)
-                    raise KeyRejected(reason)
-                if r.status_code == 429:
-                    security.emit('ai_generation_failed', provider='openai', status=429, code='rate_limited')
-                    raise rate_limited(_retry_after(r.headers))
-                if r.status_code not in (500, 502, 503, 504):
-                    security.emit('ai_generation_failed', provider='openai', status=r.status_code, code='provider_error')
-                    raise AIUnavailable('provider_error')
-            if attempt < 2:
-                time.sleep(min(8, 2 ** attempt))
-        else:
-            raise AIUnavailable('connection' if r is None else 'provider_error')
-        data = r.json()
-        usage = data.get('usage') or {}
-        tokens_in, tokens_out = int(usage.get('input_tokens') or 0), int(usage.get('output_tokens') or 0)
-        if data.get('status') == 'incomplete':
-            reason = (data.get('incomplete_details') or {}).get('reason')
-            raise InvalidOutput('max_tokens' if reason == 'max_output_tokens' else 'incomplete', tokens_in, tokens_out)
-        text_ = None
-        for item in data.get('output') or []:
-            if item.get('type') != 'message':
-                continue
-            for part in item.get('content') or []:
-                if part.get('type') == 'refusal':
-                    raise InvalidOutput('refusal', tokens_in, tokens_out)
-                if part.get('type') == 'output_text':
-                    text_ = part.get('text')
-        return Generated(data=_json_object(text_, tokens_in, tokens_out), input_tokens=tokens_in, output_tokens=tokens_out,
-                         model=data.get('model') or self.generation_model)
-
-
-class VoyageEmbedder(Provider):
-    """Operator-paid embeddings (Voyage AI)."""
-    name = 'voyage'
-    VOYAGE_URL = 'https://api.voyageai.com/v1/embeddings'
-
-    def __init__(self, key: str, model: str, dimension: int, voyage_transport: httpx.BaseTransport | None = None):
-        self._key = key
-        self.embedding_model = model
-        self.embedding_dimension = dimension
-        self._voyage_transport = voyage_transport
-
-    def __repr__(self) -> str:
-        return f'VoyageEmbedder(model={self.embedding_model!r})'
-
-    def embed(self, texts, input_type) -> Embedded:
-        key = self._key
-        body = {'input': texts, 'model': self.embedding_model, 'input_type': input_type,
-                'output_dimension': self.embedding_dimension}
-        for attempt in range(3):
-            try:
-                with httpx.Client(timeout=30, transport=self._voyage_transport) as h:
-                    r = h.post(self.VOYAGE_URL, json=body, headers={'Authorization': 'Bearer ' + key})
-            except httpx.HTTPError as exc:
-                security.emit('ai_embedding_failed', exc, attempt=attempt)
-                r = None
-            if r is not None and r.is_success:
-                data = r.json()
-                rows = sorted(data.get('data') or [], key=lambda d: d.get('index', 0))
-                vectors = [row['embedding'] for row in rows]
-                if len(vectors) != len(texts) or any(len(v) != self.embedding_dimension for v in vectors):
-                    raise InvalidOutput('embedding_shape')
-                return Embedded(vectors=vectors, tokens=int((data.get('usage') or {}).get('total_tokens') or 0),
-                                model=self.embedding_model)
-            if r is not None and r.status_code not in (429, 500, 502, 503, 504):
-                security.emit('ai_embedding_failed', status=r.status_code)
-                raise AIUnavailable('provider_error')
-            time.sleep(min(8, 2 ** attempt))
-        raise AIUnavailable('embedding_unavailable')
 
 
 def identity_accepted(returned: str | None, requested: str, identity: str | None) -> bool:
@@ -464,14 +254,12 @@ class OpenRouterProvider(Provider):
     BASE_URL = 'https://openrouter.ai/api/v1'
 
     def __init__(self, key: str, generation_model: str, embedding_model: str, dimension: int,
-                 generation_providers: tuple[str, ...] = (), embedding_providers: tuple[str, ...] = (),
                  transport: httpx.BaseTransport | None = None, *, reasoning_effort: bool = False,
                  embedding_contract: str = 'v1:plain-text:document-query', revision: int = 0,
                  embedding_identity: str | None = None):
         self._key, self.generation_model = key, generation_model
         self.embedding_model, self.embedding_dimension = embedding_model, dimension
         self.embedding_identity = embedding_identity or embedding_model
-        self.generation_providers, self.embedding_providers = generation_providers, embedding_providers
         self._transport = transport
         self.reasoning_effort = reasoning_effort
         self.embedding_contract = embedding_contract
@@ -696,22 +484,6 @@ class FakeProvider(Provider):
                          model=self.generation_model)
 
 
-class SyntheticKeyProvider(FakeProvider):
-    """Stands in for a user's key under synthetic providers. A key containing `revoked`
-    passes validation but is refused at generation time, like a key revoked later."""
-
-    def __init__(self, name: str, key: str):
-        super().__init__()
-        self.name = name
-        self.generation_model = 'fake-' + name
-        self._revoked = 'revoked' in key
-
-    def generate(self, **kw) -> Generated:
-        if self._revoked:
-            raise KeyRejected('invalid_key')
-        return super().generate(**kw)
-
-
 _override: Provider | None = None
 _operator: Provider | None = None
 _operator_stamp = None
@@ -785,18 +557,15 @@ def build_operator(settings: config.Settings, stored: dict[str, str]) -> Provide
 
 
 def set_provider(p: Provider | None) -> None:
-    """Replace the operator tier (tests); None rebuilds it from settings on next use.
-    Also clears cached user-key adapters."""
+    """Replace the operator tier (tests); None rebuilds it from settings on next use."""
     global _override, _operator, _operator_stamp
     _override = p
     with _operator_lock:
         _operator, _operator_stamp = None, None
-    with _adapters_lock:
-        _adapters.clear()
 
 
 def embedder() -> Provider:
-    """Embeddings always use the operator tier, whoever pays for generation."""
+    """Embeddings use the operator tier, like generation, so every vector shares one space."""
     return provider()
 
 
@@ -833,52 +602,7 @@ def embedder_for_space(space: str) -> Provider | None:
 @dataclass
 class Resolved:
     provider: Provider
-    billing: str                         # user | operator | none
-    connection_id: uuid.UUID | None = None
-
-
-_adapters: OrderedDict[tuple, Provider] = OrderedDict()
-_adapters_lock = threading.Lock()
-_user_factory = None
-ADAPTER_CACHE = 64
-
-
-def set_user_adapter_factory(factory) -> None:
-    """Tests: `factory(provider_name, key) -> Provider` replaces real user-key adapters."""
-    global _user_factory
-    _user_factory = factory
-    with _adapters_lock:
-        _adapters.clear()
-
-
-def _build_user_adapter(name: str, key: str, settings: config.Settings) -> Provider:
-    if _user_factory is not None:
-        return _user_factory(name, key)
-    if settings.synthetic_providers:
-        return SyntheticKeyProvider(name, key)
-    if name == 'anthropic':
-        return AnthropicGenerator(key, settings.anthropic_model, settings.anthropic_fallbacks)
-    return OpenAIGenerator(key, settings.openai_model, settings.openai_reasoning)
-
-
-def _user_adapter(name: str, fingerprint: str, key_enc: str | None, settings: config.Settings) -> Provider | None:
-    """Adapters are cached by key fingerprint, so a replaced key never reuses an old client."""
-    model = settings.anthropic_model if name == 'anthropic' else settings.openai_model
-    cache_key = (name, fingerprint, model)
-    with _adapters_lock:
-        adapter = _adapters.get(cache_key)
-        if adapter is not None:
-            _adapters.move_to_end(cache_key)
-            return adapter
-    key = security.decrypt(key_enc)
-    if not key:
-        return None
-    adapter = _build_user_adapter(name, key, settings)
-    with _adapters_lock:
-        _adapters[cache_key] = adapter
-        while len(_adapters) > ADAPTER_CACHE:
-            _adapters.popitem(last=False)
-    return adapter
+    billing: str                         # operator | none
 
 
 def generator_for(workspace_id: uuid.UUID) -> Resolved:
@@ -887,7 +611,7 @@ def generator_for(workspace_id: uuid.UUID) -> Resolved:
     return Resolved(operator, 'operator' if operator.can_generate() else 'none')
 
 
-# ---------------- budgeted calls ----------------
+# ---------------- accounted calls ----------------
 
 def generate(workspace_id: uuid.UUID, *, system: str, prompt: str, schema: dict, context: dict, max_tokens: int = 2000,
              effort: str = 'low', job_id: uuid.UUID | None = None) -> Generated:
@@ -906,7 +630,7 @@ def _generate_on(tier: Resolved, workspace_id: uuid.UUID, *, system, prompt, sch
         raise rate_limited(wait)  # recently rate limited: do not call (or reserve) again yet
     # Reserve input + max output (+ one retry's worth of input for provider-side retries).
     estimate = 2 * estimate_tokens(system + prompt) + max_tokens
-    usage = reserve(workspace_id, 'generate', p.generation_model, estimate, job_id, billing=tier.billing, provider_name=p.name)
+    usage = reserve(workspace_id, 'generate', p.generation_model, estimate, job_id, provider_name=p.name)
     try:
         with _slot():
             out = p.generate(system=system, prompt=prompt, schema=schema, max_tokens=max_tokens, effort=effort, context=context)

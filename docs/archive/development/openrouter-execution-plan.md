@@ -1,5 +1,13 @@
 # OpenRouter-only AI execution plan
 
+> **Archived 2026-09-27.** Historical development document, kept for its rationale and
+> evidence. Current docs and code take precedence wherever they conflict; its
+> instructions are not current tasks. See the [archive index](README.md).
+>
+> Implemented and deployed. Its per-workspace/global token allowances were
+> later removed (migration `0006`); spending limits are set on the OpenRouter
+> key. Current runbook: [OpenRouter rollout](../../openrouter-rollout.md).
+
 Status: implementation handoff, updated 2026-09-25. These are instructions for work
 to perform, not a claim of completed implementation or verified live behavior.
 

@@ -1,5 +1,13 @@
 # Diary entries and semantic observation groups
 
+> **Archived 2026-09-27.** Historical development document, kept for its rationale and
+> evidence. Current docs and code take precedence wherever they conflict; its
+> instructions are not current tasks. See the [archive index](README.md).
+>
+> Implemented in `6c762e3` (migration `0007`), the production revision before the
+> 2026-09-26 Suggestions release. Invitation drafting mentioned below has since
+> been retired.
+
 The About me page accepts one dated diary entry at a time. Original text is stored as
 `Source(provider='diary', from_me=True)` and each entry has its own conversation/chunks.
 It uses the existing embedding, extraction, citation and source invalidation pipeline.

@@ -4,18 +4,17 @@ public/internal event loop. A request's session is used sequentially, never conc
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import uuid
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, or_, select
 
-from . import accounts, ai, config, diagnostics, events as automatic_events, gatherings, ingest, memory, retrieval, security, whatsapp
-from .models import (Answer, AnswerSource, Claim, ClaimSource, Connection, Draft, Event, EventCandidate, EventPerson,
-                     Exclusion, Job, Person, PersonIdentifier, RelationshipNote, SelfProfile, Source,
-                     SourceParticipant, SyncStream, WhatsAppConnector)
-from .auth_routes import throttle
+from . import (accounts, ai, config, diagnostics, events as automatic_events, ingest, memory, next_steps, retrieval,
+               security, whatsapp)
+from .models import (Answer, AnswerSource, Claim, Connection, Event, Exclusion, Job, Person, PersonIdentifier,
+                     RelationshipNote, Source, SourceParticipant, SyncStream, WhatsAppConnector)
 from .web import SESSION_COOKIE, Ctx, Problem, optional_user, redirect, render, require_mutation, require_user
 
 router = APIRouter()
@@ -34,11 +33,6 @@ def found(obj, what='That item'):
 
 
 def ai_error(exc: Exception) -> str:
-    if isinstance(exc, ai.BudgetExhausted) and exc.scope == 'userkey':
-        return ("Today's Moresocial limit for your own API key is used up. AI features resume tomorrow; "
-                'everything else keeps working.')
-    if isinstance(exc, ai.BudgetExhausted):
-        return "Today's AI budget is used up. AI features resume tomorrow; everything else keeps working."
     if isinstance(exc, ai.InvalidOutput):
         return 'The assistant returned something unusable. Please try again.'
     return 'The assistant is unavailable right now. Please try again later.'
@@ -46,11 +40,9 @@ def ai_error(exc: Exception) -> str:
 
 def ai_failure(purpose: str, exc: Exception) -> str | None:
     """Record an expected AI failure the user sees; return the reference to show them."""
-    code = ('budget_exhausted' if isinstance(exc, ai.BudgetExhausted) else
-            'invalid_output' if isinstance(exc, ai.InvalidOutput) else
+    code = ('invalid_output' if isinstance(exc, ai.InvalidOutput) else
             'key_rejected' if isinstance(exc, ai.KeyRejected) else 'unavailable')
-    detail = exc.scope if isinstance(exc, ai.BudgetExhausted) else str(exc).split(':')[-1]
-    security.emit('ai_action_failed', level='warn', purpose=purpose, code=code, reason=detail,
+    security.emit('ai_action_failed', level='warn', purpose=purpose, code=code, reason=str(exc).split(':')[-1],
                   http_status=getattr(exc, 'http_status', None))
     return diagnostics.current().get('request_id')
 
@@ -76,14 +68,14 @@ def home(request: Request, ctx: Ctx = Depends(require_user)):
     conn = ws.first(ws.q(Connection).where(Connection.provider == 'google'))
     events = automatic_events.cards(ws)[:5]
     sources = ws.s.scalar(select(func.count()).select_from(Source).where(Source.workspace_id == ws.wid))
-    return render(request, 'home.html', ctx, steps=gatherings.next_steps(ws), conn=conn, events=events, sources=sources,
-                  budget=ai.budget_state(ws.wid), event_tz=automatic_events.TZ)
+    return render(request, 'home.html', ctx, steps=next_steps.next_steps(ws), conn=conn, events=events, sources=sources,
+                  event_tz=automatic_events.TZ)
 
 
 @router.post('/home/steps')
 def step_state(request: Request, key: str = Form(...), action: str = Form('dismiss'),
                      ctx: Ctx = Depends(require_mutation)):
-    gatherings.hide_step(ctx.ws, key, 7 if action == 'snooze' else None)
+    next_steps.hide_step(ctx.ws, key, 7 if action == 'snooze' else None)
     return redirect('/home')
 
 
@@ -256,7 +248,7 @@ def ask(request: Request, question: str = Form(...), person: str = Form(''), ctx
     p = ws.get(Person, person) if person else None
     try:
         answer = retrieval.ask(ws, question, p.id if p else None)
-    except (ai.AIUnavailable, ai.BudgetExhausted, ai.InvalidOutput) as exc:
+    except (ai.AIUnavailable, ai.InvalidOutput) as exc:
         reference = ai_failure('answer', exc)
         recent = ws.all(ws.q(Answer).order_by(Answer.created_at.desc()).limit(10))
         return render(request, 'ask.html', ctx, recent=recent, people=ws.all(ws.q(Person).limit(500)), error=ai_error(exc),
@@ -536,7 +528,7 @@ def connections_page(request: Request, ctx: Ctx, status: int = 200):
                  'shared': True}
     return render(request, 'connections.html', ctx, status=status, conn=conn, streams=streams, counts=counts, wa=wa,
                   exclusions=exclusions, scopes={'gmail': config.GMAIL_SCOPE, 'calendar': config.CALENDAR_SCOPE},
-                  pending=sum(r[2] for r in ai_jobs), budget=ai.budget_state(ws.wid), limits=settings,
+                  pending=sum(r[2] for r in ai_jobs), usage=ai.usage_state(ws.wid), limits=settings,
                   ai_configured=assistant['tier'] != 'none', assistant=assistant)
 
 

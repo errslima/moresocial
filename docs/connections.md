@@ -1,7 +1,8 @@
 # Connections — implementation and setup
 
-Status: implemented and deployed on 2026-09-25. OAuth initiation is verified; real user
-consent/sync and WhatsApp pairing are pending. See [implementation status](implementation-status.md).
+Status: implemented and deployed on 2026-09-25. OAuth initiation is verified; WhatsApp
+pairing and sync, and Gmail import, have since been observed in live use. A dedicated Google
+consent check is still pending. See [implementation status](implementation-status.md).
 
 ## Reference implementation
 
@@ -111,15 +112,20 @@ This is an unofficial integration. The library documents account-blocking risk,
 and WhatsApp changes can break compatibility. Keep the connector replaceable and
 account for per-user browser resource costs in the multi-user design.
 
+Text messages are sent only when the signed-in user presses **Send message** in a
+MoreSocial conversation (see [Suggestions](suggestions.md#open-the-conversation-and-send)).
+Imported messages and model output never trigger a send. Gmail and Calendar stay read-only.
+
 ## AI processing
 
 Users do not add personal AI keys. An administrator configures one encrypted OpenRouter
 key plus exact reasoning and embedding model IDs in Admin. That key pays for extraction,
-cited answers, drafts, rewrites and embeddings in every workspace. The Connections page
-reports whether shared AI is available and today’s token usage; importing and keyword
-search continue while it is unavailable. Excerpts needed for a task are sent to OpenRouter
-and its routed downstream provider under their account policies. The app does not promise
-zero retention or no downstream data collection.
+cited answers, Suggestions drafts, event recognition and embeddings in every workspace.
+Spending limits are set on that key in OpenRouter; the app has no local token cap. The
+Connections page reports whether shared AI is available and today’s token usage; importing
+and keyword search continue while it is unavailable. Excerpts needed for a task are sent to
+OpenRouter and its routed downstream provider under their account policies. The app does not
+promise zero retention or no downstream data collection.
 
 ## References
 

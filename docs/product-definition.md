@@ -22,10 +22,13 @@ The proposals below include future ideas, not a list of completed features. See 
 - Host on the existing 1f517 server at `https://1f517.com/moresocial/`, using
   a separate `/srv/moresocial` application directory.
 
-The [execution plan](../EXECUTION-PLAN.md) sets concrete implementation defaults
-for the first release: read-only sources, copyable drafts, event planning,
-contact memory and an editable self-profile. These defaults resolve the relevant
-open choices below for implementation; sending remains a later feature.
+The archived [first-release execution plan](archive/development/EXECUTION-PLAN.md) set
+concrete implementation defaults: read-only sources, copyable drafts, manual event
+planning, contact memory and an editable self-profile. Later releases changed several
+of them. Events are now recognized automatically from WhatsApp, Gmail and Calendar;
+manual gathering creation and invitation drafting are retired. Suggestions offer
+editable drafts for replies, promises and follow-ups, and a WhatsApp text is sent only
+when the user explicitly presses send. Gmail and Calendar remain read-only.
 
 ## Proposed product promise
 
@@ -36,6 +39,10 @@ The first concrete scenario is organizing a lasergame gathering. A second is
 making it easier to start or resume a conversation when texting feels difficult.
 
 ## Proposed first workflow
+
+Original proposal, kept for context. The implemented product does not plan gatherings or
+draft invitations; it recognizes events from imported sources ([Events](events.md)) and
+suggests replies and follow-ups ([Suggestions](suggestions.md)).
 
 1. User describes a gathering and chooses people to invite.
 2. Assistant retrieves relevant conversations, preferences, and the user's calendar.
@@ -65,6 +72,6 @@ message volume.
 
 - Initial interaction: conversation assistant, event workspace, or a daily action view.
 - Where texting becomes difficult: deciding whom to contact, wording, sending, or waiting for replies.
-- Exact first-release sending capabilities and reminder behavior.
+- Reminder behavior, and any sending beyond explicit WhatsApp text messages.
 - Future hosting scale beyond the initial shared-server deployment.
 - Initial history depth and which conversations/calendars users choose to include.

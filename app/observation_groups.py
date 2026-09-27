@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from sqlalchemy import or_, select, text
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from . import ai, db, jobs

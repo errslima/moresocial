@@ -1,5 +1,13 @@
 # Diagnostics investigation and implementation plan
 
+> **Archived 2026-09-27.** Historical development document, kept for its rationale and
+> evidence. Current docs and code take precedence wherever they conflict; its
+> instructions are not current tasks. See the [archive index](README.md).
+>
+> Implemented and deployed 2026-09-26. Its open live identity test was completed
+> (see [implementation status](../../implementation-status.md)); the runbook is
+> [operator setup: Diagnostics](../../operator-setup.md#diagnostics).
+
 ## VPS evidence (investigated September 26, 2026)
 
 - Running web and worker image: `moresocial-web:46a30fd`. Web reports healthy.

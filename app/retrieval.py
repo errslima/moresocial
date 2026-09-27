@@ -14,7 +14,7 @@ import uuid
 
 from sqlalchemy import text
 
-from . import ai, db, diagnostics
+from . import ai, diagnostics
 from .models import Answer, AnswerSource, Chunk, ChunkSource, Source, PIPELINE_VERSION
 from .repo import Scoped
 

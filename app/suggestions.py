@@ -12,7 +12,7 @@ import hashlib
 import json
 import uuid
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import exists, select
 from sqlalchemy.dialects.postgresql import insert
 
 from . import ai, db, jobs

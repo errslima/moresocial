@@ -98,13 +98,6 @@ def run_one(kinds: list[str] | None = None) -> bool:
         security.emit('job_claimed', level='debug', **base)
         try:
             result = handle(job)
-        except ai.BudgetExhausted as exc:
-            with db.session() as s:
-                reason = ('AI paused: daily limit for your API key reached' if exc.scope == 'userkey'
-                          else f'AI paused: daily {exc.scope} budget reached')
-                jobs.defer(s, job.id, OWNER, ai.tomorrow_start(), reason)
-            security.emit('job_deferred', code='budget_exhausted', scope=exc.scope, duration_ms=elapsed(), **base)
-            return True
         except LeaseLost:
             security.emit('job_lease_lost', level='warn', code='heartbeat', duration_ms=elapsed(), **base)
             return True

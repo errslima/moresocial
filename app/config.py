@@ -16,9 +16,6 @@ GOOGLE_SCOPES_IDENTITY = ('openid', 'email', 'profile')
 GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly'
 CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events.readonly'
 GOOGLE_SCOPES = GOOGLE_SCOPES_IDENTITY + (GMAIL_SCOPE, CALENDAR_SCOPE)
-USER_KEY_PROVIDERS: tuple[str, ...] = ()  # Production AI is paid through the operator OpenRouter key.
-DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5'
-DEFAULT_OPENAI_MODEL = 'gpt-5.6-terra'
 
 
 class ConfigError(RuntimeError):
@@ -71,24 +68,11 @@ class Settings:
     beta_allowlist: frozenset[str]
     admin_emails: frozenset[str]   # accounts that may open /admin (global AI settings)
     ai_provider: str               # openrouter | fake | none (environment bootstrap only)
-    anthropic_api_key_file: str | None
-    anthropic_model: str
-    anthropic_fallbacks: bool
-    voyage_api_key_file: str | None
     openrouter_api_key_file: str | None
     openrouter_generation_model: str
     openrouter_embedding_model: str
-    openrouter_generation_providers: tuple[str, ...]  # retained only for old env parsing; never sent
-    openrouter_embedding_providers: tuple[str, ...]   # retained only for old env parsing; never sent
     embedding_model: str
     embedding_dimension: int
-    # Retained for configuration compatibility only; shared AI no longer enforces these caps.
-    ai_daily_tokens_workspace: int
-    ai_daily_tokens_global: int
-    user_ai_keys: tuple[str, ...]  # providers users may add their own key for; empty = feature off
-    openai_model: str
-    openai_reasoning: bool
-    ai_daily_tokens_user_key: int
     ai_concurrency: int
     connector_cap: int
     connector_image: str
@@ -181,13 +165,11 @@ def load(env: dict | None = None) -> Settings:
         raise ConfigError('The deterministic fake AI provider is for tests and development only')
     openrouter_generation_model = env.get('OPENROUTER_GENERATION_MODEL', '').strip()
     openrouter_embedding_model = env.get('OPENROUTER_EMBEDDING_MODEL', '').strip()
-    def providers(name: str) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(p.strip() for p in env.get(name, '').split(',') if p.strip()))
     # Bootstrap is deliberately optional: Admin can start with no file-mounted key and
-    # persist a complete configuration later. Provider allowlists are not a contract.
+    # persist a complete configuration later. Retired AI variables (direct-provider models,
+    # daily token caps, provider allowlists) are ignored if an old environment still sets them.
     if ai_provider == 'openrouter' and bool(openrouter_generation_model) != bool(openrouter_embedding_model):
         raise ConfigError('OpenRouter bootstrap needs both generation and embedding models, or neither')
-    user_ai_keys: tuple[str, ...] = ()
     admins = frozenset(e.strip().lower() for e in env.get('ADMIN_EMAILS', '').split(',') if e.strip())
     allow = frozenset(e.strip().lower() for e in env.get('BETA_ALLOWLIST', '').split(',') if e.strip())
     proxies = frozenset(p.strip() for p in env.get('TRUSTED_PROXY_IPS', '127.0.0.1').split(',') if p.strip())
@@ -200,23 +182,11 @@ def load(env: dict | None = None) -> Settings:
         beta_allowlist=allow,
         admin_emails=admins,
         ai_provider=ai_provider,
-        anthropic_api_key_file=None,
-        anthropic_model=env.get('ANTHROPIC_MODEL') or DEFAULT_ANTHROPIC_MODEL,
-        anthropic_fallbacks=_bool(env.get('ANTHROPIC_REFUSAL_FALLBACKS'), True),
-        voyage_api_key_file=None,
         openrouter_api_key_file=env.get('OPENROUTER_API_KEY_FILE') or None,
         openrouter_generation_model=openrouter_generation_model,
         openrouter_embedding_model=openrouter_embedding_model,
-        openrouter_generation_providers=providers('OPENROUTER_GENERATION_PROVIDERS'),
-        openrouter_embedding_providers=providers('OPENROUTER_EMBEDDING_PROVIDERS'),
         embedding_model=env.get('EMBEDDING_MODEL', 'fake-hash-64' if ai_provider == 'fake' else ''),
         embedding_dimension=_int(env, 'EMBEDDING_DIMENSION', 64 if ai_provider == 'fake' else 0),
-        ai_daily_tokens_workspace=_int(env, 'AI_DAILY_TOKENS_PER_WORKSPACE', 400_000),
-        ai_daily_tokens_global=_int(env, 'AI_DAILY_TOKENS_GLOBAL', 2_000_000),
-        user_ai_keys=user_ai_keys,
-        openai_model=env.get('OPENAI_MODEL') or DEFAULT_OPENAI_MODEL,
-        openai_reasoning=_bool(env.get('OPENAI_REASONING'), True),
-        ai_daily_tokens_user_key=_int(env, 'AI_DAILY_TOKENS_USER_KEY', 2_000_000),
         ai_concurrency=_int(env, 'AI_CONCURRENCY', 2),
         connector_cap=_int(env, 'WHATSAPP_CONNECTOR_CAP', 2),
         connector_image=env.get('CONNECTOR_IMAGE', 'moresocial-connector:current'),

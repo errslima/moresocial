@@ -40,70 +40,82 @@ into a container: make it `0400`.
 | `encryption_key` | `python3 -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"` (keep a copy in the private recovery vault: without it stored Google grants are unreadable) |
 | `operator_key` | `openssl rand -base64 48 \| tr -d '\n=+/'` |
 | `db_password`, `db_admin_password` | `openssl rand -hex 32` each |
-| `anthropic_api_key` | Anthropic API key, or an empty file until available |
-| `voyage_api_key` | Voyage AI API key, or an empty file until available |
 | `backup_passphrase` | `openssl rand -base64 48` (store in the recovery vault too) |
 
-With empty AI key files set `AI_PROVIDER=none`: import, browsing, gatherings and manual
-drafts work; memory extraction, semantic search, cited answers and AI drafts are disabled.
+No AI secret file is needed. The OpenRouter key is normally saved in Admin (see
+[OpenRouter AI configuration](#openrouter-ai-configuration) below) and stored encrypted with
+`encryption_key` in the database, so it is also inside the encrypted backups.
+`deploy/compose.yaml` mounts only `db_password`, `google_auth.json`, `encryption_key` and
+`operator_key` into web and worker (and the two database passwords into `db`); it does not
+mount an OpenRouter key file.
 
-### Historical legacy AI notes (superseded)
-
-The remainder of this legacy subsection describes the pre-OpenRouter release and is
-not an activation guide. Use [the OpenRouter rollout runbook](openrouter-rollout.md).
-
-Accounts listed in `ADMIN_EMAILS` (production: `errslima@gmail.com`) see an **Admin** link
-and can open `/moresocial/admin`; everyone else gets 404 there. It sets the operator tier's
-generation provider (Anthropic, OpenAI or off) and the operator's Anthropic, OpenAI and
-Voyage keys. Keys are validated with the provider, stored encrypted in `operator_settings`,
-and override `AI_PROVIDER` and the `anthropic_api_key`/`voyage_api_key` files, which remain
-the fallback when nothing is saved. The web process applies changes at once; the worker
-within 30 seconds. An admin must also be on `BETA_ALLOWLIST` to sign in.
-
-### Historical users' own API keys (removed)
-
-`USER_AI_KEYS=anthropic,openai` lets each user add their own Anthropic and/or OpenAI API key
-on the Connections page; that workspace's generation then runs on, and is billed to, their
-key. Without a working key a workspace falls back to the operator tier above (or has no AI
-when `AI_PROVIDER=none`). No new secret files are needed: keys are stored encrypted with
-`encryption_key` in the database and are therefore inside the encrypted backups.
-
-- `ANTHROPIC_MODEL` (default `claude-sonnet-5`) is also the model users' Anthropic keys are
-  checked against and billed for; `OPENAI_MODEL` (default `gpt-5.6-terra`) is the OpenAI model. Changing either
-  does not invalidate saved keys, but a key without access to the new model is flagged at its
-  next call and the workspace falls back.
-- `AI_DAILY_TOKENS_USER_KEY` (default 2,000,000) is a per-workspace safety cap on a user's key;
-  it does not count toward `AI_DAILY_TOKENS_GLOBAL`.
-- `OPENAI_REASONING=0` if `OPENAI_MODEL` is not a reasoning model.
-- Embeddings are never billed to users. Semantic search is on whenever an operator Voyage
-  key exists (admin page or secret file), independent of the generation provider.
-- Validation calls `api.anthropic.com` / `api.openai.com` from the web container; generation
-  calls them from web and worker. `AI_CONCURRENCY` caps simultaneous calls across all tiers.
+Until AI is configured (or while it is disabled in Admin), import, browsing, keyword search
+and Calendar-based Events work; AI jobs (extraction, embeddings, suggestion reviews, conversation
+and email event recognition) wait as "AI waiting: provider configuration", and cited
+answers and AI drafts are unavailable.
 
 `runtime.env` minimum:
 
 ```
 BETA_ALLOWLIST=errslima@gmail.com
+ADMIN_EMAILS=errslima@gmail.com
 AI_PROVIDER=none
 WHATSAPP_CONNECTOR_CAP=2
 ```
+
+`AI_PROVIDER=none` only disables the optional file bootstrap; a configuration saved in
+Admin takes precedence over it.
 
 The runtime validates at startup that `https://1f517.com/moresocial/api/auth/google/callback`
 is listed in the client file's `redirect_uris` (`/ready` reports `google_client: false`
 otherwise) and never logs the file's contents.
 
-## OpenRouter-only configuration
+## OpenRouter AI configuration
 
-Set `AI_PROVIDER=openrouter` only when using an optional file bootstrap; an encrypted key can
-instead be stored entirely through Admin. In Admin choose exact catalog IDs for the reasoning
-and embedding models, then use **Test and save**. It makes tiny synthetic calls and learns the
-embedding dimension before activation. A failed test preserves the current configuration.
+Production AI uses one operator-owned OpenRouter key for generation and embeddings in every
+workspace; users never add AI keys. Accounts listed in `ADMIN_EMAILS` (production:
+`errslima@gmail.com`) see an **Admin** link and can open `/moresocial/admin`; everyone else
+gets 404 there. An admin must also be on `BETA_ALLOWLIST` to sign in.
 
-There are no provider allowlists, `data_collection="deny"` or ZDR fields in app requests.
-OpenRouter can fail over among providers for the same pinned model. Set a monetary limit on the
-dedicated key in OpenRouter; Moresocial imposes no workspace or global token allowance. Embedding
-changes stage a new space and background rebuild while search remains on the active space.
-See [the rollout runbook](openrouter-rollout.md) for migration, verification and cleanup.
+In Admin enter the key, choose exact catalog IDs for the reasoning and embedding models, then
+use **Test and save**. It checks the catalog first, then makes tiny synthetic paid calls, learns
+the embedding identity and dimension, and only then activates the configuration. A failed test
+preserves the current configuration and shows a reference for `logs.py find`. The web process
+applies saved changes at once; the worker within 30 seconds. **Disable AI** and **Remove key and
+disable AI** are saved as tombstones: they win over any bootstrap file, so a mounted file can
+never reactivate a removed key or disabled AI.
+
+Changing the embedding model stages a pending space and a background rebuild; search remains on
+the active space until the new one covers current chunks, and **Cancel pending rebuild** drops
+it. A reasoning-model change affects future generation only. There are no provider allowlists,
+`data_collection="deny"` or ZDR fields in app requests; OpenRouter can fail over among providers
+for the same pinned model.
+
+Spending: set a monetary limit on the dedicated key in OpenRouter. Moresocial imposes no local
+workspace or global token cap. It still reserves and reconciles token usage per workspace and
+per UTC day; Connections shows today's tokens and Admin shows known USD spend separately from
+calls whose cost OpenRouter did not report. Rate limits: a 429 pauses calls for `retry-after`
+(at most 300 seconds) and defers background jobs as "AI waiting: provider rate limit" without
+using an attempt; `AI_CONCURRENCY` caps simultaneous calls in each web and worker process.
+
+Optional environment bootstrap (in `runtime.env`); saved Admin settings override it:
+
+| Variable | Meaning |
+| --- | --- |
+| `AI_PROVIDER` | `openrouter` enables the file bootstrap; `none` (default) disables it. `fake` is for tests/development and refused in production; other values (`anthropic`, `openai`, `voyage`) are rejected at startup |
+| `OPENROUTER_API_KEY_FILE` | Container path of a key file. Compose does not mount one: add a secret mount to web and worker yourself before relying on it |
+| `OPENROUTER_GENERATION_MODEL`, `OPENROUTER_EMBEDDING_MODEL` | Exact model IDs; set both or neither |
+| `EMBEDDING_DIMENSION` | Embedding dimension for the bootstrap (must be above 0 to activate it); Admin learns it by testing |
+| `AI_CONCURRENCY` | Simultaneous AI calls per process (default 2) |
+
+Retired variables are ignored if an old `runtime.env` still sets them (no startup error):
+`ANTHROPIC_MODEL`, `ANTHROPIC_REFUSAL_FALLBACKS`, `OPENAI_MODEL`, `OPENAI_REASONING`,
+`AI_DAILY_TOKENS_PER_WORKSPACE`, `AI_DAILY_TOKENS_GLOBAL`, `AI_DAILY_TOKENS_USER_KEY`,
+`OPENROUTER_GENERATION_PROVIDERS`, `OPENROUTER_EMBEDDING_PROVIDERS` and `USER_AI_KEYS`.
+Remove them from `runtime.env` when convenient. Old `anthropic_api_key`/`voyage_api_key`
+secret files and legacy key rows in `operator_settings` are inert; delete them only through
+the separately reviewed cleanup in [the rollout runbook](openrouter-rollout.md), which also
+covers migration and verification.
 
 ## 3. Google Cloud (operator only)
 
@@ -167,7 +179,7 @@ in the 1f517 repository with the same lines so a later shared deploy keeps the r
    and Calendar "Up to date" with bounded counts. Also try unticking Calendar once.
 2. WhatsApp: **Link WhatsApp**, scan the QR from the phone, wait for "Linked and syncing".
    Check `docker ps --filter label=moresocial.managed=1` shows one `ms-wa-<id>` container, no ports.
-3. Ask one question and draft one gathering invitation; copy it; send nothing.
+3. Ask one question and generate one Suggestions draft; send nothing.
 4. `sudo systemctl start moresocial-backup.service` then a scratch restore (section 6).
 
 ## 5. Operations
@@ -186,6 +198,8 @@ in the 1f517 repository with the same lines so a later shared deploy keeps the r
 - AI spending limits are managed on the dedicated key in OpenRouter. Legacy
   `AI_DAILY_TOKENS_PER_WORKSPACE` / `AI_DAILY_TOKENS_GLOBAL` values are ignored.
   Daily token usage is still tracked. Migration 0006 resumes jobs deferred by the old shared caps.
+- WhatsApp messages are sent only when a signed-in user presses **Send message** in a
+  conversation. Gmail and Calendar access stays read-only.
 - Account deletion is self-service (Connections page). An operator-only cleanup record
   containing just the workspace ID survives the account cascade until the provisioner
   removes the connector, network and session directory and acknowledges completion.

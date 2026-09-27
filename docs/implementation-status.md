@@ -1,15 +1,120 @@
 # Implementation status
 
-> Supersession note (2026-09-25): the legacy Anthropic/Voyage/OpenAI and personal-key
-> sections below describe a previous implementation. The active implementation is
-> OpenRouter-only; Admin owns one encrypted key and pinned reasoning/embedding models.
-> Local migration and synthetic checks are not evidence of live API validation or deployment.
+Last updated 2026-09-27. This is the resume point for any agent or operator. **Current
+state** points to the last recorded release; the sections after the pending list are dated
+history, newest first. A revision called active or current inside a dated entry was current
+only on that date. Sections about Anthropic, Voyage, OpenAI and personal keys describe
+retired implementations. Local migration and synthetic checks are not evidence of live API
+validation or deployment.
 
-Last updated 2026-09-26. This is the resume point for any agent or operator.
+## Current state (recorded 2026-09-27)
+
+- **Last recorded release:** `d5fc668`, schema `0011`, event resolver mode `apply`,
+  recorded as the active production revision on 2026-09-27 (see
+  [Event identity — 2026-09-27](#event-identity--2026-09-27)). Commit `bbb8379` recorded
+  that release (documentation only). This is recorded evidence from that date, not a new
+  live verification.
+- **Current behavior:** see [architecture](architecture.md). Production AI uses one
+  operator-owned OpenRouter configuration managed in Admin; spending limits are set on the
+  OpenRouter key and token usage is still reported, with no local caps. Personal AI keys
+  and the direct Anthropic, OpenAI and Voyage adapters are retired. Events are recognized
+  automatically; manual gathering creation and invitation planning are retired. WhatsApp
+  sends only on an explicit user action; Gmail and Calendar remain read-only.
+- **Rollback for that release:** prefer `reconcile-events.py mode --value off` or
+  `withdraw-automatic` and a forward fix; the previous application release was `90384f2`
+  (see [operator setup](operator-setup.md#7-rollback)).
+- **Local changes after that release:** the codebase cleanup described in
+  [docs/cleanup](cleanup/README.md) is not part of any recorded release. Its local
+  verification on 2026-09-27 (`bash scripts/test.sh`, synthetic providers): Python
+  **295 passed**, connector **33 passed** (Node v24.19.0 fallback runtime).
+- **No separate entry:** the diary and observation-group release (`6c762e3`, migration
+  `0007`) preceded the Suggestions release below; its verification notes are in the
+  archived [diary notes](archive/development/diary-observations.md).
+
+## Pending live checks and operator actions
+
+Consolidated on 2026-09-27 from the dated entries below and the archived plans.
+
+| Item | State | Who |
+| --- | --- | --- |
+| Dedicated Google consent check (fresh sign-in, partial consent) with bounded sync counts | **pending**: Gmail import is evidenced by the 2026-09-26 Events live check (a booking email was recognized), but no consent-flow check has been recorded | operator |
+| AI quality of extraction, cited answers, Suggestions and event recognition | **pending**: live model runs succeeded on 2026-09-26/27, but quality was checked only on small samples; evaluate through use | owner |
+| Two remaining Possible duplicates (same-titled records; two birthday records) | **pending** owner review in Events, left open by the event identity release | owner |
+| Private recovery-vault copy of recovery secrets, and backups off this host | **pending**: not configured as of 2026-09-25; no later record | operator |
+| Cleanup of inert legacy AI secrets (`anthropic_api_key`/`voyage_api_key` files, legacy `operator_settings` key rows) and old vectors | **pending**, only after the rollback window and through a separately reviewed operation ([rollout runbook](openrouter-rollout.md), step 5) | operator |
+| Retired variables in production `runtime.env` (`USER_AI_KEYS`, `ANTHROPIC_MODEL` and `OPENAI_MODEL` were added on 2026-09-25) | optional: ignored by the application; no record of removal | operator |
+| Log volume re-measurement after the first busy week, before extending the 14-day retention | **pending**, from the diagnostics release | operator |
+| Split/undo of a real event group | not exercised live by design; covered by synthetic tests | none |
+| Read-only legacy schema inventory on production (`python -m app.legacy_inventory`, [cleanup plan 3](cleanup/03-historical-schema.md)) | **pending**: needed before any retired-table or key-column removal; only local synthetic inventories exist | operator |
+
+Resolved according to later entries: WhatsApp QR pairing, history sync and session
+continuity (2026-09-26: "Linked and syncing", a 50-chat history sync, connector upgrades
+and restarts keeping the session); the real-key OpenRouter **Test and save** (generation
+and embeddings in use by the 2026-09-26 Suggestions and Events releases); Docker builds,
+the Compose stack and the provisioner with a paired connector. Obsolete: live checks for
+personal AI keys and for Anthropic/Voyage keys, whose features were retired.
+
+## Event identity — 2026-09-27
+
+Implemented the archived [event identity plan](archive/development/event-identity-execution-plan.md):
+stable original records, reversible groups (`canonical_event_id`) from user and automatic decisions, the `resolve_events`
+resolver with server-side verdict validation, field-level provenance, review UI (Possible
+duplicates, Same event / Keep separate, Separate…, Undo…) and the dry-run operator tool
+`scripts/reconcile-events.py`. Migration `0011` (additive). Production revision after this
+release: `d5fc668` (released as `3726c54` in mode `observe`, then follow-ups `6d7fd24`, `f2dad92`
+and `d5fc668`), resolver mode `apply`; previous release `90384f2`. The owner's confirmed Sunday
+outing was repaired through the tested correction service (one event, 83 sources, 16:15–17:00).
+Details and verification: section M6 of the archived plan. In summary:
+
+- Tests: `tests/test_events.py tests/test_event_identity.py` 38 passed; event browser cases 4
+  passed (1440/390 px). The full suite had the same 22 retired AI-key/production-secret
+  failures as the pre-change baseline and no new failures.
+- Pre-release backup `moresocial-20260926T230947Z.tar.enc`. Observe sample: 14 pairs
+  (`identity-v1`) and 5 (`identity-v2`), one validated same verdict confirmed by the owner, no
+  false merge; then mode `apply`. Backfill: 19 model calls; an unchanged rerun made none.
+- Two remaining Possible duplicates were left for the owner (see the pending list). No
+  WhatsApp notification was sent for this release.
+
+## Automatic Events — 2026-09-26
+
+Implemented the Events overview and evidence timeline described in [Events](events.md).
+Manual event creation/planning routes removed; `/gatherings` redirects permanently.
+Migration 0010 is additive. Source ingestion plus worker reconciliation recognize Calendar,
+WhatsApp and qualifying email events, with cross-conversation matching, explicit attendance,
+booking precedence, persistent dismissal and immediate source-exclusion invalidation.
+
+Local verification: 78 focused integration/browser checks pass (Events, auth, agent sessions,
+Google sync, workflow, source review fixes, diagnostics; 1440/390px browser coverage). Rendered
+screenshots inspected. A broad run also exposed legacy AI-key/budget/config tests that target
+features removed by the earlier OpenRouter migration; representative failures reproduced on
+unchanged 7b643cc. These are separate from the Events release checks.
+
+Live deployment and recognition verification recorded below.
+
+Deployment completed at revision `90384f2` (migration `0010`). Readiness checks pass for
+DB, migrations, Google configuration, encryption, generation and embeddings. Authenticated
+live reviews pass at 1440px and 390px: Events navigation, permanent legacy redirect, absence
+of manual creation, detail/timeline/source links, Home Upcoming and no browser errors or
+horizontal overflow. The temporary review session was revoked.
+
+The reference booking is automatically assembled across email and WhatsApp; the final check
+found 49 supporting sources and six attendance replies. Comparing against the booking exposed
+whitespace-heavy email truncation: input now compacts email whitespace and preserves the whole
+booking table, recognizes consecutive sessions as one outing, and prioritizes booking email
+over conversational estimates. Its full booked time range now matches the source.
+
+Verification after live fixes: 82 combined release checks passed, followed by 12 booking/UI
+checks and 74 final Events/auth/sync/exclusion/diagnostic checks. Initial recognition backfill
+continues in the normal worker; new imports also schedule reviews automatically. Recognition
+has the documented recent-history and ambiguity limits; source context remains available for
+review. No source-message content or private screenshots are committed.
+
+The requested review notification was sent to the owner’s linked WhatsApp self-chat with a
+confirmed message receipt. It includes the Events URL and notes the ongoing initial history scan.
 
 ## WhatsApp sending and suggestion conversation links — 2026-09-26
 
-Active production revision: `eaf3848` (includes `b3c41c8`), schema `0009`.
+Production revision after this release: `eaf3848` (includes `b3c41c8`), schema `0009`.
 Both releases used `deploy/release.sh`; web/worker readiness and the upgraded
 connector passed. Prior feature release: `4344fbb`. Migration 0009 only adds send
 receipts; it does not alter existing source data.
@@ -51,7 +156,7 @@ Verification:
 
 ## Live layout and Suggestions repairs — 2026-09-26
 
-Previous production revision: `4344fbbaeda16b20e23b469b75b596b91a5bd1b6` (`4344fbb`).
+Production revision after this release: `4344fbbaeda16b20e23b469b75b596b91a5bd1b6` (`4344fbb`).
 This includes the operator session helper and cumulative repairs in `2ec781a`,
 `8002f17` and `4344fbb`. Standard `deploy/release.sh` image builds, migrations and
 readiness checks passed. Schema remains `0008`; no data migration was added.
@@ -170,7 +275,7 @@ workspace-scoped conversation reviews, suggestions and evidence references. See
 
 ## Voyage response identity fix — 2026-09-26
 
-Active production revision: `1585035` (previous: `1f753c0`). Operation
+Production revision after this release: `1585035` (previous: `1f753c0`). Operation
 `876cc6ebfa91c61019f1dfe196103133` confirmed the reasoning fix: DeepSeek finished
 normally with 820 output tokens. The initial embedding request then returned HTTP 200,
 1024 dimensions, and native model name `voyage-4`, which exact catalog matching rejected.
@@ -184,11 +289,12 @@ normally with 820 output tokens. The initial embedding request then returned HTT
 - Standard release script completed; public health/readiness and live identity checks
   passed. Disposable test database and SSH tunnel removed. No schema changes.
 - Operator still needs to run Test and save with the key: neither failed attempt
-  saved it. No paid provider calls were made during this deployment.
+  saved it. No paid provider calls were made during this deployment. (Resolved later:
+  AI generation and embeddings were in use by the Suggestions release above.)
 
 ## OpenRouter setup truncation fix — 2026-09-26
 
-Active production revision: `1f753c0` (previous: `41c6966`). The reasoning setup probe
+Production revision after this release: `1f753c0` (previous: `41c6966`). The reasoning setup probe
 now permits 4,096 output tokens and requests low effort when the catalog advertises
 reasoning support. Truncation has a specific explanation; provider and setup events
 record the token ceiling and finish reason. Saved runtime effort preferences are unchanged.
@@ -201,12 +307,14 @@ record the token ceiling and finish reason. Saved runtime effort preferences are
   run the new image; the live probe constant is 4096. No schema changes in this fix.
 - No valid OpenRouter key is saved, so a real DeepSeek/Voyage setup test remains for
   the operator through Admin. No paid provider requests were made during deployment.
+  (Resolved later; see the Voyage response identity fix above.)
 
 ## Diagnostics release — 2026-09-26 (branch `diagnostics`)
 
-Implements `docs/diagnostics-plan.md`, deployed in the plan's order: `e373a49` (setup
-instrumentation and identity fix), `945f57d` (correlation and boundary events), `41c6966`
-(persistent store, retention, alerts). Active revision `41c6966`; no schema migration.
+Implements the archived [diagnostics plan](archive/development/diagnostics-plan.md), deployed in
+the plan's order: `e373a49` (setup instrumentation and identity fix), `945f57d` (correlation and
+boundary events), `41c6966` (persistent store, retention, alerts). Revision after this release:
+`41c6966`; no schema migration.
 
 - Verified live: catalog maps `voyageai/voyage-4` to `voyageai/voyage-4-20260727`; a
   deliberately invalid key stops at `reasoning_probe` (401) with every stage under one
@@ -215,7 +323,8 @@ instrumentation and identity fix), `945f57d` (correlation and boundary events), 
   searchable with `logs.py find` after web and worker were force-recreated; the hourly
   prune/check unit ran with no alerts; scoped DEBUG reached the worker and expired.
 - Connector upgraded in place twice (image, then diagnostics mount); session kept.
-- **Pending (operator):** no OpenRouter key is saved. Run Admin **Test and save** once
+- **Pending at the time (resolved; see the Voyage response identity fix and later
+  releases):** no OpenRouter key is saved. Run Admin **Test and save** once
   with the real key; the page shows a reference. `logs.py find <reference>` then shows
   the actual `returned_model` of both embedding probes, which confirms the identity policy
   against real Voyage responses. If it still fails, the stage event names all three models.
@@ -226,11 +335,12 @@ instrumentation and identity fix), `945f57d` (correlation and boundary events), 
   test) describe the removed pre-OpenRouter features.
 
 Synthetic-provider tests do **not** prove live Google, WhatsApp or AI integration. The
-release is **deployed** at https://1f517.com/moresocial/. Interactive provider checks remain pending.
+release is **deployed** at https://1f517.com/moresocial/. Remaining interactive checks are
+tracked in [Pending live checks and operator actions](#pending-live-checks-and-operator-actions).
 
 ## Production deployment — 2026-09-25
 
-- Active application revision: `c921458b7ece3329e41ef7390dd4bf171ef062f5`.
+- Application revision deployed: `c921458b7ece3329e41ef7390dd4bf171ef062f5`.
   Source was deployed from a local Git bundle. The application and documentation are
   maintained in `https://github.com/errslima/moresocial`.
 - Server: `ubuntu@54.37.204.161`, using `~/.ssh/qoc_vps_ed25519`.
@@ -254,7 +364,7 @@ release is **deployed** at https://1f517.com/moresocial/. Interactive provider c
 - Secrets stay outside Git. Recovery secrets and backups currently remain on this host;
   an independent private recovery-vault copy has not been configured.
 
-## Review fixes completed
+## Review fixes completed — 2026-09-25
 
 All six confirmed findings in `docs/review-findings.md` are fixed and deployed:
 
@@ -292,12 +402,16 @@ Verification after fixes (2026-09-25):
   connector image reconciliation is tested with FakeDocker, and restore bootstrap SQL
   with real temporary Postgres. Full container restore/rollout subsequently passed on the VPS (above).
 
-`docs/review-probes.py` now forwards to the permanent regressions rather than retaining
-obsolete failing probes. The fix verification itself used no live credentials; the subsequent deployment is recorded above.
+The original failing probes were promoted into these permanent regressions. Run them with
+`uv run --frozen pytest -o addopts='' -q tests/test_review_fixes.py` (the former
+`docs/review-probes.py` forwarding module was removed on 2026-09-27). The fix verification
+itself used no live credentials; the subsequent deployment is recorded above.
 
 ## Events plan E0 — budget leak, failure logging, pacing (2026-09-25)
 
-From [the events plan](events-execution-plan.md) §3, found in the production review:
+From the archived [events plan](archive/development/events-execution-plan.md) §3, found in the
+production review. The local token caps involved here were removed later (`81634c4`,
+migration `0006`); the reservation release, failure logging and rate-limit pacing remain:
 
 - No embed jobs are queued, and `ai.embed` reserves nothing, while no embedder is
   configured; an embed job queued earlier completes as a no-op. Before this, every such
@@ -312,9 +426,9 @@ From [the events plan](events-execution-plan.md) §3, found in the production re
   limit") without using one of its attempts, so backfills no longer fail jobs.
 - `tests/test_ai_budget.py` (5 tests); full suite **126 passed**.
 
-## Production deployment — AI keys and admin page, 2026-09-25
+## Production deployment — AI keys and admin page, 2026-09-25 (personal keys since retired)
 
-- Active revision `a66135449b826d2a43a0f07721c974a6cebae07a` (previous `c921458`), deployed
+- Revision deployed: `a66135449b826d2a43a0f07721c974a6cebae07a` (previous `c921458`), deployed
   from a local Git bundle with `release.sh`; migration head `0003`. Web healthy, worker
   running, no errors in logs after start.
 - `runtime.env` additions (backup at `/srv/moresocial/runtime.env.before-a661354`):
@@ -324,12 +438,14 @@ From [the events plan](events-execution-plan.md) §3, found in the production re
   `ai_generation: false, ai_embeddings: false` until the admin page is used.
 - Public checks: `/` 200, `/enzosocial/` 303, `/quorum-of-clones/` 200 (unchanged),
   `/moresocial/` 200, `/moresocial/health` 200, `/moresocial/admin` 303 when signed out.
-- Pending: sign in as the admin, set the global provider and keys; real-key live checks.
+- Pending at the time, now obsolete: sign in as the admin, set the global provider and keys;
+  real-key live checks. The OpenRouter Admin configuration replaced this provider/key model.
 
-## User AI API keys — implemented 2026-09-25
+## User AI API keys — implemented 2026-09-25 (retired)
 
-Implements [the API-key execution plan](api-keys-execution-plan.md) milestones K0–K5
-(deployed above); live checks with real keys are pending.
+Implements the archived [API-key execution plan](archive/development/api-keys-execution-plan.md)
+milestones K0–K5 (deployed above). Personal keys and the direct providers were later retired,
+so its real-key live checks are obsolete.
 
 - `app/ai.py`: per-workspace tier resolution (`generator_for`), `embedder()` split from
   generation, billing-aware budgets (`userkey:<workspace>` scope, excluded from `global`),
@@ -357,7 +473,7 @@ Verification (local, synthetic providers and mock transports only):
 - No real Anthropic or OpenAI key was used. The OpenAI adapter is tested against the
   documented Responses API shape only; its first live call is part of the live checks.
 
-Pending live checks (deployment is recorded above):
+Pending live checks at the time (obsolete since the feature was retired):
 
 1. Admin page: sign in as `errslima@gmail.com`, save the OpenAI (and optionally Voyage)
    key, select the global provider; `/ready` should then report `ai_generation: true`.
@@ -365,7 +481,10 @@ Pending live checks (deployment is recorded above):
    in that account's console; add a revoked key and see the refusal; remove the key and
    confirm fallback. Repeat for OpenAI.
 
-## Milestones
+## Milestones (first release, 2026-09-25)
+
+Historical evidence. Several of these tests have since changed with the retired manual
+gathering workflow, personal keys and direct providers.
 
 | Milestone | State | Evidence |
 | --- | --- | --- |
@@ -377,7 +496,7 @@ Pending live checks (deployment is recorded above):
 | M5 workflow UI | done (synthetic) | `tests/test_workflow.py` (all screens, gathering flow with calendar conflicts, drafts, rewrite, manual edit, RSVP suggestion needing confirmation, next steps, About me, manual link/unlink, account deletion); `tests/test_browser.py` Playwright at 1280px and 390px through the prefix proxy: sign-in, QR pairing, evidence, claim fix, gathering, draft + real clipboard copy, RSVP, cited answer, no horizontal scroll, no provider writes |
 | M6 deployment packaging | deployed; interactive provider checks pending | `deploy/` (Dockerfile, compose, db init, Caddy fragment, provisioner + systemd, backup/restore, release/rollback), `docs/operator-setup.md`, `.github/workflows/ci.yml`, `scripts/test.sh`, `scripts/dev.sh`, `scripts/seed_demo.py`; `tests/test_backup_restore.py` (dump → encrypt → restore into a disposable DB → head, counts, grants decrypt, vector query) |
 
-## Original implementation verification (before review fixes)
+## Original implementation verification (before review fixes, 2026-09-25)
 
 - `bash scripts/test.sh`: 72 Python tests (real PostgreSQL 16 + pgvector 0.6 via pgserver, non-superuser
   runtime role, Playwright Chromium) and 19 Node tests passed. It also passed from a clean copy of
@@ -392,9 +511,12 @@ the Compose stack, `backup.sh`/`restore.sh` container steps, the provisioner aga
 and connector recovery with a real Chromium. CI builds both images; the rest is covered by the
 live checks below.
 
-## Decisions and deviations
+## Decisions and deviations (2026-09-25, partly superseded)
 
-User API keys (deviations from `docs/api-keys-execution-plan.md`):
+The AI-provider decisions below describe retired implementations; current AI is
+OpenRouter-only (see [architecture](architecture.md)).
+
+User API keys (deviations from the archived `api-keys-execution-plan.md`):
 
 - The OpenAI adapter uses `httpx` directly (like the Voyage adapter) instead of the
   `openai` SDK, so no dependency or lock-file change was needed.
@@ -413,6 +535,7 @@ User API keys (deviations from `docs/api-keys-execution-plan.md`):
   `voyage-3.5`, 1024 dimensions (Anthropic offers no embedding endpoint). The Voyage request
   shape comes from its public API and has not been exercised live.
 - EnzoSocial's `patch-library.cjs` was not copied: it only patches the send path, and Moresocial has none.
+  (Superseded 2026-09-26: explicit WhatsApp sending added a pinned `connector/patch-library.cjs`.)
 - Static assets are served by a small whitelisted route instead of Starlette `StaticFiles`,
   which resolves paths wrongly when `root_path` is set and the proxy has already stripped the prefix.
 - Calendar events first seen already cancelled are never imported. Later cancellations delete
@@ -420,64 +543,19 @@ User API keys (deviations from `docs/api-keys-execution-plan.md`):
 - Rebuild/embedding/extraction jobs are reconciled every 10 minutes (`reconcile_ai`), which also
   performs reindexing after an embedding-model change.
 
-## External dependencies and pending live checks
+## External dependencies and pending live checks (2026-09-25, superseded)
+
+First-release snapshot. The current list is
+[Pending live checks and operator actions](#pending-live-checks-and-operator-actions).
 
 | Check | State | Who |
 | --- | --- | --- |
 | Google APIs enabled, consent scopes/audience, test user | Reported done by the operator; not independently verified | operator |
 | Real Google consent + bounded first sync | **pending** | operator after deploy |
 | Real WhatsApp QR pairing, history sync, restart keeps session | **pending** | user pairs phone |
-| Anthropic + Voyage keys; live cited-answer and extraction quality evaluation | **pending**: no keys available | operator |
+| Anthropic + Voyage keys; live cited-answer and extraction quality evaluation | **pending**: no keys available (obsolete: replaced by OpenRouter) | operator |
 | Docker image builds, Compose stack, provisioner with real Docker | **passed** build/start; actual paired connector lifecycle pending | deployed |
 | VPS rollout (ports, subnet, Caddy route, existing apps unaffected) | **passed** | deployed |
 | First backup + scratch restore on the host | **passed**; scratch resources removed | deployed |
 
 Deployed revision: `c921458b7ece3329e41ef7390dd4bf171ef062f5`. Rollback target: none (first deployment); removal procedure is in the operator runbook.
-
-## Automatic Events — 2026-09-26
-
-Implemented the Events overview and evidence timeline described in [Events](events.md).
-Manual event creation/planning routes removed; `/gatherings` redirects permanently.
-Migration 0010 is additive. Source ingestion plus worker reconciliation recognize Calendar,
-WhatsApp and qualifying email events, with cross-conversation matching, explicit attendance,
-booking precedence, persistent dismissal and immediate source-exclusion invalidation.
-
-Local verification: 78 focused integration/browser checks pass (Events, auth, agent sessions,
-Google sync, workflow, source review fixes, diagnostics; 1440/390px browser coverage). Rendered
-screenshots inspected. A broad run also exposed legacy AI-key/budget/config tests that target
-features removed by the earlier OpenRouter migration; representative failures reproduced on
-unchanged 7b643cc. These are separate from the Events release checks.
-
-Live deployment and recognition verification recorded below.
-
-Deployment completed at revision `90384f2` (migration `0010`). Readiness checks pass for
-DB, migrations, Google configuration, encryption, generation and embeddings. Authenticated
-live reviews pass at 1440px and 390px: Events navigation, permanent legacy redirect, absence
-of manual creation, detail/timeline/source links, Home Upcoming and no browser errors or
-horizontal overflow. The temporary review session was revoked.
-
-The reference booking is automatically assembled across email and WhatsApp; the final check
-found 49 supporting sources and six attendance replies. Comparing against the booking exposed
-whitespace-heavy email truncation: input now compacts email whitespace and preserves the whole
-booking table, recognizes consecutive sessions as one outing, and prioritizes booking email
-over conversational estimates. Its full booked time range now matches the source.
-
-Verification after live fixes: 82 combined release checks passed, followed by 12 booking/UI
-checks and 74 final Events/auth/sync/exclusion/diagnostic checks. Initial recognition backfill
-continues in the normal worker; new imports also schedule reviews automatically. Recognition
-has the documented recent-history and ambiguity limits; source context remains available for
-review. No source-message content or private screenshots are committed.
-
-The requested review notification was sent to the owner’s linked WhatsApp self-chat with a
-confirmed message receipt. It includes the Events URL and notes the ongoing initial history scan.
-
-## Event identity — 2026-09-27
-
-Implemented [the event identity plan](event-identity-execution-plan.md): stable original records,
-reversible groups (`canonical_event_id`) from user and automatic decisions, the `resolve_events`
-resolver with server-side verdict validation, field-level provenance, review UI (Possible
-duplicates, Same event / Keep separate, Separate…, Undo…) and the dry-run operator tool
-`scripts/reconcile-events.py`. Migration `0011` (additive). Active revision `d5fc668`, resolver
-mode `apply`. The owner's confirmed Sunday outing was repaired through the tested correction
-service (one event, 83 sources, 16:15–17:00). Details and verification: plan section M6.
-

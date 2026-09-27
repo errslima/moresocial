@@ -2,7 +2,6 @@
 request/job correlation and failure-tolerant writing. Synthetic providers only."""
 import asyncio
 import json
-import os
 import threading
 import time
 
@@ -165,7 +164,7 @@ def test_public_requests_get_trusted_ids_and_route_templates(browser, capsys, mo
 
 
 def test_unexpected_errors_show_the_request_reference(app, monkeypatch, capsys):
-    from app import gatherings
+    from app import next_steps
     client = TestClient(app, base_url='https://moresocial.test', raise_server_exceptions=False)
     client.headers['Origin'] = 'https://moresocial.test'
     from conftest import Browser
@@ -175,7 +174,7 @@ def test_unexpected_errors_show_the_request_reference(app, monkeypatch, capsys):
 
     def boom(ws):
         raise RuntimeError('CANARY private detail')
-    monkeypatch.setattr(gatherings, 'next_steps', boom)
+    monkeypatch.setattr(next_steps, 'next_steps', boom)
     capsys.readouterr()
     r = client.get('/moresocial/home')
     rid = r.headers['X-Request-ID']
@@ -238,14 +237,19 @@ def test_job_retry_terminal_and_deferral_events(browser, capsys, monkeypatch):
     assert len(events(err, 'job_failed')) == 2 and events(err, 'job_failed')[0]['frames']
 
     with db.session() as s:
-        jobs.enqueue(s, wid, 'embed_chunk', 'probe:budget', {'chunk_id': '00000000-0000-0000-0000-000000000002'})
+        jobs.enqueue(s, wid, 'embed_chunk', 'probe:rate', {'chunk_id': '00000000-0000-0000-0000-000000000002'}, max_attempts=2)
 
-    def budget(job):
-        raise ai.BudgetExhausted('global')
-    monkeypatch.setattr(worker, 'handle', budget)
+    def rate_limited(job):
+        raise ai.rate_limited(7)
+    monkeypatch.setattr(worker, 'handle', rate_limited)
+    monkeypatch.setattr(worker.random, 'uniform', lambda a, b: 0)  # no jitter
     assert worker.run_one()
     deferred = events(capsys.readouterr().err, 'job_deferred')[0]
-    assert (deferred['code'], deferred['scope'], deferred['kind']) == ('budget_exhausted', 'global', 'embed_chunk')
+    assert (deferred['code'], deferred['delay_ms'], deferred['kind']) == ('rate_limited', 7000, 'embed_chunk')
+    with db.session() as s:
+        job = s.scalars(select(Job).where(Job.idempotency_key == 'probe:rate')).one()
+        assert (job.status, job.attempts, job.max_attempts, job.last_error) == ('queued', 0, 2, 'AI waiting: provider rate limit')
+        assert job.run_after > jobs.utcnow()
 
 
 def test_queue_stats_reports_lag_and_failures(browser, capsys):

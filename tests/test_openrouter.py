@@ -3,8 +3,10 @@ import json
 
 import httpx
 import pytest
+from sqlalchemy import select
 
-from app import ai, config
+from app import ai, config, db, event_resolver, events as automatic_events, memory, observation_groups, retrieval, suggestions
+from app.models import Connection
 
 
 def test_openrouter_uses_fixed_host_schema_and_current_routing_policy():
@@ -107,3 +109,40 @@ def test_embedding_response_alias_is_scoped_to_verified_model_and_revision():
         (None, requested, identity),
     ]:
         assert not ai.embedding_identity_accepted(returned, model, canonical)
+
+
+def test_active_generation_schemas_are_valid_strict_json_schemas():
+    """OpenRouter sends every schema with ``strict: true``: objects must be closed and
+    list every property as required, recursively."""
+    def check(schema, path):
+        if schema.get('type') == 'object':
+            assert schema.get('additionalProperties') is False, path
+            assert set(schema.get('required', [])) == set(schema.get('properties', {})), path
+            for name, sub in schema['properties'].items():
+                check(sub, f'{path}.{name}')
+        elif schema.get('type') == 'array':
+            check(schema['items'], path + '[]')
+    for name, schema in [('extract', memory.EXTRACT_SCHEMA), ('answer', retrieval.ANSWER_SCHEMA),
+                         ('suggestions', suggestions.SCHEMA), ('suggestion_draft', suggestions.DRAFT_SCHEMA),
+                         ('events', automatic_events.SCHEMA), ('event_resolver', event_resolver.SCHEMA),
+                         ('observation_groups', observation_groups.SCHEMA)]:
+        check(schema, name)
+
+
+def test_personal_ai_keys_are_retired(browser):
+    """Personal AI keys are gone: no key controls, and the former routes no longer exist."""
+    canary = 'sk-ant-api03-SyntheticRetiredKey-0001-abcd'
+    browser.login('alex')
+    page = browser.get('/connections').text
+    assert 'AI assistant' in page and 'shared OpenRouter account' in page
+    assert 'API key' not in page and 'name="api_key"' not in page and '/connections/ai/' not in page
+    csrf = browser.csrf('/connections')
+    for path, form in [('/connections/ai/anthropic/key', {'api_key': canary}),
+                       ('/connections/ai/openai/key', {'api_key': canary}),
+                       ('/connections/ai/anthropic/remove', {}),
+                       ('/connections/ai/preference', {'provider': 'openai'})]:
+        r = browser.post(path, {**form, 'csrf': csrf})
+        assert r.status_code == 404, path  # valid CSRF: a 403 would not prove the route is gone
+        assert canary not in r.text
+    with db.session() as s:
+        assert s.scalars(select(Connection.provider)).all() == ['google']

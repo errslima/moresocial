@@ -1,7 +1,15 @@
 # Automatic events — execution plan
 
-Current implementation: see [Events](events.md) and the 2026-09-26 entry in
-[implementation status](implementation-status.md). The new user instruction removes manual
+> **Archived 2026-09-27.** Historical development document, kept for its rationale and
+> evidence. Current docs and code take precedence wherever they conflict; its
+> instructions are not current tasks. See the [archive index](README.md).
+>
+> Superseded: automatic Events were deployed on 2026-09-26 without manual
+> planning or field editing, and matching was replaced by the
+> [event identity plan](event-identity-execution-plan.md).
+
+Current implementation: see [Events](../../events.md) and the 2026-09-26 entry in
+[implementation status](../../implementation-status.md). The new user instruction removes manual
 event creation and supersedes the manual-planning portions of this historical plan.
 
 Historical status: E0 implemented 2026-09-25 (see `docs/implementation-status.md`); E1–E6 not

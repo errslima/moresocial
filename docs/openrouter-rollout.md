@@ -1,13 +1,19 @@
 # OpenRouter rollout runbook
 
+Current configuration reference: [operator setup](operator-setup.md#openrouter-ai-configuration).
+The key is saved in Admin and stored encrypted in the database; `deploy/compose.yaml` mounts
+no OpenRouter key file.
+
 1. Record non-secret counts of operator settings, AI connections and embedding spaces;
    take and verify an encrypted database backup. Deploy the migration before web and
    worker code, then deploy web and worker together so old workers cannot use retired
    providers.
 2. Create a dedicated, funded OpenRouter key and set its monetary spending limit in
-   OpenRouter. In Admin select exact catalog model IDs and use **Test and save**. The
-   synthetic generation and embedding probes are paid calls; record their latency,
-   model IDs and returned usage without recording keys or private text. Each attempt
+   OpenRouter; Moresocial has no local token cap, but records token usage (shown on
+   Connections) and reported USD cost (shown in Admin). In Admin select exact catalog
+   model IDs and use **Test and save**. The synthetic generation and embedding probes
+   are paid calls; record their latency, model IDs and returned usage without recording
+   keys or private text. Each attempt
    has a reference (shown in Admin); `logs.py find <reference>` lists its catalog,
    reasoning, embedding, query, validation and commit stages with requested, catalog
    canonical and returned model IDs. The catalog check runs first: an outage or an
@@ -27,7 +33,7 @@
    `876cc6ebfa91c61019f1dfe196103133` on 2026-09-26. No prefix stripping or
    acceptance of unverified revisions is applied; generation validation stays exact.
 3. Watch pending embedding progress while the worker rebuilds. New chunks are written
-   to both spaces. Verify an extraction, a cited answer, an invitation draft and an
+   to both spaces. Verify an extraction, a cited answer, a Suggestions draft and an
    older source retrieval. Do not send messages as part of this verification.
 4. If generation is unhealthy, disable AI; imports and keyword search remain usable.
    Roll back an embedding index only when its OpenRouter model remains callable and

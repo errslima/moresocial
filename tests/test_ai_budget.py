@@ -1,5 +1,8 @@
-"""E0: budgets are only charged for work a provider can bill, rate limits pace the worker
+"""Usage accounting only charges work a provider can bill, rate limits pace the worker
 instead of burning job attempts, and provider failures are logged (without content)."""
+from datetime import timedelta
+import json
+
 import httpx
 import pytest
 from sqlalchemy import func, select
@@ -106,18 +109,42 @@ def test_unknown_outcome_keeps_the_reservation(browser):
     assert budgets()['workspace'] == kept + embed_tokens  # the provider may have billed: stay conservative
 
 
-def test_adapters_log_rate_limits_without_content(capsys):
-    from test_ai_keys import OPENAI_KEY, anthropic_error, anthropic_with, call, openai_with
+def test_openrouter_rate_limits_are_not_billed_and_logged_without_content(capsys):
+    key, prompt, body = 'sk-or-v1-SyntheticKeyCanary0000', 'PROMPT_CANARY about Sam', 'BODY_CANARY'
+    p = ai.OpenRouterProvider(key, 'vendor/generation', 'vendor/embed', 2, transport=httpx.MockTransport(
+        lambda r: httpx.Response(429, headers={'retry-after': '7'}, json={'error': {'message': body}})))
     with pytest.raises(ai.AIUnavailable) as exc:
-        call(openai_with(lambda r: httpx.Response(429, headers={'retry-after': '7'},
-                                                  json={'error': {'code': 'rate_limit_exceeded'}})))
-    assert exc.value.not_billed and exc.value.retry_after == 7
+        p.generate(system='SYSTEM_CANARY', prompt=prompt, schema={'type': 'object'}, max_tokens=10, effort='low', context={})
+    assert (str(exc.value), exc.value.not_billed, exc.value.retry_after, exc.value.http_status) == ('rate_limited', True, 7.0, 429)
     with pytest.raises(ai.AIUnavailable) as exc:
-        call(anthropic_with(anthropic_error(429, 'rate_limit_error')))
-    assert str(exc.value) == 'rate_limited' and exc.value.not_billed
+        p.embed([prompt], 'document')
+    assert (str(exc.value), exc.value.not_billed, exc.value.retry_after) == ('rate_limited', True, 7.0)
     err = capsys.readouterr().err
-    assert '"event": "ai_generation_failed"' in err and '"provider": "openai"' in err and '"provider": "anthropic"' in err
-    assert '"status": 429' in err and OPENAI_KEY not in err and 'prompt' not in err
+    calls = [json.loads(line) for line in err.splitlines() if line.startswith('{') and '"provider_call"' in line]
+    assert [(c['operation'], c['requested_model']) for c in calls] == [('generation', 'vendor/generation'),
+                                                                        ('embedding', 'vendor/embed')]
+    for c in calls:
+        assert (c['event'], c['provider'], c['http_status'], c['error_category'], c['delay_ms'], c['outcome'], c['level']) == (
+            'provider_call', 'openrouter', 429, 'rate_limited', 7000, 'failed', 'error')
+    for canary in (key, 'SyntheticKeyCanary', 'PROMPT_CANARY', 'SYSTEM_CANARY', body):
+        assert canary not in err
+
+
+def test_workspaces_share_the_provider_with_separate_usage_accounting(make_browser):
+    alex, blake = make_browser(), make_browser()
+    alex.login('alex', calendar=False)
+    blake.login('blake', calendar=False)
+    schedule()
+    drain()
+    wa, wb = workspace_of('alex@example.test'), workspace_of('blake@example.test')
+    with db.session() as s:
+        usage = s.scalars(select(ProviderUsage)).all()
+        scopes = {b.scope: b.tokens for b in s.scalars(select(UsageBudget))}
+    spent = {w: sum(u.input_tokens + u.output_tokens for u in usage if u.workspace_id == w) for w in (wa, wb)}
+    assert {u.workspace_id for u in usage if u.operation == 'generate'} == {wa, wb}
+    assert all(u.status == 'reconciled' and u.billing == 'operator' and u.provider == 'fake' for u in usage)
+    assert spent[wa] and spent[wb]
+    assert scopes == {'workspace:' + str(wa): spent[wa], 'workspace:' + str(wb): spent[wb], 'global': spent[wa] + spent[wb]}
 
 
 def test_allowance_migration_resumes_only_shared_budget_waits(browser, database):
@@ -131,7 +158,7 @@ def test_allowance_migration_resumes_only_shared_budget_waits(browser, database)
     cfg = Config(str(Path(__file__).resolve().parents[1] / 'alembic.ini'))
     cfg.attributes['database_url'] = database['runtime_url']
     command.downgrade(cfg, '0005')
-    until = ai.tomorrow_start()
+    until = jobs.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1, minutes=1)
     reasons = [
         ('workspace', 'queued', 'AI paused: daily workspace budget reached'),
         ('global', 'queued', 'AI paused: daily global budget reached'),

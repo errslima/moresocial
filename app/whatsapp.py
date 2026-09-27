@@ -15,7 +15,7 @@ import uuid
 import httpx
 from sqlalchemy import func, select
 
-from . import config, db, diagnostics, jobs, security
+from . import config, db, diagnostics, security
 from .ingest import IngestResult, Participant, SourceRecord, register_contacts, schedule_rebuilds, self_identifiers, upsert
 from .models import WhatsAppConnector, Account
 from .repo import Scoped

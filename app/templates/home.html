@@ -7,7 +7,6 @@
 {% if conn and conn.state != 'active' %}
 <p class="warn">Google access needs attention. <a href="{{ url('/connections') }}">Open Connections</a> to reconnect.</p>
 {% endif %}
-{% if budget.paused %}<p class="warn">{% if budget.billing == 'user' %}Today's limit for your API key is used up{% else %}Today's AI budget is used up{% endif %}. Memory updates and drafting resume tomorrow.</p>{% endif %}
 <section aria-labelledby="plans">
   <div class="event-heading"><h2 id="plans">Upcoming events</h2><a href="{{ url('/events') }}">All events →</a></div>
   {% if events %}<ul class="event-home-list">{% for e in events %}<li><a href="{{ url('/events/' ~ e.id) }}">{{ e.title }}</a>

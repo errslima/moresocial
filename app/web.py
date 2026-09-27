@@ -10,10 +10,9 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Iterator
 from urllib.parse import urlsplit
-import uuid
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session as DB
 
@@ -45,8 +44,6 @@ NOTICES = {
     'unconfigured': 'Google sign-in is temporarily unavailable.',
     'account-deleted': 'Your account and its data were deleted.',
     'reconnected': 'Google access was updated.',
-    'ai-key-saved': 'Your API key works and is saved. The assistant now uses it.',
-    'ai-key-removed': 'Your API key was removed from Moresocial. Revoke it in the provider console if you no longer need it.',
     'admin-saved': 'Global AI settings saved. The worker picks them up within a minute.',
     'events-grouped': 'Grouped as one event. All messages from both are kept together.',
     'events-separate': 'Kept as separate events. They will not be grouped automatically.',

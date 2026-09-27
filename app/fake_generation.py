@@ -35,7 +35,7 @@ def respond(ctx: dict) -> dict:
         return suggestion_review(ctx)
     if ctx['purpose'] == 'suggestion_draft':
         return {'text': f"Hi {ctx['person']}, [your answer here]."}
-    return {'extract': extract, 'answer': answer, 'draft': draft, 'rewrite': rewrite, 'rsvp': rsvp, 'group_observations': group_observations}[ctx['purpose']](ctx)
+    return {'extract': extract, 'answer': answer, 'group_observations': group_observations}[ctx['purpose']](ctx)
 
 
 def event_identity(ctx):
@@ -105,37 +105,6 @@ def answer(ctx: dict) -> dict:
     top = [e for _, e in scored[:3]]
     text = ' '.join(f"{e.get('speaker') or 'Someone'} wrote: “{e['text'][:160]}” [{e['label']}]" for e in top)
     return {'answer': text, 'citations': [e['label'] for e in top], 'insufficient': False}
-
-
-def draft(ctx: dict) -> dict:
-    ev = ctx['event']
-    when = f" on {ev['times'][0]}" if ev.get('times') else ''
-    hook = next((f for f in ctx['facts'] if f.get('category') == 'interest'), None)
-    extra = f" I remembered you said you enjoy {hook['value']}." if hook else ''
-    text = f"Hi {ctx['person']}! I'm organizing {ev['title']}{when}.{extra} Would you like to join?"
-    return {'text': text, 'citations': [hook['label']] if hook else []}
-
-
-def rewrite(ctx: dict) -> dict:
-    text = ctx['text']
-    if ctx['style'] == 'shorter':
-        first = re.split(r'(?<=[.!?])\s+', text.strip())
-        text = ' '.join(first[:1] + first[-1:]) if len(first) > 2 else text
-    else:
-        text = text.replace('Hi ', 'Hey ').replace('Would you like to join?', 'Up for it?')
-    return {'text': text, 'citations': ctx.get('citations', [])}
-
-
-def rsvp(ctx: dict) -> dict:
-    for line in reversed(ctx['lines']):
-        t = line['text'].lower()
-        if re.search(r"\b(can't|cannot|won't make|not able|no thanks)\b", t):
-            return {'status': 'declined', 'evidence': [line['label']]}
-        if re.search(r"\b(maybe|not sure|might)\b", t):
-            return {'status': 'maybe', 'evidence': [line['label']]}
-        if re.search(r"\b(i'm in|count me in|yes|sounds great|i'll be there|i'll come)\b", t):
-            return {'status': 'accepted', 'evidence': [line['label']]}
-    return {'status': 'unclear', 'evidence': []}
 
 
 def group_observations(ctx):

@@ -1,5 +1,13 @@
 # Moresocial first release — implementation handoff
 
+> **Archived 2026-09-27.** Historical development document, kept for its rationale and
+> evidence. Current docs and code take precedence wherever they conflict; its
+> instructions are not current tasks. See the [archive index](README.md).
+>
+> Completed: the first release (M0–M6) was deployed on 2026-09-25. Its read-only,
+> copy-only and manual gathering defaults were later superseded by explicit
+> WhatsApp sending and automatic Events.
+
 Status: executable design plan, not an implemented or deployed application.
 Prepared 2026-09-25. Work in the standalone `errslima/moresocial` repository.
 

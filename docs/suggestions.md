@@ -10,7 +10,8 @@ The inbox shows five items per page, with deadline ordering, Snoozed and History
 It reports AI availability, stale WhatsApp status, pending/failed reviews and incomplete
 history. The detail view shows the reviewed conversation context and original sources.
 Gmail, group chats and optional reconnect/check-in suggestions are outside this
-release. Existing gathering workflows are unchanged.
+release. Manual gathering workflows have since been retired; events are recognized
+automatically ([Events](events.md)).
 
 ## Review and lifecycle
 

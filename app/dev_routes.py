@@ -2,7 +2,6 @@
 configuration refuses in production and on the production URL."""
 from __future__ import annotations
 
-import hashlib
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request

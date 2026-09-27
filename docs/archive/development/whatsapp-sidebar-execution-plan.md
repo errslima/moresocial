@@ -1,5 +1,12 @@
 # Execution plan: left sidebar and WhatsApp conversations
 
+> **Archived 2026-09-27.** Historical development document, kept for its rationale and
+> evidence. Current docs and code take precedence wherever they conflict; its
+> instructions are not current tasks. See the [archive index](README.md).
+>
+> Implemented and deployed 2026-09-26 (`d667d92`). Its "no composer or
+> send" rule was superseded by explicit WhatsApp sending (`b3c41c8`, `eaf3848`).
+
 Implement the following changes in `moresocial/`. All file paths below are relative to that directory.
 
 The existing WhatsApp imports provide the required data; no new integration is needed. The scope is **viewing conversations only**, consistent with Moresocial's current read-only behavior. Keep the existing branding and light/dark themes; use EnzoSocial as the reference for layout.

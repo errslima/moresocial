@@ -1,7 +1,8 @@
 # Events
 
 Event identity (one outing = one event, reversible grouping and corrections) is implemented per the
-[execution plan](event-identity-execution-plan.md); see **Identity and grouping** below.
+archived [execution plan](archive/development/event-identity-execution-plan.md); see **Identity and
+grouping** below.
 
 Gatherings is now Events. Events are created only from imported WhatsApp conversations,
 email or Google Calendar. The creation API and manual planner have been removed; old

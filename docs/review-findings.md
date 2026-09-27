@@ -22,12 +22,26 @@ they describe the pre-fix implementation, not outstanding defects.
   generation/embedding responses, fallback usage accounting and live quality remain
   unverified; the real adapters still need mocked transport/SDK coverage.
 
-The original probes have been promoted into the permanent suite.
-`docs/review-probes.py` forwards to those tests for compatibility. Run normally:
+The original probes have been promoted into the permanent suite in
+`tests/test_review_fixes.py`; the former `docs/review-probes.py` forwarding module was
+removed on 2026-09-27. Run the regressions with:
 
 ```bash
-.venv/bin/python -m pytest tests/test_review_fixes.py -q --tb=short
+uv run --frozen pytest -o addopts='' -q tests/test_review_fixes.py
 ```
+
+The probe names quoted under each finding are the original one-off names. The permanent
+regressions are: R1 `test_slow_ask_keeps_public_and_internal_listeners_responsive`;
+R2 `test_final_account_cleanup_survives_deletion_and_lost_ack`;
+R3 `test_gmail_burst_resumes_history_pages_without_losing_messages`;
+R4 `test_long_email_uses_matching_segments_for_answers_and_extraction` and
+`test_legacy_chunks_are_rebuilt_before_retrieval`;
+R5 `test_restore_bootstrap_sql_runs_outside_a_transaction`;
+R6 `test_connector_upgrade_and_rollback_preserve_session` and
+`test_unavailable_connector_upgrade_keeps_working_container`; plus
+`test_review_migration_upgrades_existing_data_and_matches_models` for migration `0002`.
+Run one with its node ID, for example
+`uv run --frozen pytest -o addopts='' -q tests/test_review_fixes.py::test_restore_bootstrap_sql_runs_outside_a_transaction`.
 
 The permanent regressions now pass. The restore regression executes the SQL file
 used by the script against disposable Postgres and cleans up its test database/roles.
@@ -168,4 +182,6 @@ The six findings above were confirmed and are now fixed. Separately, production
 readiness still requires the pending real Google consent, WhatsApp pairing/restart,
 generation/embedding adapter checks, Docker builds and rollout, and actual backup
 restore. The handover's GET side effects, identity-unlink heuristic and concurrent
-token-refresh handling also merit follow-up.
+token-refresh handling also merit follow-up. (2026-09-27: the Anthropic/Voyage adapters
+have since been removed in favor of OpenRouter; for the live checks that remain, see
+[implementation status](implementation-status.md#pending-live-checks-and-operator-actions).)

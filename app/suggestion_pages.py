@@ -133,7 +133,7 @@ def generate(request: Request, sid: uuid.UUID, ctx: Ctx = Depends(require_mutati
     except ValueError as exc:
         ctx.s.expire_all()
         return detail_page(request, ctx, found(ctx.ws.get(Suggestion, sid)), str(exc), 409)
-    except (ai.AIUnavailable, ai.InvalidOutput, ai.BudgetExhausted) as exc:
+    except (ai.AIUnavailable, ai.InvalidOutput) as exc:
         ref = ai_failure('suggestion_draft', exc)
         ctx.s.expire_all()
         return detail_page(request, ctx, found(ctx.ws.get(Suggestion, sid)), ai_error(exc) + (f' Reference: {ref}' if ref else ''), 503)

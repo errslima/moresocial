@@ -1,12 +1,12 @@
-"""M5: the lasergame gathering workflow through the server-rendered screens."""
+"""Server-rendered screens end to end: every page renders, Home next steps, About me,
+manual identity links and account deletion."""
 import re
 import uuid
-from datetime import timedelta
 
 from sqlalchemy import select
 
-from app import db, synthetic, synthetic_data
-from app.models import Draft, EventPerson, Person, PersonIdentifier
+from app import db, synthetic
+from app.models import Person, PersonIdentifier
 from conftest import drain, workspace_of
 from worker.main import schedule
 
