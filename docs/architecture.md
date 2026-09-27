@@ -88,9 +88,11 @@ separate vector database service. `app/models.py` defines accounts, workspaces,
 connections, sources, people, chunks, embeddings, claims and observation groups,
 suggestions, events (with mentions, identity decisions and pair scans), WhatsApp send
 receipts, answers, jobs, operator settings and usage accounting (`usage_budgets`,
-`provider_usage`). Tables and columns from retired features (manual-planner `drafts`,
-`event_people`, `event_candidates`; personal-key metadata) remain for historical rows;
-old `provider_usage` rows keep their historical provider/billing labels. Workspace scoping
+`provider_usage`). Migration `0012` removed the empty manual-planner `drafts`,
+`event_people`, `event_candidates` tables and the unused draft-reference column on
+answer citations. Personal-key metadata and encrypted legacy keys remain because the
+production inventory found nonempty records; old `provider_usage` rows retain their
+historical provider/billing labels. Workspace scoping
 and composite foreign keys separate users' data; matching contacts do not create shared
 cross-user profiles.
 

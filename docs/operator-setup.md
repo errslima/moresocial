@@ -302,6 +302,12 @@ that has newer user writes.
 
 ## 7. Rollback
 
+Schema `0012` removes the retired manual gathering tables. Images older than `79304e9`
+require a coordinated structural downgrade before startup; use the
+[schema cleanup rollback procedure](cleanup/schema-rollout.md#failure-and-rollback).
+The current rollback script refuses incompatible images before changing release state.
+An older copy of the script does not contain that protection.
+
 - Review-fix migration `0002` adds a durable connector-cleanup outbox and source text
   segments. The worker automatically rebuilds old chunks for pipeline `v2-segments`;
   retrieval skips old chunks until rebuilt. Source data and user-confirmed claims remain.

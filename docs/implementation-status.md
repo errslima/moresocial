@@ -9,28 +9,34 @@ validation or deployment.
 
 ## Current state (recorded 2026-09-27)
 
-- **Last verified release:** `f6cf3eb`, schema `0011`, deployed and checked on
-  2026-09-27. This removes retired runtime code and restores current test coverage.
-  Readiness passes; 18 authenticated desktop/mobile page checks passed. The prior
-  event-identity release was `d5fc668` (recorded by `bbb8379`).
+- **Last verified release:** `79304e9`, schema `0012`, deployed and checked on
+  2026-09-27. It follows the reviewed runtime cleanup `f6cf3eb` and removes only
+  the empty manual gathering schema. Readiness passes; 18 authenticated desktop/mobile
+  page checks passed after each deployment; the WhatsApp connector is `ready`.
+  The prior event-identity release was
+  `d5fc668` (recorded by `bbb8379`).
 - **Current behavior:** see [architecture](architecture.md). Production AI uses one
   operator-owned OpenRouter configuration managed in Admin; spending limits are set on the
   OpenRouter key and token usage is still reported, with no local caps. Personal AI keys
   and the direct Anthropic, OpenAI and Voyage adapters are retired. Events are recognized
   automatically; manual gathering creation and invitation planning are retired. WhatsApp
   sends only on an explicit user action; Gmail and Calendar remain read-only.
-- **Rollback for that release:** prefer `reconcile-events.py mode --value off` or
-  `withdraw-automatic` and a forward fix; the previous application release was `90384f2`
-  (see [operator setup](operator-setup.md#7-rollback)).
+- **Rollback for that release:** returning to `f6cf3eb` requires a coordinated
+  downgrade to schema `0011` before starting old code. The live rollback guard was
+  verified to refuse the incompatible image without changing the active release.
+  See the [schema rollback procedure](cleanup/schema-rollout.md#failure-and-rollback).
 - **Cleanup verification:** [runtime cleanup](cleanup/README.md) passed **295 Python**
   and **33 connector** tests locally; the connector suite also passed **33/33** on
   production's Node **22.23.3** image. Review fixed inventory detection of a leftover
   draft-reference column. The encrypted pre-release backup was restored successfully
   in a disposable database, then the scratch resources were removed.
-- **Schema cleanup in preparation:** the read-only production inventory found group G
-  empty and eligible. Group K contains two personal-key records and remains retained.
-  Migration `0012` and its coordinated [rollout procedure](cleanup/schema-rollout.md)
-  are implemented; deployment will be recorded after live verification.
+- **Schema cleanup verified:** final local suite **305 Python tests passed**, including
+  browser/migration/restore coverage; **33 connector tests passed**. Rehearsing
+  upgrade/downgrade/re-upgrade on a restored production backup preserved every retained
+  row. During the live migration, all **39 retained tables / 21,040 rows** matched
+  aggregate counts and content digests before writers resumed. Production inventory
+  reports G `removed`, K `ineligible`: two personal-key and two legacy operator-key
+  records are retained. No stored credentials were deleted or revoked.
 - **No separate entry:** the diary and observation-group release (`6c762e3`, migration
   `0007`) preceded the Suggestions release below; its verification notes are in the
   archived [diary notes](archive/development/diary-observations.md).

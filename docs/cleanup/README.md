@@ -1,6 +1,8 @@
 # Codebase cleanup: execution handoff
 
-Prepared: 2026-09-27. Status: plans 1 and 2 and plan 3 phase A implemented locally on 2026-09-27 (not committed or deployed); plan 3 phase B deferred at its data decision gate.
+Prepared: 2026-09-27. Status: plans 1 and 2 reviewed/deployed at `f6cf3eb`; plan 3
+group G deployed at `79304e9`, schema `0012`. Group K is retained because the
+production inventory found stored credentials. See [rollout evidence](schema-rollout.md).
 
 Repository: `/Users/enzolima/Projects/1f517/moresocial` (its own Git repository,
 inside the separate `1f517` checkout). Run all commands from the MoreSocial root.

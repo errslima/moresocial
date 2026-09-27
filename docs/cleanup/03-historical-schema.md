@@ -1,7 +1,7 @@
 # Plan 3: inventory and safely retire historical schema
 
 Status: phase A reviewed and deployed on 2026-09-27; production inventory permits phase B group G.
-Group G migration `0012` is implemented and locally verified; rollout is pending.
+Group G migration `0012` is deployed at `79304e9`; production retained-data checks pass.
 Group K is retained because production contains two encrypted personal-key records.
 Depends on: plans 1 and 2 completed and verified.
 Read [the handoff](README.md) first. Baseline schema was `0011`; determine the actual
@@ -222,16 +222,16 @@ Phase A:
 - [x] Every candidate has an explicit retained/eligible/unknown decision with evidence.
 - [x] Missing production access is stated; synthetic counts are not presented as live counts.
 
-Phase B (only if the decision gate is satisfied; **deferred** on 2026-09-27, see result):
+Phase B (group G gate satisfied and deployed 2026-09-27; group K retained):
 
-- [ ] Fixed-scope guarded migration and matching model cleanup; no historical migration edits.
-- [ ] Nonempty selected candidates fail atomically without data loss.
-- [ ] Active product data, accounting and old event/profile compatibility are preserved.
-- [ ] Fresh upgrade, populated refusal, structural downgrade and full suite pass.
-- [ ] Deployment/rollback procedure addresses old running code and connector traffic.
-- [x] No live migration, data deletion, credential revocation or deployment was performed.
+- [x] Fixed-scope guarded migration and matching model cleanup; no historical migration edits.
+- [x] Nonempty selected candidates fail atomically without data loss.
+- [x] Active product data, accounting and old event/profile compatibility are preserved.
+- [x] Fresh upgrade, populated refusal, structural downgrade and full suite pass.
+- [x] Deployment/rollback procedure addresses old running code and connector traffic.
+- [x] Subsequent user instruction authorized deployment; no credentials or populated user data deleted.
 
-## Execution result
+## Original local execution result (before subsequent authorized deployment)
 
 Executed 2026-09-27 on the workstation, after plans 1 and 2, as an uncommitted local
 diff on top of `bbb8379`. Nothing was deployed and no production system was contacted.
@@ -309,3 +309,27 @@ diff on top of `bbb8379`. Nothing was deployed and no production system was cont
 
   Only a group reported `eligible` there may proceed to phase B (guarded migration,
   model cleanup, tests and the M6 runbook); the migration must re-check at upgrade time.
+
+## Subsequent review and production execution — 2026-09-27
+
+The owner explicitly requested review, fixes, deployment and continuation of the
+pending work. Production read-only inventory made G eligible and K ineligible.
+
+- Reviewed runtime cleanup and inventory fix deployed as `f6cf3eb`; no schema change.
+- G implemented/deployed as `79304e9`, migration `0012`, with migration-time locks,
+  emptiness/reference guards, model/ingestion cleanup and structural downgrade.
+- K retained: one Anthropic and one OpenAI connection contain encrypted keys and
+  metadata. Two encrypted legacy operator keys also remain. No revocation/deletion.
+- Local full suite: **305 Python / 33 connector passed**, no failures or skips.
+  Connector suite also verified at **33/33** on production's Node 22.23.3 image.
+- Production-backup rehearsal preserved all retained data across upgrade,
+  downgrade and re-upgrade. Live quiesced comparison matched 39 retained tables
+  and 21,040 rows before services resumed. Active automatic Events, Google grants,
+  suggestions, sources, accounting and profile data were preserved.
+- Both release passes passed 18 authenticated desktop/mobile page checks with no
+  browser errors/overflow; temporary browser session revoked. Readiness passes.
+- Safe rollback procedure and live rejection of an incompatible old image verified.
+- Exact backup identifiers and procedures: [schema rollout](schema-rollout.md).
+
+Phase B is complete for G. K remains a deliberate data-retention decision, not an
+unexecuted empty-table migration. Earlier local-only results above are historical.

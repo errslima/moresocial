@@ -96,3 +96,29 @@ MoreSocial connector containers. Do not touch other projects.
 
 The operator must provide the actual candidate SHA/checkout to these commands; this
 document does not identify an untested working tree as deployable.
+
+## Execution evidence — 2026-09-27
+
+- Runtime cleanup `f6cf3eb` reviewed and deployed first; one inventory bug fixed:
+  all gathering tables absent with `answer_sources.draft_id` still present is an
+  inconsistent schema, not a completed removal. Regression coverage added.
+- Final schema release: `79304e9` (`0012`). Full local suite: **305 passed**, no
+  failures/skips; connector **33 passed**. Connector tests also passed on the
+  deployed Node **22.23.3** image before schema rollout (connector code unchanged).
+- Pre-release encrypted backup: `moresocial-20260927T001535Z.tar.enc`, restored to
+  an isolated database. Upgrade/downgrade/re-upgrade matched all 39 retained tables
+  and 21,035 restored rows. Disposable containers and unpacked private files removed.
+- Quiesced pre-schema backup: `moresocial-20260927T002420Z.tar.enc`. The live
+  migration matched all 39 retained tables and 21,040 rows before web/worker resumed.
+- Readiness checks pass for database, migration head, Google configuration,
+  encryption, generation configuration and embedding configuration. These checks
+  do not make paid provider calls. The WhatsApp connector's live status returned
+  `ready` after restart.
+- Authenticated live review passed nine pages at 1440px and 390px (18 checks per
+  release), with no document overflow or browser errors. No messages were sent,
+  no drafts were generated, and the temporary review session was revoked.
+- Invoking the new rollback guard against `f6cf3eb` returned exit 2 and preserved
+  the active `79304e9` release and schema `0012`.
+- Post-migration inventory: G `removed`, K `ineligible`. The two personal-key
+  records, two legacy operator-key records and all provider usage history remain.
+  Their disposition was asked separately; absent a decision they remain preserved.
