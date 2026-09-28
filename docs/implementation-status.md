@@ -9,20 +9,23 @@ validation or deployment.
 
 ## Current state (recorded 2026-09-29)
 
-- **Deployed, post-release checks pending: `a9bde9c`, schema `0016`** (evidence-grounded
-  drafts, 2026-09-28 22:3x UTC). `release.sh` completed with readiness passing (database,
-  migrations, Google client, encryption key, AI generation and embeddings) and printed
-  `active revision: a9bde9c`. The separate post-release checks (history log, triggers,
-  connector health, public readiness) were not run in the deploying session; run them next.
-  The evidence rollout switch is still `off` (default): drafts use the limited context with
-  conversation voice. See the dated entry below. **Correction from review:** schema `0016`
-  is additive, but `3fcf2b4` requires head `0015` at readiness and is not an operational
-  image-only rollback target. Keep evidence mode off and fix forward; see the runbook.
-- **Previous verified release:** `3fcf2b4`, schema `0015`, deployed and checked on
-  2026-09-28. WhatsApp restyle with reviewed outgoing-message contrast correction.
-  Public health/readiness pass; authenticated Safari inspection confirms the deployed
-  chat layout. The WhatsApp connector is `ready` with health `ok` and no pending packets.
-  Previous release: `218f18c`.
+- **Evidence-draft review complete in code; runtime implementation `af00e56`, schema `0016`,
+  policy `draft-evidence-v4`.** The exact image (including documentation commits) is recorded
+  in `/srv/moresocial/release.env` and the release history. The reviewed branch is published
+  as `origin/draft-evidence`. See the [review/evaluation record](evaluations/draft-evidence-2026-09-29.md).
+  Rollout is restricted to the owner's selected workspace; broader rollout and human voice
+  acceptance remain pending. Real-data model/UI testing requires the explicit approval
+  described in that record; it has not been run or bypassed.
+- **Verified behavior:** 481 Python tests and 40 connector tests; 108 fictional comparison
+  drafts plus final-policy regression runs. Dates, negations, repeated corrections,
+  confidential claim provenance, long email segments and rollback compatibility are guarded.
+  Public readiness, schema/triggers, worker and connector checks passed during the review.
+  Authenticated production read-only pages passed desktop/mobile; live rewrite/copy/composer
+  testing with actual conversations remains pending approval.
+- **Recovery:** mode `off` plus a forward fix is preferred. An image-only rollback must pass
+  exact migration-head and stored-policy compatibility checks, then readiness before
+  activation. `3fcf2b4` is **not** a valid rollback from schema `0016`. A failed readiness
+  check restores the previously active release.
 - **Current behavior:** see [architecture](architecture.md). Production AI uses one
   operator-owned OpenRouter configuration managed in Admin; spending limits are set on the
   OpenRouter key and token usage is still reported, with no local caps. Personal AI keys
@@ -58,14 +61,15 @@ validation or deployment.
 
 ## Pending live checks and operator actions
 
-Added 2026-09-29 for release `a9bde9c` (details in the dated entry below):
+Updated 2026-09-29 after the evidence-draft review:
 
 | Item | State | Who |
 | --- | --- | --- |
-| Post-release server checks for `a9bde9c`: history log, `alembic_version = 0016`, both `suggestions` triggers present, connector `ready`/health `ok`, public `/ready`, worker running | **pending** | operator |
-| Live evaluation in a disposable database (`python -m app.draft_eval`, [runbook](operator-setup.md#evidence-grounded-drafts-migration-0016)): three systems, 13 fictional cases, two generations; record quality, latency, tokens and cost | **pending** | operator |
-| Owner review of representative evaluation drafts for voice ("sounds like me") before enabling evidence mode | **pending** | owner |
-| Enable evidence mode for the owner's workspace (`python -m app.draft_evidence enable <email>` then `mode selected`), then authenticated browse-only checks of a suggestion's "What this draft uses" panel at 1440/390 px | **pending** | operator/owner |
+| Post-release schema 0016, both suggestion triggers, connector health, public readiness, worker | **verified**; repeat automatically/on each final release | operator |
+| Fictional live comparison, quality, latency, usage and cost | **complete**: 18 cases × 3 systems × 2 drafts; final-policy regressions separately recorded | agent |
+| Owner voice review with real conversation examples | **pending**: fictional greeting/similarity scores cannot establish personal voice | owner |
+| Selected-workspace rollout | restricted to the owner; no broad rollout | operator |
+| Live model generation and rewrite/copy/composer check using Nynke/Aram evidence | **pending explicit approval**: automatic approval review rejected sending those real excerpts to OpenRouter; authenticated read-only and synthetic browser checks passed | owner/agent |
 
 Consolidated on 2026-09-27 from the dated entries below and the archived plans.
 

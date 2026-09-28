@@ -332,6 +332,9 @@ pacing; `wall_ms` includes it and `total_ms`/p50/p95 exclude it. Every provider 
 still counted. Progress is checkpointed after each case. Placeholder text cannot satisfy a
 required fact; confidential text still counts as a disclosure even inside a placeholder.
 
+See the [2026-09-29 review and live evaluation](evaluations/draft-evidence-2026-09-29.md) for
+measured latency/cost, discovered failures, final-policy reruns and remaining real-data approval.
+
 ## Diagnostics
 
 Every service writes one sanitized JSON event per line (`app/diagnostics.py`; the connector and

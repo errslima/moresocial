@@ -1,8 +1,9 @@
 # Evidence-grounded drafts in the user's own voice
 
-Status: M1–M5 complete; deployed as `a9bde9c` (schema `0016`) with evidence mode off. M6
-live evaluation, human voice review, rollout and post-release checks are pending; see the
-[implementation log](#11-implementation-log).
+Status: M1–M5 and the automated evaluation portion of M6 are complete. Runtime implementation
+`af00e56` uses policy v4 on schema `0016`; rollout is restricted to the owner's selected
+workspace. Real-data model/UI testing awaits explicit approval, and owner voice acceptance
+remains pending. See the [review/evaluation record](evaluations/draft-evidence-2026-09-29.md).
 Date: 2026-09-28.
 Scope: Suggestions reply drafts and shared drafting infrastructure, with compatible
 style improvements for proactive prepared messages.
@@ -367,8 +368,8 @@ messages, duplicate preparations or revive terminal suggestions.
 ### M6 — Evaluation, rollout and documentation
 
 - [x] Run focused tests, then the repository's required checks, migrations and browser flows.
-- [ ] Compare baseline and new drafts on a bounded fictional live-model evaluation set.
-- [ ] Record quality, latency, token cost, retrieval coverage and failures separately.
+- [x] Compare baseline and new drafts on a bounded fictional live-model evaluation set.
+- [x] Record quality, latency, token cost, retrieval coverage and failures separately.
 - [x] Add a rollout switch for evidence-grounded drafting; retain a clearly labelled limited
   context fallback only if its output remains safe and its limitations are visible.
 - [x] Update `architecture.md`, `suggestions.md`, implementation status and operator guidance.
@@ -513,3 +514,32 @@ draft behavior and lifecycle guarantees have been verified, not when the prompt 
   evidence revision is conservative, so busy imports briefly hold copy/prefill while a
   revalidation runs; earlier claim corrections have no replacement link; history is limited
   to what was imported (WhatsApp 90 days, bounded Gmail).
+
+### 2026-09-29 — Review fixes and live fictional evaluation
+
+The earlier completion/deployment entries are historical; this record supersedes their
+pending-check and rollback claims. Runtime code is `af00e56`, policy v4, schema 0016.
+
+Implemented and tested all review findings: conservative semantic/date change detection;
+revision-bound acknowledgments and repeated revalidation; confidentiality through claims
+and corrections; matching long email segments; accurate reserved-call accounting; safe
+rollback preflight and readiness recovery. Live testing also found and fixed unsupported
+personal uncertainty and reuse of old, undated agreements for new near-term occasions.
+
+481 Python tests, 40 connector tests and final focused harness tests passed. The full
+fictional comparison produced 108 drafts; follow-up v4 runs produced 12/12 successful
+regression drafts. Full-run evidence latency was p50 11.03s / p95 16.34s excluding evaluation
+pacing; keep synchronous drafting for the selected rollout. Cost, failures, coverage,
+fixture corrections and all fictional outputs are in the linked review record. Automatic
+scores are proxies; they do not establish that a reply sounds like the owner.
+
+The original suggestion has already been resolved. It was not revived. A direct real-data
+retrieval/model check was rejected by automatic approval review because the specific
+WhatsApp/email payload and OpenRouter destination need explicit approval. The owner has
+been asked; the blocked test has not been executed through another path. Production
+read-only desktop/mobile checks passed. Real-data generation, rewrite/copy/composer checks
+and personal voice review remain pending; this is not a claim of complete M6 acceptance.
+
+Use mode off and a forward fix for recovery. Older schema/policy images are refused before
+changing the active deployment, and a candidate failing readiness restores the prior image.
+The code and documentation are published on `draft-evidence`.
