@@ -38,6 +38,22 @@ def test_missing_evidence_does_not_establish_personal_uncertainty():
         {'status': 'withheld', 'reason': 'confidential'}]}})
 
 
+@pytest.mark.parametrize('support', ['F1', 'C1'])
+def test_old_undated_agreement_does_not_confirm_this_saturday(support):
+    needs = [{'id':'Q1', 'kind':'fact', 'text':'Are you coming to the market on Saturday?'}]
+    passages = [SimpleNamespace(label='F1', confidential=False, at=datetime(2026,8,5,tzinfo=timezone.utc))]
+    claims = [{'label':'C1', 'status':'active', 'latest_source_date':'2026-08-05'}]
+    answer = dict(question='Q1', status='supported', answer='I am coming to the market on Saturday.',
+                  decision='accepted', statement_date='2026-08-05', effective_from=None, effective_to=None,
+                  deadline=None, support=[support], conflicts=[], disclosure='share', reason='ok', note='')
+    result = de.validate_resolution({'answers':[answer]}, needs, passages, claims, today={'date':'2026-09-29'})
+    assert result[0]['status'] == 'uncertain' and not de.permitted_facts(result)
+    # An explicit future period is distinct from an old undated agreement.
+    answer['effective_from'] = '2026-10-03'
+    assert de.validate_resolution({'answers':[answer]}, needs, passages, claims,
+                                  today={'date':'2026-09-29'})[0]['status'] == 'supported'
+
+
 def test_older_policy_cannot_be_copied_or_acknowledged_into_current(world):
     wid, ids, sid = world
     suggestions.draft(wid, sid)

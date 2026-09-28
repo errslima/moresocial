@@ -117,6 +117,18 @@ sources; text written earlier from unlinked event candidates is refreshed on rev
 
 ## Evidence-grounded drafts
 
+Review follow-up (2026-09-29): answer revalidation compares decision and date fields plus
+normalized answer text conservatively. A negation, new effective start, or paraphrase is
+treated as a change requiring review. Saving an outdated draft acknowledges only that draft
+and evidence revision; subsequent messages are checked again. The private panel shows the
+latest resolved answers while retaining the original draft text.
+
+Retrieved email excerpts preserve their matching segment, including facts late in long
+emails. Confidentiality follows claim provenance and corrections as well as direct source
+citations. Drafts written under an older policy require rewriting before copying. Missing
+personal answers must retain an editable placeholder: the assistant's lack of evidence does
+not establish that the user is unsure.
+
 When someone asks something whose answer lives elsewhere in the user's WhatsApp or Gmail
 history (for example where they will stay, settled in a chat with the host), an explicit
 **Draft a reply** or **Rewrite with current information** runs one bounded pipeline

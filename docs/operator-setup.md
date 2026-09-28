@@ -326,6 +326,12 @@ every draft with its proxy scores; the JSON has usage and latency per system and
 indexing costs. Automatic scores cannot establish "sounds like me": have the owner read
 representative drafts before `mode all`.
 
+The live harness pauses two seconds between provider calls by default (`--pace-seconds`)
+and bounds rate-limit recovery to three waits. `evaluation_wait_ms` records that test-only
+pacing; `wall_ms` includes it and `total_ms`/p50/p95 exclude it. Every provider attempt is
+still counted. Progress is checkpointed after each case. Placeholder text cannot satisfy a
+required fact; confidential text still counts as a disclosure even inside a placeholder.
+
 ## Diagnostics
 
 Every service writes one sanitized JSON event per line (`app/diagnostics.py`; the connector and

@@ -263,6 +263,7 @@ class Case:
     greeting: str | None = None                    # the user's usual greeting with this person
     reference: str = ''                            # a plausible reply the user might send (edit-effort proxy)
     scenario: str = ''
+    assertion_forbid: list = field(default_factory=list)  # assertions only, excluding editable placeholders
 
 
 CASES = [
@@ -272,9 +273,10 @@ CASES = [
          'Answer in a different WhatsApp chat; earlier alternative; unrelated host matters; mood question.'),
     Case('cancelled_arrangement', case_cancelled, [], [r'until 15', r'15(th)? oct', r'staying (at|with) iris'], 'required',
          'Hoi', "Hoi Jonas! Still sorting that out, [where I'll stay].", 'The accepted arrangement was later cancelled.'),
-    Case('open_obligation', case_obligation, [], [r"(i'?ve|i have) found", r'found (a|my) (permanent )?place'], 'optional',
+    Case('open_obligation', case_obligation, [], [], 'optional',
          'Hoi', "Hoi Jonas! [whether I have found a permanent place]. I agreed to find somewhere before 15 October.",
-         'A promise to find a place by a date is not a completed action.'),
+         'A promise to find a place by a date is not a completed action.',
+         assertion_forbid=[r"(i'?ve|i have) found", r'found (a|my) (permanent )?place']),
     Case('confidential_news', case_confidential, [], [r'pregnan', r'baby', r'expecting'], 'optional', 'Hoi',
          'Hoi Jonas! [news about Iris]', 'A confidential third-party matter.'),
     Case('gmail_only', case_gmail, [r'14[:.]35'], [r'12a', r'xk7q2', r'passport'], 'none', 'Hoi',
@@ -285,8 +287,9 @@ CASES = [
          'No outgoing history: honest plain fallback.'),
     Case('short_assent', case_short_assent, [r'thursday'], [], 'optional', 'Hoi',
          "Hoi Jonas! We're going on Thursday, you're welcome to join after.", 'A short assent following a proposal.'),
-    Case('same_names', case_same_names, [], [r"sam (is|will be) (coming|there)", r"sam (can'?t|cannot|isn'?t)"], 'required',
-         'Hoi', 'Hoi Noor! [whether Sam is coming]', 'Two different contacts share a name.'),
+    Case('same_names', case_same_names, [], [], 'required',
+         'Hoi', 'Hoi Noor! [whether Sam is coming]', 'Two different contacts share a name.',
+         assertion_forbid=[r"sam (is|will be) (coming|there)", r"sam (can'?t|cannot|isn'?t)"]),
     Case('user_correction', case_correction, [r'utrecht'], [r'rotterdam'], 'none', 'Hoi',
          'Hoi Jonas! I live in Utrecht now.', 'A user correction versus the raw source.'),
     Case('style_example_fact', case_style_fact, [], [r'lisbon', r'flying'], 'optional', 'Hoi', 'Hoi Jonas! [weekend plans]',
@@ -384,7 +387,8 @@ def score(case: Case, text: str) -> dict:
     first = re.sub(r'[^\w]', '', text.split()[0]) if text.split() else ''
     return {'facts': all(re.search(p, low) for p in case.must),
             'missing_facts': [p for p in case.must if not re.search(p, low)],
-            'leaks': [p for p in case.forbid if re.search(p, low)], 'placeholders': len(placeholders),
+            'leaks': [p for p in case.forbid if re.search(p, text.lower())] +
+                     [p for p in case.assertion_forbid if re.search(p, low)], 'placeholders': len(placeholders),
             'placeholder_ok': (case.placeholder != 'required' or bool(placeholders)) and
                               (case.placeholder != 'none' or not placeholders),
             'labels': bool(LABEL.search(text)),

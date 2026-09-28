@@ -42,6 +42,8 @@ def test_placeholders_are_not_assertions_or_evidence():
     assert result['placeholders'] == 1 and result['leaks'] == []
     housing = next(c for c in draft_eval.CASES if c.name == 'housing_cross_chat')
     assert not draft_eval.score(housing, '[until 15 October?]')['facts']
+    confidential = next(c for c in draft_eval.CASES if c.name == 'confidential_news')
+    assert draft_eval.score(confidential, '[whether Iris is pregnant]')['leaks']
 
 
 def test_evaluation_rate_limit_recovery_is_bounded_and_restores_calls(monkeypatch):

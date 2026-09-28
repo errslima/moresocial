@@ -47,7 +47,7 @@ from .models import (Chunk, ChunkSource, Claim, ClaimSource, DraftEvidenceBundle
                      OperatorSetting, Person, PersonIdentifier, SourceParticipant, Source, Suggestion, SuggestionReview)
 from .repo import Scoped
 
-VERSION = 'draft-evidence-v3'
+VERSION = 'draft-evidence-v4'
 LIMITED_VERSION = 'draft-limited-v1'
 RETRIEVAL_VERSION = 'retrieval-v2'
 DISCLOSURE_VERSION = 'disclosure-v2'
@@ -156,6 +156,9 @@ CONJUNCTION = re.compile(r'[\s,;:-]*(?:and|&|en|also|ook)[\s,;:-]*$', re.I)
 CONFIDENTIAL = re.compile(r"\b(?:don'?t|do not|please don'?t|dont) (?:tell|share|mention)\b|\bbetween (?:us|you and me)\b|"
                           r"\bkeep (?:it|this) (?:to yourself|secret|quiet|private|between us)\b|\bconfidential\b|"
                           r"\bniet doorvertellen\b|\bonder ons\b|\bgeheim(?:houden)?\b|\bnot public yet\b", re.I)
+NEAR_TIME = re.compile(r'\b(?:today|tomorrow|tonight|this weekend|next week|monday|tuesday|wednesday|thursday|'
+                       r'friday|saturday|sunday|vandaag|morgen|vanavond|dit weekend|volgende week|maandag|'
+                       r'dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag)\b', re.I)
 NOT_NAMES = set('''I Hi Hey Hello Hoi Hallo Dear The And But Or So What Where When Who Why How Which Are Can Could Do Did
 Does Is Was Were Will Would Should Shall Have Has Had Any Thanks Thank Yes No Ok Okay Sure Great Perfect Also Just Let
 Monday Tuesday Wednesday Thursday Friday Saturday Sunday January February March April May June July August September
@@ -572,6 +575,9 @@ Reading evidence:
 - A later message replaces an earlier one only when it is about the same subject and period. Prefer the latest
   accepted decision and keep its deadline. If a later message cancels or changes an arrangement, the earlier
   answer is no longer supported.
+- An old "see you then" or agreement for a past occasion does not confirm a new invitation, even if the
+  activity is the same. Match the question's occasion and date against the supporting message's date.
+  An undated agreement from weeks ago is not evidence for this week's availability or attendance.
 - Resolve relative dates ("next Friday", "the 15th") using the passage's own date and the timezone. Leave out
   unknown years or times. statement_date is when the supporting statement was made; effective_from and
   effective_to the period an arrangement covers; deadline any due date. Use null when not stated. A message
@@ -609,11 +615,14 @@ def resolve_schema(needs, passages, claims) -> dict:
 def claim_lines(ws: Scoped, claims: list[Claim], passages: list[Passage]) -> list[dict]:
     by_source = {}
     confidential = set()
+    source_dates = {}
     if claims:
         for cid, src in ws.s.execute(ws.q(ClaimSource, ClaimSource.claim_id, Source).join(
                 Source, (Source.workspace_id == ClaimSource.workspace_id) & (Source.id == ClaimSource.source_id))
                 .where(ClaimSource.claim_id.in_([c.id for c in claims]))).all():
             by_source.setdefault(cid, set()).add(str(src.id))
+            if src.occurred_at:
+                source_dates.setdefault(cid, []).append(src.occurred_at.date().isoformat())
             if CONFIDENTIAL.search(src.body or ''):
                 confidential.add(cid)
     labels = {str(c.id): f'C{n + 1}' for n, c in enumerate(claims)}
@@ -634,6 +643,7 @@ def claim_lines(ws: Scoped, claims: list[Claim], passages: list[Passage]) -> lis
                     'to': c.valid_to.date().isoformat() if c.valid_to else None,
                     'corrects': labels.get(str(c.corrects_id)) if c.corrects_id else None,
                     'confidential': c.id in confidential,
+                    'latest_source_date': max(source_dates.get(c.id, []), default=None),
                     'supported_by': [p.label for p in passages if p.id in by_source.get(c.id, set())],
                     'fingerprint': claim_fingerprint(c)})
     return out
@@ -668,7 +678,7 @@ def _day(value) -> str | None:
         raise ai.InvalidOutput('resolution_date') from None
 
 
-def validate_resolution(out, needs, passages: list[Passage], claims: list[dict]) -> list[dict]:
+def validate_resolution(out, needs, passages: list[Passage], claims: list[dict], *, today=None) -> list[dict]:
     """Reject invented labels and malformed fields; apply deterministic disclosure guards and
     coerce inconsistent answers to withheld. Valid references establish provenance, not truth."""
     if not isinstance(out, dict) or not isinstance(out.get('answers'), list) or len(out['answers']) > len(needs):
@@ -718,6 +728,17 @@ def validate_resolution(out, needs, passages: list[Passage], claims: list[dict])
         if any(confidential_support(x) for x in item['support']):
             item.update(disclosure='withhold', reason='confidential',
                         status='withheld' if item['status'] == 'supported' else item['status'])
+        question = next(n['text'] for n in needs if n['id'] == item['question'])
+        if today and item['status'] == 'supported' and NEAR_TIME.search(question):
+            support_dates = [by_label[x].at.date().isoformat() for x in item['support']
+                             if x in by_label and getattr(by_label[x], 'at', None)]
+            support_dates += [by_claim[x]['latest_source_date'] for x in item['support']
+                             if x in by_claim and by_claim[x].get('latest_source_date')]
+            cutoff = (date.fromisoformat(today['date']) - timedelta(days=7)).isoformat()
+            covers_future = any(item[k] and item[k] >= today['date'] for k in ('effective_from', 'effective_to'))
+            if support_dates and max(support_dates) < cutoff and not covers_future:
+                item.update(status='uncertain', reason='outdated',
+                            note='The supporting agreement is old and does not establish this occasion.')
         if item['status'] != 'supported':
             item.update(answer='', disclosure='withhold')
             if item['reason'] == 'ok':
@@ -752,7 +773,7 @@ def resolve(wid, zone, today, person, needs, gathered, boundaries, claims) -> tu
         except ai.InvalidOutput as exc:
             if str(exc) != 'truncated' or max_tokens == 6000:
                 raise
-    return validate_resolution(out.data, needs, gathered['passages'], claims), out
+    return validate_resolution(out.data, needs, gathered['passages'], claims, today=today), out
 
 
 def permitted_facts(answers: list[dict]) -> list[dict]:
