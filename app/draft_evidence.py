@@ -47,7 +47,7 @@ from .models import (Chunk, ChunkSource, Claim, ClaimSource, DraftEvidenceBundle
                      OperatorSetting, Person, PersonIdentifier, SourceParticipant, Source, Suggestion, SuggestionReview)
 from .repo import Scoped
 
-VERSION = 'draft-evidence-v2'
+VERSION = 'draft-evidence-v3'
 LIMITED_VERSION = 'draft-limited-v1'
 RETRIEVAL_VERSION = 'retrieval-v2'
 DISCLOSURE_VERSION = 'disclosure-v2'
@@ -799,6 +799,10 @@ Every substantive factual statement in the draft (about the user, plans, dates, 
 must be supported by the conversation messages (M labels), the supplied events (EV labels) or
 answers.permitted_facts (P labels). Greetings, thanks, questions to the other person, general warmth and
 bracketed placeholders need no support.
+The system not knowing an answer does not mean the user does not know it. For unresolved
+missing, uncertain or conflicting answers, and current feelings, keep an explicit bracketed
+placeholder. Never substitute "I'm not sure", "still sorting it out", or an equivalent
+personal claim unless supported by the permitted facts or recipient conversation.
 Report an issue for: an unsupported fact or detail; a detail that goes beyond a permitted fact or reveals
 something about another person that is not already in this conversation; a commitment, excuse or availability
 the evidence does not establish; a statement of the user's current mood or health; internal labels such as P1,
@@ -857,6 +861,19 @@ def needs_verification(gathered: dict | None, permitted: list[dict]) -> bool:
     return bool(permitted) or bool(gathered and gathered['passages'])
 
 
+def validate_unresolved(text_: str, writer: dict) -> None:
+    """Fail closed if an unresolved personal answer lost every editable placeholder.
+
+    The verifier checks individual statements; this independent floor also applies to its
+    repaired output. Withheld third-party details may simply be omitted.
+    """
+    unresolved = writer.get('answers', {}).get('unresolved', [])
+    needs_answer = any(a.get('status') in ('missing', 'uncertain', 'conflicting') or
+                       a.get('reason') == 'current_state' for a in unresolved)
+    if needs_answer and not re.search(r'\[[^\]\n]{1,500}\]', text_):
+        raise ai.InvalidOutput('draft_missing_placeholder')
+
+
 # ---------------- bundles: state and view for read paths (no provider calls)
 
 def bundle_for(ws: Scoped, row) -> DraftEvidenceBundle | None:
@@ -883,6 +900,8 @@ def state(ws: Scoped, row, bundle: DraftEvidenceBundle | None = None) -> str:
     but the user reviewed and saved this text since) or invalid (a dependency disappeared)."""
     if bundle is None:
         return 'previous' if row.draft else 'none'
+    if bundle.version != (VERSION if bundle.policy == 'evidence' else LIMITED_VERSION):
+        return 'previous'
     if not dependencies_valid(ws, bundle):
         return 'invalid'
     if bundle.policy == 'evidence' and bundle.evidence_revision != revision(ws):
@@ -1079,6 +1098,7 @@ def _run(wid: uuid.UUID, sid, *, rewrite: bool, usage) -> str:
         t = time.monotonic()
         text_, verification, verify_out = verify(wid, text_, writer, permitted)
         timings['verify_ms'] = int((time.monotonic() - t) * 1000)
+    validate_unresolved(text_, writer)
     if answers is not None:
         _answer_sources(answers, gathered, claims, zone)
     with db.session() as s:

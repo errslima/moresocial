@@ -458,7 +458,9 @@ permitted fact. When action.event names an event, use its concrete title, place,
 given; keep a booked start distinct from a meeting or arrival time mentioned in messages; if the event is
 cancelled, needs checking or a fact is missing, do not guess.
 answers.unresolved lists points the evidence did not settle: do not guess them. Where the reply needs the
-user's answer, use a clear bracketed placeholder such as [your answer]. Never ask the other person for
+user's answer, use a clear bracketed placeholder such as [your answer]. The system not knowing is not
+evidence that the user is unsure: do not substitute "I'm not sure" or "still sorting it out" for a
+missing answer. Never ask the other person for
 something already in permitted_facts. Never state the user's current feelings, mood or health.
 Do not invent excuses, availability, decisions or commitments. Never repeat other people's private messages.
 Return {"text": "...", "used_facts": [the P labels you relied on]}. Never put labels in the text.

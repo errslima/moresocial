@@ -29,6 +29,29 @@ def test_changed_effective_start_is_not_unchanged():
                                [{**base, 'effective_from':'2026-11-01'}])
 
 
+def test_missing_evidence_does_not_establish_personal_uncertainty():
+    writer = {'answers': {'unresolved': [{'status': 'missing', 'reason': 'no_evidence'}]}}
+    with pytest.raises(ai.InvalidOutput, match='draft_missing_placeholder'):
+        de.validate_unresolved('Hoi Jonas, not sure yet where I will be staying in Utrecht :)', writer)
+    de.validate_unresolved('Hoi Jonas! [where I will stay]', writer)
+    de.validate_unresolved('Hoi Jonas!', {'answers': {'unresolved': [
+        {'status': 'withheld', 'reason': 'confidential'}]}})
+
+
+def test_older_policy_cannot_be_copied_or_acknowledged_into_current(world):
+    wid, ids, sid = world
+    suggestions.draft(wid, sid)
+    with db.session() as s:
+        ws = Scoped(s, wid)
+        row = ws.get(Suggestion, sid)
+        bundle = de.bundle_for(ws, row)
+        bundle.version = 'draft-evidence-v1'
+        bundle.freshness = 'outdated'
+        de.acknowledge(ws, row)
+    assert evidence_state(wid, sid) == 'previous'
+    assert not current(wid, sid)
+
+
 def test_acknowledged_draft_still_checks_future_changes(world):
     wid, ids, sid = world
     suggestions.draft(wid, sid)

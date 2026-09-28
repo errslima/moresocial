@@ -436,6 +436,7 @@ def test_verification_repairs_an_unsupported_detail_once(world, monkeypatch):
     suggestions.draft(wid, sid)
     draft = row_of(sid).draft
     assert 'Maastricht' not in draft and "Iris's place until 15 October" in draft
+    assert '[' in draft  # repair must keep the unresolved personal answer editable
     assert bundle_of(wid, sid).payload['verification'] == {'ran': True, 'outcome': 'revised', 'issues': ['unsupported']}
 
 

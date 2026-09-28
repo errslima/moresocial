@@ -209,6 +209,7 @@ def verify(ctx):
         tokens = re.findall(r"\b(\d[\d:.]*|[A-Z][a-z]{2,})\b", body)
         if any(t.lower() not in corpus for t in tokens if t.lower() not in GREETINGS and t not in COMMON):
             issues.append({'kind': 'unsupported', 'about': 'a detail without support'})
+            kept.extend(re.findall(r'\[[^\]]*\]', sentence))
         else:
             kept.append(sentence)
     if not issues:
