@@ -106,7 +106,7 @@ def test_suggestion_opens_evidence_account_with_current_draft(browser, ready):
     with db.session() as s:
         draft = s.get(Suggestion, row.id).draft
     assert draft in opened.text
-    assert 'Send message</button>' not in opened.text
+    assert 'Send message</span></button>' not in opened.text
     assert link.replace('&', '&amp;') in browser.get('/suggestions').text
     # New conversation context invalidates the draft: never prefill stale text.
     add(ready, 'Can you let me know soon?', conv=NOOR, age=1)
@@ -115,7 +115,7 @@ def test_suggestion_opens_evidence_account_with_current_draft(browser, ready):
 
 def test_self_chat_can_start_but_not_arbitrary_new_conversations(browser, ready):
     own = page(browser, account=ALEX_WA, chat=ALEX_WA)
-    assert own.status_code == 200 and 'Send message</button>' in own.text
+    assert own.status_code == 200 and 'Send message</span></button>' in own.text
     r = browser.post('/whatsapp/send', form(browser, chat=ALEX_WA))
     assert r.status_code == 303 and 'Message sent to WhatsApp' in browser.c.get(r.headers['location']).text
     assert browser.post('/whatsapp/send', form(browser, chat='31612345999@c.us')).status_code == 404

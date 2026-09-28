@@ -8,14 +8,18 @@
 <div class="wa {{ 'has-chat' if selected else 'no-chat' }}">
   <section class="wa-list" aria-labelledby="wa-title">
     <div class="wa-list-head">
-      <h1 id="wa-title">WhatsApp</h1>
-      {% if self_chat %}<p class="small"><a href="{{ wa_url(account=self_account, chat=self_chat) }}">Message yourself</a></p>{% endif %}
+      <div class="wa-title-row">
+        <h1 id="wa-title">WhatsApp</h1>
+        {% if self_chat %}<a class="wa-icon-button" href="{{ wa_url(account=self_account, chat=self_chat) }}" title="Message yourself">{{ icon('compose') }}<span class="sr">Message yourself</span></a>{% endif %}
+      </div>
+      {# One text field submits on Enter without a button, with or without JavaScript. #}
       <form method="get" action="{{ url('/whatsapp') }}" class="wa-search" role="search">
         <label for="wa-q" class="sr">Search conversations</label>
-        <input id="wa-q" type="search" name="q" value="{{ q }}" maxlength="100" placeholder="Search conversations" autocomplete="off">
-        <button type="submit">Search</button>
+        {{ icon('search') }}
+        <input id="wa-q" type="search" name="q" value="{{ q }}" maxlength="100" placeholder="Search" autocomplete="off">
+        {% if q %}<a class="wa-clear" href="{{ wa_url() }}" title="Clear search">{{ icon('close') }}<span class="sr">Clear search</span></a>{% endif %}
       </form>
-      {% if q %}<p class="small">Showing conversations matching “{{ q }}”. <a href="{{ wa_url() }}">Clear search</a></p>{% endif %}
+      {% if stored and not linked %}<p class="wa-banner">WhatsApp is not linked right now; stored chats stay readable. <a href="{{ url('/connections') }}">Connections</a></p>{% endif %}
     </div>
     <div class="wa-scroll">
       {% if rows %}
@@ -55,31 +59,29 @@
       </div>
       {% endif %}
     </div>
-    <p class="wa-note small muted">Shows synced history (up to 90 days).{% if stored and not linked %} WhatsApp is not linked right now; stored chats stay readable.{% endif %}</p>
   </section>
   <section class="wa-reader" aria-labelledby="{{ 'wa-chat' if selected else 'wa-select' }}">
     {% if selected %}
     <header class="wa-head">
-      <a class="wa-back" href="{{ list_url }}">{{ icon('back') }}Back to conversations</a>
+      <a class="wa-back" href="{{ list_url }}" title="Back to conversations">{{ icon('back') }}<span class="sr">Back to conversations</span></a>
       {{ avatar(selected) }}
       <div class="wa-head-text">
         <h2 id="wa-chat">{{ selected.name }}</h2>
-        {% if selected.group %}<p class="small muted">Group</p>{% endif %}
+        {% if selected.group %}<p>Group</p>{% endif %}
       </div>
     </header>
     <div class="wa-history" tabindex="0" aria-label="Messages with {{ selected.name }}" data-wa-history="{{ 'latest' if not before else 'older' }}">
-      {% if older %}<p class="wa-more small"><a href="{{ wa_url(q=q, page=page, account=selected.account, chat=selected.chat, before=messages[0].id) }}">Older messages</a></p>{% endif %}
-      {% if before %}<p class="wa-more small">Showing earlier messages. <a href="{{ wa_url(q=q, page=page, account=selected.account, chat=selected.chat) }}">Jump to latest messages</a></p>{% endif %}
+      {% if older %}<p class="wa-more"><a href="{{ wa_url(q=q, page=page, account=selected.account, chat=selected.chat, before=messages[0].id) }}">Older messages</a></p>{% endif %}
       {% if messages %}
       <ol class="wa-msgs">
         {% for m in messages %}
         {% if m.day %}<li class="wa-day">{{ m.day }}</li>{% endif %}
-        <li class="wa-msg {{ 'out' if m.from_me else 'in' }}">
+        <li class="wa-msg {{ 'out' if m.from_me else 'in' }}{{ ' run-start' if m.run_start }}">
           <div class="bubble">
-            {% if m.sender %}<p class="wa-sender">{{ m.sender }}</p>{% elif m.from_me %}<p class="sr">You:</p>{% endif %}
-            {% if m.label %}<p class="wa-media">{{ m.label }}</p>{% endif %}
+            {% if m.sender and m.run_start %}<p class="wa-sender sc-{{ m.sender_color }}">{{ m.sender }}</p>{% elif m.sender %}<p class="sr">{{ m.sender }}:</p>{% elif m.from_me %}<p class="sr">You:</p>{% endif %}
+            {% if m.label %}<p class="wa-media">{{ icon(m.icon) }}<span>{{ m.label }}</span></p>{% endif %}
             {% if m.text %}<p class="wa-text">{{ m.text }}</p>{% endif %}
-            <p class="wa-meta">{% if m.at %}<time datetime="{{ m.at.isoformat() }}">{{ m.time }}</time> · {% endif %}<a href="{{ url('/sources/' ~ m.id) }}">Details<span class="sr"> of this message</span></a></p>
+            <a class="wa-meta" href="{{ url('/sources/' ~ m.id) }}"><span class="sr">Details of this message{% if m.at %}, {% endif %}</span>{% if m.at %}<time datetime="{{ m.at.isoformat() }}">{{ m.time }}</time>{% else %}<span aria-hidden="true">Details</span>{% endif %}</a>
           </div>
         </li>
         {% endfor %}
@@ -87,32 +89,38 @@
       {% else %}
       <p class="wa-empty">No imported messages here.</p>
       {% endif %}
-      {% if before %}<p class="wa-more small"><a href="{{ wa_url(q=q, page=page, account=selected.account, chat=selected.chat) }}">Jump to latest messages</a></p>{% endif %}
+      {% if before %}<a class="wa-jump" href="{{ wa_url(q=q, page=page, account=selected.account, chat=selected.chat) }}" title="Jump to latest messages">{{ icon('down') }}<span class="sr">Jump to latest messages</span></a>{% endif %}
     </div>
     <div class="wa-compose">
-      {% if suggestion_row %}<p class="small"><a href="{{ url('/suggestions/' ~ suggestion_row.id) }}">Back to suggestion</a>{% if compose_text %} · Review your draft before sending.{% endif %}</p>{% endif %}
+      {% if suggestion_row %}<p class="wa-context"><a href="{{ url('/suggestions/' ~ suggestion_row.id) }}">Back to suggestion</a>{% if compose_text %} · Review your draft before sending.{% endif %}</p>{% endif %}
       {% if error %}<p class="warn" role="alert">{{ error }}</p>{% endif %}
       {% if receipt %}
-      <p class="{{ 'small' if receipt.state == 'sent' else 'warn' }}" role="status">{% if receipt.state == 'sent' %}Message sent to WhatsApp. Delivery and read status are not tracked here.{% elif receipt.state == 'rejected' %}Nothing was sent. WhatsApp is disconnected, the account changed, or this chat is unavailable. Check Connections before trying again.{% else %}We could not confirm whether this message was sent. Check the conversation before sending again; this attempt will not be retried automatically.{% endif %}</p>
+      {% if receipt.state == 'sent' %}<p class="wa-status" role="status">{{ icon('check') }}Message sent to WhatsApp</p>
+      {% elif receipt.state == 'rejected' %}<p class="warn" role="status">Nothing was sent. WhatsApp is disconnected, the account changed, or this chat is unavailable. Check <a href="{{ url('/connections') }}">Connections</a> before trying again.</p>
+      {% else %}<p class="warn" role="status">We could not confirm whether this message was sent. Check the conversation before sending again; this attempt will not be retried automatically. <a href="{{ wa_url(account=selected.account, chat=selected.chat) }}">Check latest messages</a></p>{% endif %}
       {% endif %}
       {% if can_send %}
-      <form method="post" action="{{ url('/whatsapp/send') }}" data-busy="Sending…">
+      <form class="wa-send-form" method="post" action="{{ url('/whatsapp/send') }}" data-busy="Sending…">
         {{ csrf_field() }}
         <input type="hidden" name="account" value="{{ selected.account }}">
         <input type="hidden" name="chat" value="{{ selected.chat }}">
         <input type="hidden" name="request_id" value="{{ request_id }}">
         {% if suggestion_row %}<input type="hidden" name="suggestion" value="{{ suggestion_row.id }}">{% endif %}
-        <label for="wa-message">Message {{ selected.name }}</label>
-        <textarea id="wa-message" name="text" rows="2" maxlength="4000" required placeholder="Write a message…">{{ compose_text }}</textarea>
-        <div class="row"><button class="primary" type="submit" {% if receipt and receipt.state == 'unknown' %}disabled{% endif %}>Send message</button>{% if receipt and receipt.state == 'unknown' %}<a href="{{ wa_url(account=selected.account, chat=selected.chat) }}">Check latest messages</a>{% else %}<span class="small muted">Sends from your linked WhatsApp account.</span>{% endif %}</div>
+        <label for="wa-message" class="sr">Message {{ selected.name }}</label>
+        <textarea id="wa-message" name="text" rows="{{ 4 if compose_text else 1 }}" maxlength="4000" required placeholder="Type a message" data-autogrow>{{ compose_text }}</textarea>
+        <button class="wa-send" type="submit" title="Send message" {% if receipt and receipt.state == 'unknown' %}disabled{% endif %}>{{ icon('send') }}<span class="sr">Send message</span></button>
       </form>
-      {% else %}<p class="small muted">Connect the WhatsApp account used for this conversation to send messages. <a href="{{ url('/connections') }}">Check Connections</a>.</p>{% if compose_text %}<label for="wa-message">Your draft</label><textarea id="wa-message" rows="2" readonly>{{ compose_text }}</textarea>{% endif %}{% endif %}
+      {% else %}
+      <p class="wa-readonly">To reply here, link the WhatsApp account this chat belongs to on <a href="{{ url('/connections') }}">Connections</a>.</p>
+      {% if compose_text %}<label for="wa-message" class="wa-context">Your draft</label><textarea id="wa-message" class="wa-draft" rows="3" readonly>{{ compose_text }}</textarea>{% endif %}
+      {% endif %}
     </div>
     {% else %}
     <div class="wa-select">
       {{ icon('whatsapp') }}
       <h2 id="wa-select">Select a conversation</h2>
       <p>Choose a chat to read its imported history.</p>
+      <p class="small">Synced history covers up to 90 days.</p>
     </div>
     {% endif %}
   </section>

@@ -16,7 +16,8 @@ for (const button of document.querySelectorAll('button[data-copy]')) {
 for (const form of document.querySelectorAll('form[data-busy]')) {
   form.addEventListener('submit', () => {
     const b = form.querySelector('button[type=submit],button:not([type])');
-    if (b) { b.disabled = true; b.textContent = form.dataset.busy; }
+    // An icon button keeps its icon; only its screen-reader label changes.
+    if (b) { b.disabled = true; (b.querySelector('.sr') || b).textContent = form.dataset.busy; }
   });
 }
 const wa = document.getElementById('wa');
@@ -57,6 +58,14 @@ if (appnav) {
   const sync = () => { appnav.open = !narrow.matches; };
   if (!narrow.matches) sync();
   narrow.addEventListener('change', sync);
+}
+// The composer grows with its text up to its CSS max-height, where browsers lack field-sizing.
+if (!CSS.supports('field-sizing', 'content')) {
+  for (const area of document.querySelectorAll('textarea[data-autogrow]')) {
+    const fit = () => { area.style.height = 'auto'; area.style.height = area.scrollHeight + 'px'; };
+    area.addEventListener('input', fit);
+    fit();
+  }
 }
 // Latest WhatsApp history opens at the newest message; older pages keep their position.
 const waHistory = document.querySelector('[data-wa-history="latest"]');

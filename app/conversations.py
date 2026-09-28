@@ -25,7 +25,12 @@ UNNAMED = 'Unnamed conversation'
 OPAQUE_RE = re.compile(r'^[0-9a-z._:-]{1,80}@(c\.us|g\.us|lid|s\.whatsapp\.net)$', re.I)
 PHONE_DOMAINS = ('c.us', 's.whatsapp.net')
 KIND_LABELS = {'ptt': 'Voice message', 'audio': 'Voice message', 'image': 'Photo', 'video': 'Video',
-               'document': 'Document'}
+               'document': 'Document', 'sticker': 'Sticker', 'location': 'Location', 'vcard': 'Contact card',
+               'poll_creation': 'Poll', 'call_log': 'Call'}
+# Icon names from icons.html; any other non-text kind uses 'attach'.
+KIND_ICONS = {'ptt': 'mic', 'audio': 'mic', 'image': 'photo', 'video': 'video', 'document': 'file',
+              'sticker': 'sticker', 'location': 'pin', 'vcard': 'person', 'poll_creation': 'poll', 'call_log': 'phone'}
+SENDER_COLORS = 8
 
 
 def eligible(ws: Scoped):
@@ -80,6 +85,10 @@ def kind_label(meta: dict | None, body: str) -> str | None:
     if kind == 'chat':
         return None if body.strip() else 'Non-text message'
     return KIND_LABELS.get(kind, 'Non-text message')
+
+
+def kind_icon(meta: dict | None) -> str:
+    return KIND_ICONS.get((meta or {}).get('kind'), 'attach')
 
 
 def escape_like(text: str) -> str:
@@ -196,6 +205,10 @@ class Message:
     at: datetime | None
     time: str
     day: str | None
+    icon: str | None = None
+    # First message of a run from one speaker on one day: it shows the bubble tail and group sender name.
+    run_start: bool = True
+    sender_color: int = 0
 
 
 def history(ws: Scoped, tz: ZoneInfo, convo: Summary, before: str = '') -> tuple[list[Message], bool] | None:
@@ -215,14 +228,19 @@ def history(ws: Scoped, tz: ZoneInfo, convo: Summary, before: str = '') -> tuple
         stmt = stmt.where(tuple_(sort_time(), Source.id) < tuple_(cursor[0], cursor[1]))
     rows = ws.s.execute(stmt.order_by(sort_time().desc(), Source.id.desc()).limit(HISTORY_SIZE + 1)).all()
     older = len(rows) > HISTORY_SIZE
-    now, previous, out = datetime.now(tz), None, []
+    now, previous, previous_speaker, out = datetime.now(tz), None, None, []
     for src, person_name in reversed(rows[:HISTORY_SIZE]):
         at = local(src.occurred_at or src.created_at, tz)
         day = at.date() if at else None
+        speaker = (src.from_me, None if src.from_me or not convo.group else src.author)
+        label = kind_label(src.meta, src.body)
         out.append(Message(id=src.id, from_me=src.from_me,
                            sender=None if src.from_me or not convo.group else sender_name(src.author, person_name, src.author_label),
-                           label=kind_label(src.meta, src.body), text=src.body, at=at,
+                           label=label, text=src.body, at=at,
                            time=at.strftime('%H:%M') if at else '',
-                           day=day_label(at, now) if at and day != previous else None))
-        previous = day
+                           day=day_label(at, now) if at and day != previous else None,
+                           icon=kind_icon(src.meta) if label else None,
+                           run_start=not out or day != previous or speaker != previous_speaker,
+                           sender_color=sum(map(ord, src.author or '')) % SENDER_COLORS))
+        previous, previous_speaker = day, speaker
     return out, older

@@ -69,7 +69,7 @@ def test_conversations_grouped_sorted_and_named(alex):
     other = page(alex, account='31600000077@c.us', chat=NOOR)
     assert 'Other phone' in reader(other) and 'Old hello' not in reader(other)
     group = page(alex, account=ALEX_WA, chat=GROUP)
-    assert '<p class="wa-sender">Sam</p>' in group.text and '>Group<' in group.text
+    assert re.search(r'<p class="wa-sender sc-\d">Sam</p>', group.text) and '>Group<' in group.text
 
 
 def test_workspace_isolation_with_identical_conversation_ids(make_browser):
@@ -153,18 +153,37 @@ def test_deleted_excluded_and_hidden_messages(alex):
     assert page(alex, account=ALEX_WA, chat=GROUP).status_code == 404
 
 
+def test_consecutive_messages_form_runs_by_speaker(alex):
+    sam, kim = '31600000002@c.us', '31600000003@c.us'
+    put('alex@example.test', GROUP, [('r1', 500, sam, 'one'), ('r2', 490, sam, 'two'), ('r3', 480, kim, 'three'),
+                                     ('r4', 470, None, 'four'), ('r5', 460, None, 'five'), ('r6', 450, sam, 'six')],
+        name='Friends', contacts=[{'id': sam, 'saved_name': 'Sam'}, {'id': kim, 'saved_name': 'Kim'}])
+    chat = reader(page(alex, account=ALEX_WA, chat=GROUP))
+    runs = re.findall(r'<li class="wa-msg (in|out)( run-start)?">', chat)
+    assert runs == [('in', ' run-start'), ('in', ''), ('in', ' run-start'), ('out', ' run-start'), ('out', ''),
+                    ('in', ' run-start')]
+    # Only the first bubble of a run shows the sender; later ones keep it for screen readers.
+    shown = re.findall(r'<p class="wa-sender sc-(\d)">(\w+)</p>', chat)
+    assert [n for _, n in shown] == ['Sam', 'Kim', 'Sam'] and shown[0][0] == shown[2][0]
+    assert chat.count('<p class="sr">Sam:</p>') == 1 and chat.count('<p class="sr">You:</p>') == 2
+    # The global footer is left out of the full-height WhatsApp layout only.
+    footer = 'Gmail and Calendar access stays read-only'
+    assert footer not in page(alex).text and footer in alex.get('/home').text
+
+
 def test_media_placeholders_and_escaped_content(alex):
     put('alex@example.test', NOOR, [('v1', 500, NOOR, '', 'ptt'), ('p1', 400, NOOR, 'Beach day', 'image'),
                                     ('s1', 300, NOOR, '', 'sticker'), ('d1', 250, NOOR, '', 'document'),
+                                    ('z1', 225, NOOR, '', 'unsupported'),
                                     ('x1', 200, NOOR, '<script>alert(1)</script>\nsecond line'),
                                     ('u1', 100, NOOR, 'https://example.test/' + 'a' * 300)], name='<b>Noor</b>')
     chat = page(alex, account=ALEX_WA, chat=NOOR).text
-    for label in ('Voice message', 'Photo', 'Non-text message', 'Document'):
-        assert f'<p class="wa-media">{label}</p>' in chat
+    for label in ('Voice message', 'Photo', 'Sticker', 'Non-text message', 'Document'):
+        assert re.search(rf'<p class="wa-media"><svg [^>]*>.*?</svg><span>{label}</span></p>', chat)
     assert '<p class="wa-text">Beach day</p>' in chat
     assert '<script>alert(1)' not in chat and '&lt;script&gt;alert(1)&lt;/script&gt;\nsecond line' in chat
     assert '<b>Noor</b>' not in chat and '&lt;b&gt;Noor&lt;/b&gt;' in chat
-    assert chat.count('/moresocial/sources/') == 6
+    assert chat.count('/moresocial/sources/') == 7
     listing = page(alex).text
     assert 'https://example.test/' in listing  # latest message preview
     put('alex@example.test', NOOR, [('p2', 10, None, 'Look', 'image')], name='Noor')

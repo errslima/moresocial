@@ -46,7 +46,8 @@
 {% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
 {% block content %}{% endblock %}
 </main>
-<footer class="foot"><p>WhatsApp messages are sent only when you press Send message. Gmail and Calendar access stays read-only.</p></footer>
+{# Wide pages (WhatsApp) have their own explicit Send message control and no room for a footer. #}
+{% if shell_layout != 'wide' %}<footer class="foot"><p>WhatsApp messages are sent only when you press Send message. Gmail and Calendar access stays read-only.</p></footer>{% endif %}
 {% if ctx %}
 </div>
 </div>

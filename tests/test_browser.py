@@ -359,7 +359,7 @@ def test_sidebar_and_whatsapp_browser(live, chromium, viewport):
         assert page.locator('.wa-reader').is_hidden() and page.locator('.wa-list').is_visible()
     else:
         assert page.get_by_role('heading', name='Select a conversation').is_visible()
-        assert 330 <= page.locator('.wa-list').bounding_box()['width'] <= 350
+        assert 370 <= page.locator('.wa-list').bounding_box()['width'] <= 400
     page.screenshot(path=f'/tmp/moresocial-whatsapp-{viewport["width"]}.png')
     no_horizontal_scroll()
 
@@ -408,7 +408,10 @@ def test_sidebar_and_whatsapp_browser(live, chromium, viewport):
     playwright.expect(history.locator('.wa-msg').first).to_contain_text('Noor message 000')
     page.reload()
     playwright.expect(history.locator('.wa-msg')).to_have_count(30)
-    page.go_back()
+    jump = page.get_by_role('link', name='Jump to latest messages')
+    # The floating link must be reachable without first scrolling the older page.
+    playwright.expect(jump).to_be_in_viewport()
+    jump.click()
     page.wait_for_url(chat_url)
     playwright.expect(history.locator('.wa-msg')).to_have_count(100)
 
@@ -550,7 +553,18 @@ def test_suggestion_to_conversation_and_send(live, chromium, viewport):
     page.wait_for_url('**/whatsapp?account=*')
     assert page.locator('input[name=chat]').input_value() == CHAT
     assert page.locator('#wa-message').input_value().strip()
-    page.locator('#wa-message').fill('Browser send test — hello!')
+    composer = page.locator('#wa-message')
+    composer.fill('Browser send test — hello!')
+    initial_height = composer.bounding_box()['height']
+    send_requests = []
+    page.on('request', lambda r: send_requests.append(r) if r.method == 'POST' and r.url.endswith('/whatsapp/send') else None)
+    composer.press('End')
+    composer.press('Enter')
+    composer.press('Enter')
+    assert composer.input_value() == 'Browser send test — hello!\n\n'
+    assert composer.bounding_box()['height'] > initial_height
+    assert not send_requests
+    composer.fill('Browser send test — hello!')
     page.get_by_role('button', name='Send message', exact=True).click()
     page.wait_for_url('**&receipt=*')
     playwright.expect(page.get_by_role('status')).to_contain_text('Message sent to WhatsApp')
