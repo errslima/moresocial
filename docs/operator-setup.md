@@ -297,8 +297,10 @@ $C python -m app.draft_evidence mode selected              # or: all | off | sta
 
 `off` stops new evidence preparation and bundle use for new drafts; existing bundles keep
 guarding their drafts (stale or erased drafts stay blocked) and all user settings stay.
-Cost per explicit draft: one batched query-embedding call, one resolution call, one writing
-call and at most one verification/repair call. Background `revalidate_draft` jobs run when
+Normal cost per explicit draft: one batched query-embedding call, one resolution call, one writing
+call and at most one verification/repair call. Retries and output-length recovery can add
+calls; the evaluation accounts for every reserved provider attempt, including embeddings
+and failures, and reports unknown cost as unknown. Background `revalidate_draft` jobs run when
 the workspace evidence revision moves; they rerun retrieval without a model call and pay
 one resolution call only when the considered evidence changed. Diagnostics: `draft_prepared`
 (counts, durations, coverage code, model; never text) and job events for `revalidate_draft`.
@@ -311,13 +313,17 @@ evaluation database, and it has no WhatsApp connector, so it cannot send.
 ```bash
 sudo docker exec moresocial-db-1 psql -U moresocial_admin -d postgres -c "CREATE DATABASE moresocial_eval_1 OWNER moresocial"
 sudo docker exec moresocial-db-1 psql -U moresocial_admin -d moresocial_eval_1 -c "CREATE EXTENSION vector"
+sudo install -d -m 0700 /tmp/ms-eval
+sudo chown 10001:10001 /tmp/ms-eval
 sudo docker compose -p moresocial -f /srv/moresocial/src/deploy/compose.yaml --env-file /srv/moresocial/release.env \
   run --rm --no-deps -v /tmp/ms-eval:/eval web python -m app.draft_eval --database moresocial_eval_1 --generations 2 --out /eval
 sudo docker exec moresocial-db-1 psql -U moresocial_admin -d postgres -c "DROP DATABASE moresocial_eval_1 WITH (FORCE)"
 ```
 
-`/tmp/ms-eval/draft-eval.md` lists every draft with its proxy scores; the JSON has usage and
-latency per system. Automatic scores cannot establish "sounds like me": have the owner read
+The 18 fictional cases include Dutch housing replies, cancellations, effective-date changes,
+confidential sources, corrections and long email passages. `/tmp/ms-eval/draft-eval.md` lists
+every draft with its proxy scores; the JSON has usage and latency per system and separate
+indexing costs. Automatic scores cannot establish "sounds like me": have the owner read
 representative drafts before `mode all`.
 
 ## Diagnostics

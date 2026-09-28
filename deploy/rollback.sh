@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Roll application images/source back to an earlier installed revision, keeping current data.
-# Migrations in the first release are additive, so the previous revision can run on the newer
-# schema. Never restores an old database over new user writes. If a future migration is not
-# backward compatible, follow docs/operator-setup.md "Rollback" instead of this script.
+# Exact migration-head and draft-policy compatibility are required. Never restores an old
+# database over new user writes. See docs/operator-setup.md "Rollback" for forward recovery.
 set -euo pipefail
 sha=${1:?usage: rollback.sh <previous-git-sha>}
 [[ "$sha" =~ ^[0-9a-f]{7,40}$ ]] || exit 2
@@ -44,8 +43,27 @@ if [ "$assistant_schema" = t ]; then
     'from pathlib import Path; import sys; sys.exit(not Path("migrations/versions/0014_assistant.py").is_file())' \
     || { echo "Schema 0014 (assistant) requires a coordinated downgrade before this image. Prefer 'python -m app.proactive mode off' and a forward fix; see docs/operator-setup.md." >&2; exit 2; }
 fi
-printf 'MORESOCIAL_REVISION=%s\n' "$sha" > "$ROOT/release.env"
-docker compose -p moresocial -f "$dest/deploy/compose.yaml" --env-file "$ROOT/release.env" up -d web worker
+previous=$(readlink -f "$ROOT/src")
+printf 'MORESOCIAL_REVISION=%s\n' "$sha" > "$ROOT/release.env.next"
+trap 'rm -f "$ROOT/release.env.next"' EXIT
+restore_previous() {
+  docker compose -p moresocial -f "$previous/deploy/compose.yaml" --env-file "$ROOT/release.env" up -d web worker
+}
+if ! docker compose -p moresocial -f "$dest/deploy/compose.yaml" --env-file "$ROOT/release.env.next" up -d web worker; then
+  restore_previous
+  exit 1
+fi
+ready=false
+for _ in $(seq "${MORESOCIAL_READINESS_ATTEMPTS:-30}"); do
+  if curl -fsS http://127.0.0.1:8772/ready >/dev/null; then ready=true; break; fi
+  sleep 1
+done
+if [ "$ready" != true ]; then
+  restore_previous
+  echo "Rollback target failed readiness; previous release restored." >&2
+  exit 1
+fi
+mv "$ROOT/release.env.next" "$ROOT/release.env"
 ln -sfn "$dest" "$ROOT/src.next" && mv -T "$ROOT/src.next" "$ROOT/src"
 systemctl restart moresocial-connectors.service 2>/dev/null || true
-curl -fsS http://127.0.0.1:8772/ready && echo "rolled back to $sha" | tee -a "$ROOT/releases/history.log"
+echo "rolled back to $sha" | tee -a "$ROOT/releases/history.log"

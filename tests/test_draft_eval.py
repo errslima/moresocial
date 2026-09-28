@@ -34,3 +34,27 @@ def test_harness_compares_three_systems_on_fictional_cases(database, tmp_path):
 def test_live_runs_refuse_the_configured_database(database, monkeypatch):
     assert draft_eval.main(['--database', 'moresocial', '--cases', 'gmail_only']) == 2
     assert draft_eval.main(['--database', 'moresocial_eval_ok; DROP', '--cases', 'gmail_only']) == 2
+
+
+def test_placeholders_are_not_assertions_or_evidence():
+    case = next(c for c in draft_eval.CASES if c.name == 'open_obligation')
+    result = draft_eval.score(case, "Hoi Jonas! [your answer about whether I've found a permanent place in Utrecht yet]")
+    assert result['placeholders'] == 1 and result['leaks'] == []
+    housing = next(c for c in draft_eval.CASES if c.name == 'housing_cross_chat')
+    assert not draft_eval.score(housing, '[until 15 October?]')['facts']
+
+
+def test_evaluation_rate_limit_recovery_is_bounded_and_restores_calls(monkeypatch):
+    from app import ai
+    calls, waits = [], []
+    def limited(*args, **kwargs):
+        calls.append(1)
+        raise ai.rate_limited(2)
+    monkeypatch.setattr(ai, 'generate', limited)
+    monkeypatch.setattr(draft_eval.time, 'sleep', waits.append)
+    import pytest
+    with draft_eval.paced_provider(0) as state:
+        with pytest.raises(ai.AIUnavailable, match='rate_limited'):
+            ai.generate()
+    assert len(calls) == 4 and waits == [3, 3, 3]
+    assert state['wait_ms'] == 9000 and ai.generate is limited

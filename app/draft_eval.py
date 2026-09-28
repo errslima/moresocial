@@ -25,6 +25,7 @@ Nothing here can send a message: there is no WhatsApp connector in an evaluation
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import difflib
@@ -42,7 +43,7 @@ from .models import (Account, Claim, DraftEvidenceBundle, PersonIdentifier, Sour
 from .repo import Scoped
 
 ME = '31600000900@c.us'
-PLACEHOLDER = re.compile(r'\[[^\]]{1,60}\]')
+PLACEHOLDER = re.compile(r'\[[^\]\n]{1,500}\]')
 LABEL = re.compile(r'\b(?:P|F|C|W)\d{1,2}\b')
 SYSTEMS = ('previous', 'voice', 'evidence')
 
@@ -378,7 +379,7 @@ def pipeline(wid, sid, mode: str) -> tuple[str, dict, dict]:
 
 
 def score(case: Case, text: str) -> dict:
-    low = text.lower()
+    low = PLACEHOLDER.sub('', text).lower()
     placeholders = PLACEHOLDER.findall(text)
     first = re.sub(r'[^\w]', '', text.split()[0]) if text.split() else ''
     return {'facts': all(re.search(p, low) for p in case.must),
@@ -388,10 +389,53 @@ def score(case: Case, text: str) -> dict:
                               (case.placeholder != 'none' or not placeholders),
             'labels': bool(LABEL.search(text)),
             'greeting': None if case.greeting is None else first.lower() == case.greeting.lower(),
-            'similarity': round(difflib.SequenceMatcher(None, low, case.reference.lower()).ratio(), 3)}
+            'similarity': round(difflib.SequenceMatcher(None, text.lower(), case.reference.lower()).ratio(), 3)}
 
 
-def run_case(case: Case, generations: int, systems=SYSTEMS) -> dict:
+@contextmanager
+def paced_provider(seconds: float):
+    """Evaluation-only pacing and bounded 429 recovery, including indexing calls.
+
+    Production request behavior is unchanged. All attempts still pass through the normal
+    usage ledger. Keep throttling time separate from measured drafting latency.
+    """
+    state = {'wait_ms': 0.0}
+    last = [0.0]
+    original = {name: getattr(ai, name) for name in ('generate', 'embed')}
+
+    def wait(delay):
+        while delay > 0:
+            part = min(delay, 30.0)
+            time.sleep(part)
+            state['wait_ms'] += part * 1000
+            delay -= part
+
+    def wrap(fn):
+        def call(*args, **kwargs):
+            for attempt in range(4):
+                wait(max(0, last[0] + seconds - time.monotonic()))
+                try:
+                    return fn(*args, **kwargs)
+                except ai.AIUnavailable as exc:
+                    if str(exc) != 'rate_limited' or attempt == 3:
+                        raise
+                    delay = min(ai.RATE_LIMIT_MAX_WAIT, exc.retry_after or ai.RATE_LIMIT_DEFAULT_WAIT) + 1
+                    print(json.dumps({'evaluation_wait_seconds': round(delay), 'attempt': attempt + 1}), flush=True)
+                    wait(delay)
+                finally:
+                    last[0] = time.monotonic()
+        return call
+
+    try:
+        for name, fn in original.items():
+            setattr(ai, name, wrap(fn))
+        yield state
+    finally:
+        for name, fn in original.items():
+            setattr(ai, name, fn)
+
+
+def run_case(case: Case, generations: int, systems=SYSTEMS, pacing=None) -> dict:
     now = datetime.now(timezone.utc)
     from worker.main import drain
     with db.session() as s:
@@ -409,6 +453,7 @@ def run_case(case: Case, generations: int, systems=SYSTEMS) -> dict:
         for n in range(generations):
             reset(wid, sid)
             attempt_started = time.monotonic()
+            wait_before = pacing['wait_ms'] if pacing else 0
             try:
                 with ai.capture_usage() as usage:
                     if system == 'previous':
@@ -428,6 +473,10 @@ def run_case(case: Case, generations: int, systems=SYSTEMS) -> dict:
                     metrics['cost_usd'] = None
                 results.append({'system': system, 'generation': n + 1, 'metrics': metrics,
                                 'error': type(exc).__name__ + ':' + str(exc)[:120]})
+            if pacing:
+                metrics['evaluation_wait_ms'] = round(pacing['wait_ms'] - wait_before)
+                metrics['wall_ms'] = metrics['total_ms']
+                metrics['total_ms'] = max(0, metrics['total_ms'] - metrics['evaluation_wait_ms'])
             print(json.dumps({'case': case.name, 'system': system, 'generation': n + 1,
                               'ok': 'error' not in results[-1]}), flush=True)
     return {'case': case.name, 'scenario': case.scenario, 'workspace': str(wid), 'setup_metrics': setup_metrics, 'results': results}
@@ -488,6 +537,7 @@ def main(argv=None) -> int:
     parser.add_argument('--cases', default='')
     parser.add_argument('--systems', default=','.join(SYSTEMS))
     parser.add_argument('--out', default='')
+    parser.add_argument('--pace-seconds', type=float, default=2.0, help='pause between live provider calls (0–30)')
     args = parser.parse_args(argv)
     settings = config.get()
     provider = ai.provider()  # the operator configuration, read from the configured database
@@ -515,7 +565,16 @@ def main(argv=None) -> int:
         return 2
     wanted = {c for c in args.cases.split(',') if c}
     systems = tuple(x for x in args.systems.split(',') if x in SYSTEMS)
-    runs = [run_case(c, max(1, min(args.generations, 3)), systems) for c in CASES if not wanted or c.name in wanted]
+    runs = []
+    with paced_provider(0 if settings.synthetic_providers else max(0, min(30, args.pace_seconds))) as pacing:
+        for case in CASES:
+            if wanted and case.name not in wanted:
+                continue
+            runs.append(run_case(case, max(1, min(args.generations, 3)), systems, pacing))
+            if args.out:
+                out = Path(args.out)
+                out.mkdir(parents=True, exist_ok=True)
+                (out / 'draft-eval-progress.json').write_text(json.dumps(runs, indent=2, ensure_ascii=False, default=str))
     summary = summarize(runs)
     model = getattr(provider, 'generation_model', 'unknown')
     result = {'model': model, 'embedding': getattr(provider, 'embedding_model', None), 'summary': summary, 'runs': runs}

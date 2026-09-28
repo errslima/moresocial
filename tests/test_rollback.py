@@ -40,7 +40,8 @@ esac
     ('t', False, False, 'f', True), ('t', True, True, 'f', True), ('f', False, True, 'f', True),
     # Schema 0014 present: an image without the assistant migration is refused.
     ('t', True, False, 't', False), ('t', True, True, 't', True)])
-def test_rollback_checks_schema_before_changing_release(tmp_path, removed, compatible, success, assistant, assistant_image):
+@pytest.mark.parametrize('ready', [True, False])
+def test_rollback_checks_schema_before_changing_release(tmp_path, removed, compatible, success, assistant, assistant_image, ready):
     root = tmp_path / 'moresocial'
     old = root / 'releases' / 'aaaaaaa' / 'src'
     target = root / 'releases' / 'bbbbbbb' / 'src'
@@ -62,7 +63,7 @@ esac
     docker.chmod(0o755)
     for name in ('systemctl', 'curl'):
         stub = bins / name
-        stub.write_text('#!/bin/sh\nexit 0\n')
+        stub.write_text('#!/bin/sh\nexit ' + ('1' if name == 'curl' and not ready else '0') + '\n')
         stub.chmod(0o755)
     # The deployment host uses GNU mv; the workstation may have BSD mv without -T.
     move = bins / 'mv'
@@ -71,10 +72,17 @@ esac
     calls = tmp_path / 'calls'
     env = {**os.environ, 'PATH': str(bins) + ':' + os.environ['PATH'], 'MORESOCIAL_ROOT': str(root),
            'ROLLBACK_CALLS': str(calls), 'SCHEMA_REMOVED': removed, 'IMAGE_STATUS': '0' if compatible else '1',
-           'ASSISTANT_SCHEMA': assistant, 'ASSISTANT_IMAGE_STATUS': '0' if assistant_image else '1'}
+           'ASSISTANT_SCHEMA': assistant, 'ASSISTANT_IMAGE_STATUS': '0' if assistant_image else '1',
+           'MORESOCIAL_READINESS_ATTEMPTS': '1'}
     result = subprocess.run(['bash', str(Path(__file__).resolve().parents[1] / 'deploy/rollback.sh'), 'bbbbbbb'],
                             env=env, capture_output=True, text=True)
-    if success:
+    if success and not ready:
+        assert result.returncode == 1
+        assert release.read_text() == 'MORESOCIAL_REVISION=aaaaaaa\n'
+        assert (root / 'src').resolve() == old
+        assert not (root / 'release.env.next').exists()
+        assert f'-f {old}/deploy/compose.yaml' in calls.read_text()
+    elif success:
         assert result.returncode == 0, result.stderr
         assert release.read_text() == 'MORESOCIAL_REVISION=bbbbbbb\n'
         assert (root / 'src').resolve() == target

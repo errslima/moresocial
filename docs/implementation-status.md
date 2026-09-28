@@ -15,8 +15,9 @@ validation or deployment.
   `active revision: a9bde9c`. The separate post-release checks (history log, triggers,
   connector health, public readiness) were not run in the deploying session; run them next.
   The evidence rollout switch is still `off` (default): drafts use the limited context with
-  conversation voice. See the dated entry below. Rollback: `sudo
-  /srv/moresocial/src/deploy/rollback.sh 3fcf2b4` (schema `0016` is compatible with it).
+  conversation voice. See the dated entry below. **Correction from review:** schema `0016`
+  is additive, but `3fcf2b4` requires head `0015` at readiness and is not an operational
+  image-only rollback target. Keep evidence mode off and fix forward; see the runbook.
 - **Previous verified release:** `3fcf2b4`, schema `0015`, deployed and checked on
   2026-09-28. WhatsApp restyle with reviewed outgoing-message contrast correction.
   Public health/readiness pass; authenticated Safari inspection confirms the deployed
@@ -28,8 +29,8 @@ validation or deployment.
   and the direct Anthropic, OpenAI and Voyage adapters are retired. Events are recognized
   automatically; manual gathering creation and invitation planning are retired. WhatsApp
   sends only on an explicit user action; Gmail and Calendar remain read-only.
-- **Rollback for this release:** `sudo /srv/moresocial/src/deploy/rollback.sh 218f18c`;
-  schema stays `0015`. Older rollback across the `0012` schema removal requires the
+- **Historical schema-0015 rollback:** `218f18c` was compatible with that schema, not
+  current `0016`. Older rollback across the `0012` schema removal requires the
   [schema rollback procedure](cleanup/schema-rollout.md#failure-and-rollback).
 - **Cleanup verification:** [runtime cleanup](cleanup/README.md) passed **295 Python**
   and **33 connector** tests locally; the connector suite also passed **33/33** on
