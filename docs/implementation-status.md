@@ -1,30 +1,28 @@
 # Implementation status
 
-Last updated 2026-09-27. This is the resume point for any agent or operator. **Current
+Last updated 2026-09-28. This is the resume point for any agent or operator. **Current
 state** points to the last recorded release; the sections after the pending list are dated
 history, newest first. A revision called active or current inside a dated entry was current
 only on that date. Sections about Anthropic, Voyage, OpenAI and personal keys describe
 retired implementations. Local migration and synthetic checks are not evidence of live API
 validation or deployment.
 
-## Current state (recorded 2026-09-27)
+## Current state (recorded 2026-09-28)
 
-- **Last verified release:** `79304e9`, schema `0012`, deployed and checked on
-  2026-09-27. It follows the reviewed runtime cleanup `f6cf3eb` and removes only
-  the empty manual gathering schema. Readiness passes; 18 authenticated desktop/mobile
-  page checks passed after each deployment; the WhatsApp connector is `ready`.
-  The prior event-identity release was
-  `d5fc668` (recorded by `bbb8379`).
+- **Last verified release:** `3fcf2b4`, schema `0015`, deployed and checked on
+  2026-09-28. WhatsApp restyle with reviewed outgoing-message contrast correction.
+  Public health/readiness pass; authenticated Safari inspection confirms the deployed
+  chat layout. The WhatsApp connector is `ready` with health `ok` and no pending packets.
+  Previous release: `218f18c`.
 - **Current behavior:** see [architecture](architecture.md). Production AI uses one
   operator-owned OpenRouter configuration managed in Admin; spending limits are set on the
   OpenRouter key and token usage is still reported, with no local caps. Personal AI keys
   and the direct Anthropic, OpenAI and Voyage adapters are retired. Events are recognized
   automatically; manual gathering creation and invitation planning are retired. WhatsApp
   sends only on an explicit user action; Gmail and Calendar remain read-only.
-- **Rollback for that release:** returning to `f6cf3eb` requires a coordinated
-  downgrade to schema `0011` before starting old code. The live rollback guard was
-  verified to refuse the incompatible image without changing the active release.
-  See the [schema rollback procedure](cleanup/schema-rollout.md#failure-and-rollback).
+- **Rollback for this release:** `sudo /srv/moresocial/src/deploy/rollback.sh 218f18c`;
+  schema stays `0015`. Older rollback across the `0012` schema removal requires the
+  [schema rollback procedure](cleanup/schema-rollout.md#failure-and-rollback).
 - **Cleanup verification:** [runtime cleanup](cleanup/README.md) passed **295 Python**
   and **33 connector** tests locally; the connector suite also passed **33/33** on
   production's Node **22.23.3** image. Review fixed inventory detection of a leftover
@@ -73,6 +71,27 @@ and restarts keeping the session); the real-key OpenRouter **Test and save** (ge
 and embeddings in use by the 2026-09-26 Suggestions and Events releases); Docker builds,
 the Compose stack and the provisioner with a paired connector. Obsolete: live checks for
 personal AI keys and for Anthropic/Voyage keys, whose features were retired.
+
+## WhatsApp restyle — 2026-09-28 (deployed `3fcf2b4`)
+
+- Reviewed and committed as `3fcf2b48bec427c2e5cf34431d0726fa54eef673` on
+  `whatsapp-sidebar`; deployed via Git bundle and the standard `deploy/release.sh`.
+  Activated at **17:11:40 UTC**, previous release `218f18c`. No schema changes.
+- Encrypted pre-release backup `moresocial-20260928T171058Z.tar.enc` completed
+  successfully (`Result=success`, exit 0).
+- Local verification: **409 Python tests passed**, including the 51 WhatsApp page,
+  send and browser tests; **40 connector tests passed** using bundled Node 24.21.0.
+  Additional desktop/mobile browser checks verified Enter inserts newlines without
+  sending, composer growth, and the floating latest-message link. Final light/dark
+  visual and send-flow checks passed after the contrast correction.
+- Live verification: public `/health` and `/ready` pass all checks; web, worker and
+  connector run `3fcf2b4`; schema remains `0015`. Served CSS SHA-256 matches the
+  reviewed local file. Authenticated Safari reload and visual inspection confirm the
+  restyled conversation list, bubbles, media labels, timestamp links and composer.
+- Connector verification at 17:13 UTC: observed `ready`, classified health `ok`,
+  fresh heartbeat, pending packets 0, latest sweep `ok`. No test messages were sent.
+- Rollback: `sudo /srv/moresocial/src/deploy/rollback.sh 218f18c` (no schema downgrade).
+  This deployment record is a subsequent documentation commit, not the release image.
 
 ## Social assistant review follow-up — 2026-09-27 (deployed `218f18c`)
 
