@@ -1,7 +1,8 @@
 # Evidence-grounded drafts in the user's own voice
 
-Status: implemented locally on 2026-09-29 (M1–M5 complete; M6 verification and rollout in
-progress, see the [implementation log](#11-implementation-log)).
+Status: M1–M5 complete; deployed as `a9bde9c` (schema `0016`) with evidence mode off. M6
+live evaluation, human voice review, rollout and post-release checks are pending; see the
+[implementation log](#11-implementation-log).
 Date: 2026-09-28.
 Scope: Suggestions reply drafts and shared drafting infrastructure, with compatible
 style improvements for proactive prepared messages.
@@ -371,7 +372,7 @@ messages, duplicate preparations or revive terminal suggestions.
 - [x] Add a rollout switch for evidence-grounded drafting; retain a clearly labelled limited
   context fallback only if its output remains safe and its limitations are visible.
 - [x] Update `architecture.md`, `suggestions.md`, implementation status and operator guidance.
-- [ ] Prepare migration, release and rollback instructions; perform deployment only when
+- [x] Prepare migration, release and rollback instructions; perform deployment only when
   authorized by the implementation session's scope.
 
 Acceptance: all deterministic safety/lifecycle gates pass; human review supports better
@@ -486,3 +487,29 @@ draft behavior and lifecycle guarantees have been verified, not when the prompt 
   the new schemas. Existing tone tests now select custom mode explicitly; proactive tests use
   a clock inside the preparation window so they no longer fail when the suite runs after
   23:00 (12 such failures reproduced on the untouched baseline at 23:37 local time).
+
+### 2026-09-29 — verification, release and what remains
+
+- **Local checks:** `bash scripts/test.sh` passed 459 Python tests (30 browser tests at
+  1440/390 px, real PostgreSQL/pgvector) and 40/40 connector tests.
+- **Released `a9bde9c`** (commit on branch `draft-evidence`) through the standard Git bundle
+  and `deploy/release.sh`, after the encrypted backup `moresocial-20260928T223031Z.tar.enc`
+  and a worker stop. Readiness passed and the revision was activated (previous `3fcf2b4`).
+  Evidence mode is `off`: drafts use the labelled limited context with conversation voice.
+- **Pending (production commands were not permitted after activation):** post-release
+  server checks; the bounded live evaluation with `app/draft_eval.py` in a disposable database
+  (runbook section "Evidence-grounded drafts"); owner review of representative voice samples;
+  enabling the owner's workspace (`mode selected`) and authenticated browse-only UI checks.
+  Measured p50/p95 latency and per-draft cost exist only synthetically so far; decide on the
+  job-based path only if live latency exceeds the interactive budget.
+- **Before/after (fictional housing case, synthetic model):** previous system — "Hi Jonas,
+  [your answer here]."; evidence pipeline — "Hoi Jonas, I'm staying at Iris's place until
+  15 October. [how you are]" (the accepted arrangement and its deadline, the user's own
+  greeting with Jonas, the mood question left to the user; no student room, brother,
+  pregnancy or Lisbon trip). Live-model examples will come from the evaluation.
+- **Remaining limitations:** the resolver's interpretation is only as good as the live model
+  (valid labels prove provenance, not correctness); disclosure assessment beyond the
+  deterministic guards is model-judged and defaults ambiguous cases to withheld; the
+  evidence revision is conservative, so busy imports briefly hold copy/prefill while a
+  revalidation runs; earlier claim corrections have no replacement link; history is limited
+  to what was imported (WhatsApp 90 days, bounded Gmail).

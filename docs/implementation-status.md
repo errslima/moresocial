@@ -1,15 +1,23 @@
 # Implementation status
 
-Last updated 2026-09-28. This is the resume point for any agent or operator. **Current
+Last updated 2026-09-29. This is the resume point for any agent or operator. **Current
 state** points to the last recorded release; the sections after the pending list are dated
 history, newest first. A revision called active or current inside a dated entry was current
 only on that date. Sections about Anthropic, Voyage, OpenAI and personal keys describe
 retired implementations. Local migration and synthetic checks are not evidence of live API
 validation or deployment.
 
-## Current state (recorded 2026-09-28)
+## Current state (recorded 2026-09-29)
 
-- **Last verified release:** `3fcf2b4`, schema `0015`, deployed and checked on
+- **Deployed, post-release checks pending: `a9bde9c`, schema `0016`** (evidence-grounded
+  drafts, 2026-09-28 22:3x UTC). `release.sh` completed with readiness passing (database,
+  migrations, Google client, encryption key, AI generation and embeddings) and printed
+  `active revision: a9bde9c`. The separate post-release checks (history log, triggers,
+  connector health, public readiness) were not run in the deploying session; run them next.
+  The evidence rollout switch is still `off` (default): drafts use the limited context with
+  conversation voice. See the dated entry below. Rollback: `sudo
+  /srv/moresocial/src/deploy/rollback.sh 3fcf2b4` (schema `0016` is compatible with it).
+- **Previous verified release:** `3fcf2b4`, schema `0015`, deployed and checked on
   2026-09-28. WhatsApp restyle with reviewed outgoing-message contrast correction.
   Public health/readiness pass; authenticated Safari inspection confirms the deployed
   chat layout. The WhatsApp connector is `ready` with health `ok` and no pending packets.
@@ -49,6 +57,15 @@ validation or deployment.
 
 ## Pending live checks and operator actions
 
+Added 2026-09-29 for release `a9bde9c` (details in the dated entry below):
+
+| Item | State | Who |
+| --- | --- | --- |
+| Post-release server checks for `a9bde9c`: history log, `alembic_version = 0016`, both `suggestions` triggers present, connector `ready`/health `ok`, public `/ready`, worker running | **pending** | operator |
+| Live evaluation in a disposable database (`python -m app.draft_eval`, [runbook](operator-setup.md#evidence-grounded-drafts-migration-0016)): three systems, 13 fictional cases, two generations; record quality, latency, tokens and cost | **pending** | operator |
+| Owner review of representative evaluation drafts for voice ("sounds like me") before enabling evidence mode | **pending** | owner |
+| Enable evidence mode for the owner's workspace (`python -m app.draft_evidence enable <email>` then `mode selected`), then authenticated browse-only checks of a suggestion's "What this draft uses" panel at 1440/390 px | **pending** | operator/owner |
+
 Consolidated on 2026-09-27 from the dated entries below and the archived plans.
 
 | Item | State | Who |
@@ -71,6 +88,36 @@ and restarts keeping the session); the real-key OpenRouter **Test and save** (ge
 and embeddings in use by the 2026-09-26 Suggestions and Events releases); Docker builds,
 the Compose stack and the provisioner with a paired connector. Obsolete: live checks for
 personal AI keys and for Anthropic/Voyage keys, whose features were retired.
+
+## Evidence-grounded drafts — 2026-09-29 (deployed `a9bde9c`; checks pending)
+
+- Implements [the draft-memory execution plan](draft-memory-execution-plan.md) M1–M5 and the
+  code/documentation parts of M6: evidence retrieval across WhatsApp and Gmail, resolution of
+  decisions, dates and corrections, permitted-fact disclosure control with one verification
+  pass, conversation voice as the default style (custom tone kept), a private "What this
+  draft uses" panel, rewrite beside edits, deduplicated revalidation and erasure through
+  bundles. Migration `0016` (additive). Evidence mode sits behind an operator switch,
+  default `off`.
+- **Local verification (2026-09-29):** `bash scripts/test.sh` passed **459 Python** tests
+  (including 30 browser tests at 1440/390 px and real PostgreSQL/pgvector) and **40/40**
+  connector tests. New coverage: `tests/test_draft_evidence.py` (46), the `0016` migration
+  test, the harness test and an evidence-draft browser flow. The untouched baseline had
+  12 failures when run at 23:37 local time, all from the 08:00–23:00 preparation window
+  (proactive tests) or a same-day event merge near midnight; the proactive tests now use a
+  clock inside the window.
+- **Deployment (2026-09-28 22:3x UTC):** Git bundle `3fcf2b4..draft-evidence` into
+  `/tmp/moresocial-draft-a9bde9c` (cloned from `/tmp/moresocial-whatsapp-3fcf2b4`); encrypted
+  pre-release backup `moresocial-20260928T223031Z.tar.enc` succeeded; worker stopped; `sudo
+  deploy/release.sh a9bde9c` (log `/tmp/moresocial-draft-deploy.log`) built images, migrated,
+  started web and worker, passed readiness and activated `a9bde9c` (previous `3fcf2b4`).
+- **Not yet done:** the deploying session's permission to run further production commands
+  was withdrawn right after activation, so the post-release checks, the live evaluation, the
+  rollout switch and authenticated UI checks are listed as pending above. Nothing has been
+  enabled beyond the default; no test message was sent.
+- **Expected effects of this release in production:** one workspace with default assistant
+  settings, which read as conversation voice. There were no open drafts to relabel (only 5
+  resolved prepared messages). Open prepared messages created later use `proactive-v2`.
+  Production models: `openai/gpt-5.6-luna` (generation), `voyageai/voyage-4` (1024-d).
 
 ## WhatsApp restyle — 2026-09-28 (deployed `3fcf2b4`)
 
