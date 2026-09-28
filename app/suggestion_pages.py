@@ -141,9 +141,17 @@ def detail_page(request, ctx, row, error=None, status=200):
     evidence_ids = [m.id for m in data['evidence']] + ([row.anchor_id] if row.anchor_id else [])
     possible = [c['rep'] for c in ac.related_candidates(ctx.ws, row, evidence_ids)] if not data['event'] else []
     choices = event_choices(ctx.ws, row, [m['id'] for m in messages])
+    from . import draft_evidence, voice
+    uses, voice_basis = None, ''
+    if row.producer == 'conversation':
+        uses = draft_evidence.view(ctx.ws, row, data['person'].display_name)
+    elif row.draft and not review.paused:
+        built = suggestions.draft_context(ctx.ws, row, review)
+        voice_basis = voice.summary((built[0].get('_style') if built else None), data['person'].display_name)
     return render(request, 'suggestion.html', ctx, status=status, **data,
         kinds=suggestions.KIND_LABELS, messages=messages, error=error, draft_is_current=current, context_fingerprint=fingerprint,
-        possible_events=possible, event_choices=choices, timezone=ctx.s.get(Workspace, ctx.ws.wid).timezone)
+        possible_events=possible, event_choices=choices, timezone=ctx.s.get(Workspace, ctx.ws.wid).timezone,
+        uses=uses, voice_basis=voice_basis, evidence_mode=draft_evidence.enabled(ctx.ws))
 
 
 @router.post('/suggestions/{sid}/state')
@@ -157,12 +165,12 @@ def state(sid: uuid.UUID, action: str = Form(...), days: int = Form(1), ctx: Ctx
 
 
 @router.post('/suggestions/{sid}/draft')
-def generate(request: Request, sid: uuid.UUID, ctx: Ctx = Depends(require_mutation)):
+def generate(request: Request, sid: uuid.UUID, rewrite: str = Form(''), ctx: Ctx = Depends(require_mutation)):
     row = found(ctx.ws.get(Suggestion, sid), 'That suggestion')
     # Release the request transaction before provider generation and its own publication transaction.
     ctx.s.commit()
     try:
-        suggestions.draft(ctx.ws.wid, sid)
+        outcome = suggestions.draft(ctx.ws.wid, sid, rewrite=rewrite == '1')
     except ValueError as exc:
         ctx.s.expire_all()
         return detail_page(request, ctx, found(ctx.ws.get(Suggestion, sid)), str(exc), 409)
@@ -170,6 +178,25 @@ def generate(request: Request, sid: uuid.UUID, ctx: Ctx = Depends(require_mutati
         ref = ai_failure('suggestion_draft', exc)
         ctx.s.expire_all()
         return detail_page(request, ctx, found(ctx.ws.get(Suggestion, sid)), ai_error(exc) + (f' Reference: {ref}' if ref else ''), 503)
+    return redirect(f'/suggestions/{sid}', **({'notice': 'draft-proposed'} if outcome == 'proposed' else {}))
+
+
+@router.post('/suggestions/{sid}/draft/proposal')
+def proposal(sid: uuid.UUID, action: str = Form(...), bundle: str = Form(...), ctx: Ctx = Depends(require_mutation)):
+    """Use or discard a rewrite that was held beside the user's edited draft."""
+    from . import draft_evidence
+    row, review = locked_item(ctx, sid)
+    if action not in ('use', 'discard'):
+        raise Problem(400, 'Choose whether to use this version.')
+    if row.stale or review.paused or row.state not in suggestions.OPEN or not suggestions.evidence_ok(ctx.ws, row):
+        raise Problem(409, 'This suggestion needs a fresh review first.')
+    try:
+        if action == 'use':
+            draft_evidence.use_proposal(ctx.ws, row, review, bundle)
+        else:
+            draft_evidence.discard_proposal(ctx.ws, row, bundle)
+    except ValueError as exc:
+        raise Problem(409, str(exc))
     return redirect(f'/suggestions/{sid}')
 
 
@@ -191,6 +218,9 @@ def save(sid: uuid.UUID, text: str = Form(''), revision: int = Form(...), review
     row.draft_origin, row.draft_fingerprint = 'user', built[1]
     # The edit was written against this context: excluding any of it later erases the edit too.
     row.context_sources = sorted(set(row.context_sources or []) | set(built[0]['_sources']))
+    if row.producer == 'conversation':
+        from . import draft_evidence
+        draft_evidence.acknowledge(ctx.ws, row)  # reviewed after an answer went out of date
     return redirect(f'/suggestions/{sid}')
 
 

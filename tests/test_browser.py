@@ -703,6 +703,10 @@ def test_assistant_settings_prepared_draft_pause_and_composer(live, chromium, vi
 
     nav_to(page, 'Assistant')
     playwright.expect(page.locator('[data-send-rule]')).to_contain_text('messages are sent only when you press Send message')
+    assert page.get_by_label('Match how I write to this person').is_checked()
+    assert not page.get_by_label('Warmth').is_visible()  # tone controls are secondary in the default mode
+    page.get_by_label('Use my custom tone settings').check()
+    page.locator('[data-custom-tone] summary').click()
     page.get_by_label('Warmth').select_option('warm')
     page.get_by_label('Emoji').select_option('often')
     page.get_by_role('button', name='Save settings').click()
@@ -741,5 +745,75 @@ def test_assistant_settings_prepared_draft_pause_and_composer(live, chromium, vi
     playwright.expect(page.locator('[data-prep-state]')).to_contain_text('Paused for this event')
     fits()
     page.screenshot(path=f'{shots}/moresocial-event-prep-{viewport["width"]}.png', full_page=True)
+    assert sent == [] and errors == []
+    ctx.close()
+
+
+@pytest.mark.parametrize('viewport', [{'width': 1440, 'height': 900}, {'width': 390, 'height': 844}], ids=['desktop', 'mobile'])
+def test_evidence_grounded_draft_panel_rewrite_and_composer(live, chromium, viewport, monkeypatch):
+    """Draft from another chat's evidence, the private "What this draft uses" panel, an edit that a
+    rewrite never overwrites, and the composer handoff. Send boundaries are spied on: nothing is sent."""
+    import os
+    import tempfile
+    from app import db, draft_evidence, whatsapp, whatsapp_send
+    from app.repo import Scoped
+    from assistant_fixtures import link_connector
+    from conftest import workspace_of
+    from draft_fixtures import JONAS, housing, reply_action
+    from worker.main import drain as run_jobs
+    shots = os.environ.get('MORESOCIAL_SCREENSHOTS', tempfile.gettempdir())
+    sent = []
+    monkeypatch.setattr(whatsapp_send, 'fake_send', lambda *a, **kw: sent.append(a) or {'state': 'rejected'})
+    real_call = whatsapp.call
+    monkeypatch.setattr(whatsapp, 'call', lambda row, m, path, *a, **kw: sent.append(path) if path == '/send' else real_call(row, m, path, *a, **kw))
+    ctx = chromium.new_context(viewport=viewport)
+    page = ctx.new_page()
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+
+    def fits():
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), page.url
+
+    sign_in(page, live)
+    wid = workspace_of('alex@example.test')
+    with db.session() as s:
+        ws = Scoped(s, wid)
+        link_connector(ws)
+        ids = housing(ws)
+    run_jobs()
+    with db.session() as s:
+        sid = reply_action(Scoped(s, wid), JONAS, ids['question'])
+        draft_evidence.set_mode(s, 'all', 'test')
+    page.goto(live + f'/suggestions/{sid}')
+    playwright.expect(page.get_by_text('Drafting checks your other WhatsApp chats and email')).to_be_visible()
+    page.get_by_role('button', name='Draft a reply').click()
+    page.wait_for_url(live + f'/suggestions/{sid}')
+    draft = page.get_by_label('Edit your message')
+    assert "Iris's place until 15 October" in draft.input_value() and 'student room' not in draft.input_value()
+    panel = page.locator('[data-draft-uses]')
+    playwright.expect(panel).to_contain_text('Answered')
+    playwright.expect(panel).to_contain_text('WhatsApp chat with Iris')
+    playwright.expect(panel).to_contain_text('examples of how you write to Jonas')
+    playwright.expect(page.get_by_role('button', name='Copy message')).to_be_visible()
+    fits()
+    page.screenshot(path=f'{shots}/moresocial-evidence-draft-{viewport["width"]}.png', full_page=True)
+
+    draft.fill('Hoi Jonas! I am at Iris for now, more soon. [how you are]')
+    page.get_by_role('button', name='Save edits').click()
+    page.get_by_role('button', name='Rewrite with current information').click()
+    playwright.expect(page.locator('.notice')).to_contain_text('Your edited text is unchanged')
+    assert page.get_by_label('Edit your message').input_value() == 'Hoi Jonas! I am at Iris for now, more soon. [how you are]'
+    playwright.expect(page.locator('[data-proposal]')).to_contain_text("Iris's place until 15 October")
+    fits()
+    page.screenshot(path=f'{shots}/moresocial-evidence-rewrite-{viewport["width"]}.png', full_page=True)
+    page.get_by_role('button', name='Keep my text').click()
+    playwright.expect(page.locator('[data-proposal]')).to_have_count(0)
+    page.get_by_role('button', name='Save edits').click()  # re-confirm the edit against the latest bundle
+
+    page.get_by_role('link', name='Open conversation', exact=True).click()
+    page.wait_for_url('**/whatsapp?account=*')
+    assert page.locator('#wa-message').input_value() == 'Hoi Jonas! I am at Iris for now, more soon. [how you are]'
+    assert 'What this draft uses' not in page.content()
+    fits()
     assert sent == [] and errors == []
     ctx.close()

@@ -146,6 +146,8 @@ def add_claim(pid: str, category: str = Form('note'), value: str = Form(...), ct
     if not ws.first(ws.q(Claim).where(Claim.claim_key == key)):
         ws.add(Claim(id=uuid.uuid4(), subject='person', person_id=p.id, category=category, value=value.strip()[:300],
                      basis='user', status='confirmed', origin='user', valid_from=utcnow(), claim_key=key))
+        from . import draft_evidence
+        draft_evidence.mark_changed(ws)
     return redirect(f'/people/{p.id}')
 
 

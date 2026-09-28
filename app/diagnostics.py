@@ -114,6 +114,8 @@ FIELDS = {
     'updated': _int, 'unchanged': _int, 'skipped': _int, 'messages': _int, 'contacts': _int,
     'vector_results': _int, 'keyword_results': _int, 'results': _int, 'covered': _int, 'total': _int,
     'citations': _int, 'enqueued': _int,
+    # evidence-grounded drafts (counts only; never questions, answers or passages)
+    'questions': _int, 'passages': _int, 'chars': _int, 'claims_count': _int, 'supported': _int, 'examples': _int,
     # event identity resolution
     'mode': _token, 'evaluated': _int, 'settled': _int, 'same': _int, 'different': _int, 'uncertain': _int,
     'rejected': _int, 'invalid': _int, 'stale': _int, 'grouped': _int, 'continued': _int, 'cached_pairs': _int,

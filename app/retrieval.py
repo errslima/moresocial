@@ -47,12 +47,24 @@ def fts_query(question: str) -> str | None:
     return ' | '.join(dict.fromkeys(terms)) or None
 
 
-def search_chunks(ws: Scoped, question: str, person_id: uuid.UUID | None = None, since: datetime | None = None,
-                  until: datetime | None = None, limit: int = EVIDENCE_CHUNKS, job_id=None) -> list[uuid.UUID]:
-    p = ai.embedder()
-    started = time.monotonic()
+@dataclass
+class Ranked:
+    """Hybrid candidates: fused score per chunk, the modalities that found it, and each
+    chunk's rank in the vector results (absent when only full-text search found it)."""
+    chunks: list[tuple[uuid.UUID, float, frozenset]]
+    vector_results: int
+    keyword_results: int
+    vector_rank: dict | None = None
+
+
+def hybrid(ws: Scoped, question: str, vector: list[float] | None, snapshot=None, *, person_id: uuid.UUID | None = None,
+           since: datetime | None = None, until: datetime | None = None, providers: tuple[str, ...] | None = None,
+           candidates: int = CANDIDATES) -> Ranked:
+    """Reciprocal rank fusion of exact cosine and full-text search. Every structured filter
+    (workspace, pipeline, embedding space and dimension, providers, person, dates) is applied
+    inside both queries, so forbidden rows can never crowd eligible ones out of the top k."""
     filters, params = ['c.workspace_id = :w', 'c.pipeline_version = :pipeline'], {
-        'w': ws.wid, 'k': CANDIDATES, 'pipeline': PIPELINE_VERSION}
+        'w': ws.wid, 'k': candidates, 'pipeline': PIPELINE_VERSION}
     if person_id:
         filters.append('''EXISTS (SELECT 1 FROM chunk_sources cs JOIN source_participants sp
                           ON sp.workspace_id = cs.workspace_id AND sp.source_id = cs.source_id
@@ -64,31 +76,48 @@ def search_chunks(ws: Scoped, question: str, person_id: uuid.UUID | None = None,
     if until:
         filters.append('c.start_at <= :until')
         params['until'] = until
+    if providers is not None:
+        filters.append('c.provider = ANY(:providers)')
+        params['providers'] = list(providers)
     where = ' AND '.join(filters)
-    ranked: dict[uuid.UUID, float] = {}
     vector_rows = []
-    if p.embedding_dimension:
-        # Use the same immutable provider snapshot for query construction and space
-        # filtering; a settings refresh cannot mix vector spaces mid-request.
-        vec = ai.embed(ws.wid, [question], 'query', job_id, snapshot=p).vectors[0]
-        if len(vec) != p.embedding_dimension:
+    if vector is not None and snapshot is not None and snapshot.embedding_dimension:
+        if len(vector) != snapshot.embedding_dimension:
             raise MixedEmbeddings('query embedding dimension does not match configuration')
         vector_rows = ws.s.execute(text(f'''
             SELECT c.id FROM embeddings e JOIN chunks c ON c.workspace_id = e.workspace_id AND c.id = e.chunk_id
             WHERE e.workspace_id = :w AND e.space = :space AND e.dimension = :dim AND {where}
             ORDER BY e.vector <=> CAST(:q AS vector) LIMIT :k'''),
-            {**params, 'space': p.embedding_space, 'dim': p.embedding_dimension, 'q': str(vec)}).all()
+            {**params, 'space': snapshot.embedding_space, 'dim': snapshot.embedding_dimension, 'q': str(vector)}).all()
     q = fts_query(question)
     text_rows = ws.s.execute(text(f'''
         SELECT c.id FROM chunks c WHERE {where} AND c.tsv @@ to_tsquery('simple', :tsq)
         ORDER BY ts_rank(c.tsv, to_tsquery('simple', :tsq)) DESC LIMIT :k'''), {**params, 'tsq': q}).all() if q else []
-    for rows in (vector_rows, text_rows):  # reciprocal rank fusion
+    ranked: dict[uuid.UUID, float] = {}
+    via: dict[uuid.UUID, set] = {}
+    for name, rows in (('vector', vector_rows), ('keyword', text_rows)):  # reciprocal rank fusion
         for rank, (cid,) in enumerate(rows):
             ranked[cid] = ranked.get(cid, 0.0) + 1.0 / (60 + rank)
-    result = [cid for cid, _ in sorted(ranked.items(), key=lambda kv: -kv[1])[:limit]]
+            via.setdefault(cid, set()).add(name)
+    ordered = sorted(ranked.items(), key=lambda kv: -kv[1])  # stable: ties keep vector-first order, as Ask always had
+    return Ranked([(cid, score, frozenset(via[cid])) for cid, score in ordered], len(vector_rows), len(text_rows),
+                  {cid: rank for rank, (cid,) in enumerate(vector_rows)})
+
+
+def search_chunks(ws: Scoped, question: str, person_id: uuid.UUID | None = None, since: datetime | None = None,
+                  until: datetime | None = None, limit: int = EVIDENCE_CHUNKS, job_id=None) -> list[uuid.UUID]:
+    p = ai.embedder()
+    started = time.monotonic()
+    vec = None
+    if p.embedding_dimension:
+        # Use the same immutable provider snapshot for query construction and space
+        # filtering; a settings refresh cannot mix vector spaces mid-request.
+        vec = ai.embed(ws.wid, [question], 'query', job_id, snapshot=p).vectors[0]
+    found = hybrid(ws, question, vec, p, person_id=person_id, since=since, until=until)
+    result = [cid for cid, _, _ in found.chunks[:limit]]
     diagnostics.emit('retrieval_completed', route='/hybrid' if p.embedding_dimension else '/keyword',
-                     space=p.embedding_space if p.embedding_dimension else None, vector_results=len(vector_rows),
-                     keyword_results=len(text_rows), results=len(result), duration_ms=int((time.monotonic() - started) * 1000))
+                     space=p.embedding_space if p.embedding_dimension else None, vector_results=found.vector_results,
+                     keyword_results=found.keyword_results, results=len(result), duration_ms=int((time.monotonic() - started) * 1000))
     return result
 
 

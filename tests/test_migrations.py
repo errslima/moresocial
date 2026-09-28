@@ -99,3 +99,52 @@ def test_assistant_migration_preserves_suggestions_and_enforces_invariants(brows
             command.downgrade(cfg, '0013')
     finally:
         command.upgrade(cfg, 'head')
+
+
+def test_draft_evidence_migration_backfills_style_mode_and_guards_downgrade(make_browser, database):
+    """0016: default-only tone settings become conversation voice, deliberate ones stay custom
+    (tone values retained); a correction link blocks the downgrade; the lineage FK only nulls."""
+    import uuid
+    import pytest
+    from sqlalchemy import text
+    from app.models import Claim
+    from app.repo import Scoped
+    from conftest import workspace_of
+    for user in ('alex', 'blake'):
+        make_browser().login(user)
+    alex, blake = workspace_of('alex@example.test'), workspace_of('blake@example.test')
+    cfg = Config(str(Path(__file__).resolve().parents[1] / 'alembic.ini'))
+    cfg.attributes['database_url'] = database['runtime_url']
+    try:
+        command.downgrade(cfg, '0015')
+        with db.engine().begin() as c:
+            c.execute(text('INSERT INTO assistant_settings (workspace_id) VALUES (:w)'), {'w': alex})
+            c.execute(text("INSERT INTO assistant_settings (workspace_id, humour) VALUES (:w, 'playful')"), {'w': blake})
+        command.upgrade(cfg, 'head')
+        command.check(cfg)
+        with db.engine().connect() as c:
+            rows = {r.workspace_id: (r.style_mode, r.humour) for r in
+                    c.execute(text('SELECT workspace_id, style_mode, humour FROM assistant_settings')).all()}
+        assert rows == {alex: ('conversation', 'light'), blake: ('custom', 'playful')}
+        with db.session() as s:
+            ws = Scoped(s, alex)
+            original = ws.add(Claim(id=uuid.uuid4(), subject='self', category='life_update', attribute='location',
+                                    value='Rotterdam', basis='explicit', status='rejected', origin='extraction',
+                                    claim_key=uuid.uuid4().hex))
+            s.flush()
+            correction = ws.add(Claim(id=uuid.uuid4(), subject='self', category='life_update', attribute='location',
+                                      value='Utrecht', basis='user', status='confirmed', origin='user',
+                                      claim_key=uuid.uuid4().hex, corrects_id=original.id))
+            ids = original.id, correction.id
+        with pytest.raises(RuntimeError, match='claim_corrections_present'):
+            command.downgrade(cfg, '0015')
+        from alembic.script import ScriptDirectory
+        head = ScriptDirectory.from_config(cfg).get_current_head()
+        with db.engine().begin() as c:
+            assert c.execute(text('SELECT version_num FROM alembic_version')).scalar() == head
+            c.execute(text('DELETE FROM claims WHERE id = :id'), {'id': ids[0]})
+            kept = c.execute(text('SELECT workspace_id, corrects_id FROM claims WHERE id = :id'), {'id': ids[1]}).one()
+        assert kept.workspace_id == alex and kept.corrects_id is None
+        command.downgrade(cfg, '0015')  # nothing left to lose
+    finally:
+        command.upgrade(cfg, 'head')

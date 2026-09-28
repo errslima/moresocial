@@ -274,6 +274,52 @@ fresh heartbeat; Suggestions has no false sync warning; the Assistant page rende
 desktop/mobile; a linked event appears on an event-related suggestion. **Never send a test
 message to a real person**; evaluate prepared drafts by reading them only.
 
+## Evidence-grounded drafts (migration 0016)
+
+Feature details: [Suggestions › Evidence-grounded drafts](suggestions.md#evidence-grounded-drafts).
+Migration `0016` is additive (two new tables, `assistant_settings.style_mode`,
+`claims.corrects_id` and two triggers on `suggestions`); it takes brief locks with a
+5-second lock timeout and needs no worker stop, but stopping the worker during `release.sh`
+remains the standard precaution. Settings whose tone values are all defaults switch to the
+conversation voice; any non-default tone value keeps the user in custom mode. Existing
+drafts are kept and labelled as written with the previous context; they need one review
+(save or rewrite) before they can be copied again.
+
+Rollout switch (operator setting, effective on the next request, no restart). The default is
+`off`: drafts use the clearly labelled limited context (this conversation, its events and the
+voice examples). Start with one workspace:
+
+```bash
+C="sudo docker compose -p moresocial -f /srv/moresocial/src/deploy/compose.yaml --env-file /srv/moresocial/release.env exec -T web"
+$C python -m app.draft_evidence enable owner@example.com   # adds that account's workspace to the selection
+$C python -m app.draft_evidence mode selected              # or: all | off | status
+```
+
+`off` stops new evidence preparation and bundle use for new drafts; existing bundles keep
+guarding their drafts (stale or erased drafts stay blocked) and all user settings stay.
+Cost per explicit draft: one batched query-embedding call, one resolution call, one writing
+call and at most one verification/repair call. Background `revalidate_draft` jobs run when
+the workspace evidence revision moves; they rerun retrieval without a model call and pay
+one resolution call only when the considered evidence changed. Diagnostics: `draft_prepared`
+(counts, durations, coverage code, model; never text) and job events for `revalidate_draft`.
+
+Live language evaluation (fictional scenarios, three systems, bounded): run it in a
+disposable database on the production Postgres server, never the live one. The harness
+reads the OpenRouter configuration from the live database, then works only in the
+evaluation database, and it has no WhatsApp connector, so it cannot send.
+
+```bash
+sudo docker exec moresocial-db-1 psql -U moresocial_admin -d postgres -c "CREATE DATABASE moresocial_eval_1 OWNER moresocial"
+sudo docker exec moresocial-db-1 psql -U moresocial_admin -d moresocial_eval_1 -c "CREATE EXTENSION vector"
+sudo docker compose -p moresocial -f /srv/moresocial/src/deploy/compose.yaml --env-file /srv/moresocial/release.env \
+  run --rm --no-deps -v /tmp/ms-eval:/eval web python -m app.draft_eval --database moresocial_eval_1 --generations 2 --out /eval
+sudo docker exec moresocial-db-1 psql -U moresocial_admin -d postgres -c "DROP DATABASE moresocial_eval_1 WITH (FORCE)"
+```
+
+`/tmp/ms-eval/draft-eval.md` lists every draft with its proxy scores; the JSON has usage and
+latency per system. Automatic scores cannot establish "sounds like me": have the owner read
+representative drafts before `mode all`.
+
 ## Diagnostics
 
 Every service writes one sanitized JSON event per line (`app/diagnostics.py`; the connector and
@@ -368,6 +414,13 @@ An older copy of the script does not contain that protection.
   `python -m app.proactive mode off` (above) and a forward fix. The `0014` downgrade refuses
   while any proactive suggestion or assistant data exists; never delete that user data or
   restore an old database over newer messages to roll back.
+- Migration `0016` (evidence-grounded drafts) is additive and rollback-compatible with the
+  `0015` image `3fcf2b4`: older code ignores bundles and the style mode, cannot copy drafts
+  written by the new pipeline without a fresh save (their fingerprints differ), and still
+  erases derived text because two triggers remove a bundle whenever its draft is erased and
+  keep the bundle's sources in `suggestions.context_sources` while the draft exists. Prefer
+  `python -m app.draft_evidence mode off` and a forward fix. The `0016` downgrade refuses
+  while any claim correction link exists.
 - Application: `sudo /srv/moresocial/src/deploy/rollback.sh <previous-sha>` switches images and
   source back, keeping all data (first-release migrations are additive).
 - If a future migration is not backward compatible, the previous release cannot run on the new

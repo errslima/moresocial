@@ -74,9 +74,18 @@ def sources_of(messages=(), evc: 'EventContext | None' = None) -> list[str]:
 
 # ---------------- explicit user settings
 
-DEFAULTS = dict(instructions='', warmth='friendly', directness='balanced', humour='light', brevity='short', emoji='sparing',
-                language='', examples_preferred='', examples_avoid='', initiative='balanced', event_preparation=True,
-                check_ins=True, paused=False, revision=0)
+DEFAULTS = dict(instructions='', style_mode='conversation', warmth='friendly', directness='balanced', humour='light',
+                brevity='short', emoji='sparing', language='', examples_preferred='', examples_avoid='', initiative='balanced',
+                event_preparation=True, check_ins=True, paused=False, revision=0)
+STYLE_MODES = ('conversation', 'custom')
+# The default voice: the user's own messages to this person are the main guide.
+VOICE = '''Write as the user would write to this person. Use the supplied examples of the user's own
+messages (style.examples, W labels) as the main guide to language, phrasing, warmth, punctuation, emoji
+and length. Adapt to the current situation. Do not imitate the other person's voice. Examples
+demonstrate style only: their dates, names, plans, promises and circumstances are NOT current facts and
+must not appear in the new message. W labels are never evidence. Follow explicit user wording
+preferences where supplied, without adding facts or commitments. When style.coverage is "sparse" or
+"none", write plainly and concisely and do not invent familiarity, nicknames or in-jokes.'''
 
 
 def settings(ws: Scoped):
@@ -85,10 +94,17 @@ def settings(ws: Scoped):
 
 
 def persona(row) -> dict:
-    """User-authored style preferences for drafts, as the model sees them."""
-    return {'instructions': row.instructions, 'style': {k: getattr(row, k) for k in STYLE},
-            'language': row.language or 'match the conversation', 'examples_of_preferred_wording': row.examples_preferred,
-            'examples_of_wording_to_avoid': row.examples_avoid, 'initiative': row.initiative}
+    """User-authored style preferences for drafts, as the model sees them. In the default
+    conversation mode the legacy tone controls are omitted: the user's own messages to the
+    recipient guide style instead. Custom mode supplies the tone controls the user chose."""
+    mode = getattr(row, 'style_mode', None) or 'conversation'
+    out = {'mode': 'match how I write to this person' if mode == 'conversation' else 'custom tone settings',
+           'instructions': row.instructions, 'language': row.language or 'match the conversation',
+           'examples_of_preferred_wording': row.examples_preferred, 'examples_of_wording_to_avoid': row.examples_avoid,
+           'initiative': row.initiative}
+    if mode == 'custom':
+        out['style'] = {k: getattr(row, k) for k in STYLE}
+    return out
 
 
 def preference(ws: Scoped, person_id):

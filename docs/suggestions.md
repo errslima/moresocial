@@ -87,12 +87,16 @@ no longer clear `stale` when the linked event changed.
 
 ## Drafts, persona and freshness
 
-The **Assistant** page holds one persona: instructions (≤4,000 characters), warmth,
-directness, humour, length, emoji, language (empty = match the conversation), optional
-wording examples, initiative, the two preparation switches and a pause control. People
-have check-in preferences and a free-text style/boundaries field; a contact's boundaries
-override the persona's initiative. Settings are user-authored instructions about wording
-only; imported text never becomes a setting, and nothing can grant sending.
+The **Assistant** page defaults to **Match how I write to this person** (`style_mode =
+conversation`): drafts follow representative examples of the user's own messages to that
+recipient (see [voice](#voice-from-conversation-history)). **Use my custom tone settings**
+(`custom`) applies warmth, directness, humour, length and emoji; those controls sit in a
+secondary section and are kept in both modes. Both modes keep instructions (≤4,000
+characters), language (empty = match the conversation), optional wording examples to
+prefer or avoid, initiative, the two preparation switches and a pause control. People have
+check-in preferences and a free-text style/boundaries field; a contact's boundaries override
+the persona. Settings are user-authored instructions about wording only; imported text never
+becomes a setting, and nothing can grant sending.
 
 Every draft records a fingerprint of its context (messages, linked event, persona,
 person preferences, updates, destination, and the workspace-local date, so a draft saying
@@ -100,7 +104,8 @@ person preferences, updates, destination, and the workspace-local date, so a dra
 draft to match the current context; after a change the text stays exactly as written and
 shows "The context changed since this draft was written" until the user checks and saves
 it. Saves submit the fingerprint shown on the page and fail with 409 if it moved.
-**Preview my style** makes one accounted model call on a fictional scenario.
+**Preview my preferences** makes one accounted model call on a fictional scenario with no
+contact data, so it shows explicit preferences (and custom tone) only, never a per-person voice.
 
 Each action also records `context_sources`: every source whose text or facts reached its
 title, reason or draft, including the sources behind every event in its context (so a
@@ -109,6 +114,93 @@ excluded or deleted, that derived text is erased, edited drafts included, the ac
 taken out of view and refreshed from what remains (a chat review, or re-preparation).
 Migration `0015` adds the column and backfills event-linked actions with their group's
 sources; text written earlier from unlinked event candidates is refreshed on review.
+
+## Evidence-grounded drafts
+
+When someone asks something whose answer lives elsewhere in the user's WhatsApp or Gmail
+history (for example where they will stay, settled in a chat with the host), an explicit
+**Draft a reply** or **Rewrite with current information** runs one bounded pipeline
+(`app/draft_evidence.py`, operator rollout switch, default off):
+
+1. **Plan** up to four information needs from the incoming message deterministically; a
+   question about current feelings or health is its own need and is never answered from
+   history. Named people are matched only through stored names and identifier labels; two
+   contacts with one name stay separate (passages label them "Sam (contact A/B)").
+2. **Retrieve** with one batched query-embedding call and hybrid search over included
+   WhatsApp and Gmail chunks (Calendar facts come from Event projections; diary entries are
+   never retrieved). Workspace, provider, inclusion and embedding space are filtered inside
+   both queries; at most four purely semantic hits per question and 12 chunks overall.
+   Without embeddings, keyword search runs and the reduced coverage is recorded, never
+   treated as "nothing found".
+3. **Expand** hits with neighbouring turns and later messages of the matched conversations
+   (so "yes, let's do that" attaches to the right proposal and a later cancellation is seen),
+   within 40 passages / 24,000 characters, with room reserved for context.
+4. **Corrections and claim lifecycle** are loaded independently of vector ranking:
+   user-written or confirmed claims sharing the question's words, claims supporting the
+   passages in any state, and correction links (`claims.corrects_id`, recorded for edits from
+   `0016` on; earlier corrections have no guessed link). Rejected claims are shown as
+   rejected and never become answers; inferences, health and diary-only claims are excluded.
+5. **Resolve** in one structured call: per question `supported`, `uncertain`,
+   `conflicting`, `missing` or `withheld`, the decision state (possibility, offer, accepted,
+   obligation, completed, cancelled), statement date, effective period and deadline, the
+   minimal first-person answer and whether it may be shared. The server rejects unknown
+   labels or malformed dates and applies deterministic guards: passages with an explicit
+   confidentiality request are never shared, rejected claims cannot support an answer,
+   current-mood questions stay missing. Only supported and shareable answers become
+   **permitted facts** (P labels).
+6. **Write** from the recipient conversation, its events, the permitted facts, unresolved
+   points (as placeholders only where the reply needs the user's answer), explicit
+   preferences and style-only examples (W labels). The writer never receives passages from
+   other conversations and returns the P labels it used; unknown labels are rejected and
+   internal labels are stripped from the text.
+7. **Verify** once when other sources were consulted: one call checks factual grounding,
+   disclosure, invented commitments and mood; it may remove unsupported parts once (issues
+   are stored as kinds only). A draft that cannot be verified is not published.
+8. **Publish** atomically after rechecking the review revision, the action's own context,
+   the draft revision (a concurrent edit wins), every considered passage and style example,
+   claim fingerprints and the rollout switch.
+
+The bundle (`draft_evidence_bundles`, one per suggestion) stores references, not copied
+passages: questions, considered source IDs/versions and roles, claim fingerprints, answers
+with source links, permitted and used facts, style example IDs, coverage, verification
+outcome, versions and per-draft token/latency metrics. Every influential source (including
+evidence that led to withholding) joins `context_sources`, so excluding or deleting any of
+them erases the draft, edited or not, and the bundle.
+
+The detail page shows **What this draft uses**, private to the user and never copied or
+prefilled: each question with its answer, deadline, reason when not answered and links to
+the supporting messages with dates; the voice basis; coverage limits (keyword-only search,
+unindexed messages, shortened evidence, history searched). A rewrite never overwrites an
+edited draft: it appears beside it with **Use this version** / **Keep my text**. Drafts from
+before this release are kept and labelled as written with the previous context.
+
+**Freshness.** Material evidence changes (sources, exclusions, claims and corrections,
+identity links, new chunks and embeddings) bump a per-workspace evidence revision once per
+committing transaction; usage accounting, bundle publication and unchanged re-extraction do
+not. A newer revision makes an evidence draft "being checked" (copy and prefill wait) until a
+deduplicated `revalidate_draft` job reruns the deterministic retrieval with the cached query
+vectors: an unchanged evidence set simply restamps the bundle; a changed one costs one
+resolution call, and unchanged answers refresh metadata without touching the user's text,
+while a changed answer marks the draft outdated ("Newer information changes an answer").
+The user can rewrite, or correct and save their own text, which makes that reviewed text
+usable again. Revalidation never revives a terminal suggestion and never sends. GET, copy
+checks and composer prefill only read persisted state. An import burst elsewhere during
+drafting is absorbed by rerunning the deterministic retrieval at publication.
+
+## Voice from conversation history
+
+`app/voice.py` selects 6–12 examples (at most 8,000 characters) of the user's own included,
+non-deleted outgoing messages in the exact destination conversation (one account, one chat),
+with no 30-day cutoff, spread over time, preferring substantive messages and, for replies,
+messages that answered the other person; links, media placeholders, quotes and emoji-only
+messages are skipped and very short ones kept only when typical. Messages sent through the
+composer and text equal to any prepared draft are excluded so the assistant does not learn
+from itself; other outgoing text is assumed to be the user's. The other person's messages are
+never examples. With fewer than three usable examples the writer stays plain and concise and
+the page says so. Examples are untrusted, style-only input: their dates, names and plans must
+not appear in the new message. Proactive drafts use the same selector and voice rules while
+keeping their stricter disclosure policy (personal news only from approved updates; no
+cross-conversation retrieval).
 
 ## Prepared messages (proactive)
 
@@ -156,7 +248,13 @@ and draft races, bounded truncation retry, identity splitting and deadline order
 events, ambiguity, corrections, split, reschedule, cancellation, conflicts, exclusion,
 bounds). `tests/test_social_assistant.py` covers persona, preferences, updates, proactive
 scheduling, races, privacy and zero send calls; `tests/test_assistant_eval.py` is the small
-synthetic evaluation set. Browser cases exercise desktop/mobile display, drafting, edits,
+synthetic evaluation set. `tests/test_draft_evidence.py` covers the evidence pipeline with
+fictional fixtures (cross-chat and Gmail-only answers, accepted versus earlier alternatives,
+cancellation after publication, short assents, namesakes and other accounts, corrections
+without embeddings, confidentiality, diary and mood, style-example facts, prompt injection,
+verification repair, budgets and coverage, rewrite protection, erasure, publication races,
+revalidation, rollback triggers and zero provider calls on reads); `tests/test_draft_eval.py`
+runs the evaluation harness (`app/draft_eval.py`) synthetically. Browser cases exercise desktop/mobile display, drafting, edits,
 clipboard, dismissal, settings, prepared drafts, event pause and composer handoff.
 Synthetic tests establish these contracts, not the quality of a live model's wording.
 

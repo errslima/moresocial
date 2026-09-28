@@ -135,9 +135,11 @@ def rebuild_conversation(workspace_id: uuid.UUID, provider: str, conversation_id
         q = q.where(Chunk.conversation_id == conversation_id) if conversation_id else q.where(Chunk.conversation_id.is_(None))
         existing = {c.chunk_key: c for c in ws.all(q.with_for_update())}
         keep = {p['key'] for p in planned}
+        removed = 0
         for key, chunk in existing.items():
             if key not in keep:
                 s.delete(chunk)
+                removed += 1
         created = 0
         embedding_targets = ai.embedding_targets()
         for p in planned:
@@ -158,7 +160,15 @@ def rebuild_conversation(workspace_id: uuid.UUID, provider: str, conversation_id
             if provider in EXTRACT_PROVIDERS:
                 jobs.enqueue(s, workspace_id, 'extract_chunk', f'extract:{p["key"]}', {'chunk_id': str(chunk.id)})
             created += 1
+        if created or removed:
+            _evidence_changed(ws, provider)  # keyword search sees new chunks before they are embedded
         return created
+
+
+def _evidence_changed(ws: Scoped, provider: str | None = None) -> None:
+    from . import draft_evidence
+    if provider is None or provider in draft_evidence.PROVIDERS:
+        draft_evidence.mark_changed(ws)
 
 
 def _chunk_current(ws: Scoped, chunk_id, lock: bool) -> tuple[Chunk | None, list[tuple[ChunkSource, Source]]]:
@@ -211,6 +221,8 @@ def embed_chunk(workspace_id: uuid.UUID, chunk_id, job_id=None, space: str | Non
             return 'exists'
         ws.add(Embedding(id=uuid.uuid4(), chunk_id=chunk.id, model=p.embedding_model, space=space, dimension=len(vector),
                          content_hash=digest, pipeline_version=PIPELINE_VERSION, vector=vector))
+        if space == ai.embedder().embedding_space:
+            _evidence_changed(ws, chunk.provider)  # vector search can now find it
     return 'embedded' if cached is None else 'cached'
 
 
@@ -307,15 +319,20 @@ def publish_claim(ws: Scoped, c: dict, person_id, evidence: list[tuple[ChunkSour
         return None  # the user rejected this claim; corrections are authoritative
     claim = ws.first(ws.q(Claim).where(Claim.claim_key == key).with_for_update())
     valid_from = max((src.occurred_at for _, src in evidence if src.occurred_at), default=None)
+    changed = False
     if claim is None:
         claim = ws.add(Claim(id=uuid.uuid4(), subject=subject, person_id=person_id, category=c['category'],
                              attribute=c['attribute'], value=c['value'], basis=c['basis'], status='active',
                              origin='extraction', valid_from=valid_from, claim_key=key))
         ws.s.flush()
         resolve_conflicts(ws, claim)
+        changed = True
     for _, src in evidence:
         if not ws.first(ws.q(ClaimSource).where(ClaimSource.claim_id == claim.id, ClaimSource.source_id == src.id)):
             ws.add(ClaimSource(id=uuid.uuid4(), claim_id=claim.id, source_id=src.id, source_version=src.version))
+            changed = True
+    if changed:  # an unchanged re-extraction is not new evidence
+        _evidence_changed(ws)
     ws.s.flush()
     from . import observation_groups
     claim.grouping_revision = None
@@ -346,11 +363,14 @@ def reject_claim(ws: Scoped, claim: Claim) -> None:
     if not ws.first(ws.q(ClaimRejection).where(ClaimRejection.rejection_key == key)):
         ws.add(ClaimRejection(id=uuid.uuid4(), rejection_key=key))
     claim.status = 'rejected'
+    _evidence_changed(ws)
 
 
 def edit_claim(ws: Scoped, claim: Claim, value: str) -> None:
-    """A user edit rejects the extracted wording and keeps the user's version as confirmed."""
+    """A user edit rejects the extracted wording and keeps the user's version as confirmed,
+    linked to the claim it corrects so drafts can respect the correction's scope."""
     value = value.strip()[:300]
+    _evidence_changed(ws)
     if not value or normalize_value(value) == normalize_value(claim.value):
         claim.status = 'confirmed'
         return
@@ -360,10 +380,12 @@ def edit_claim(ws: Scoped, claim: Claim, value: str) -> None:
     existing = ws.first(ws.q(Claim).where(Claim.claim_key == key))
     if existing:
         existing.status, existing.basis = 'confirmed', 'user'
+        if existing.corrects_id is None and existing.id != claim.id:
+            existing.corrects_id = claim.id
         return
     corrected = ws.add(Claim(id=uuid.uuid4(), subject=claim.subject, person_id=claim.person_id, category=claim.category,
                  attribute=claim.attribute, value=value, basis='user', status='confirmed', origin='user',
-                 valid_from=jobs.utcnow(), claim_key=key))
+                 valid_from=jobs.utcnow(), claim_key=key, corrects_id=claim.id))
 
     ws.s.flush()
     from . import observation_groups

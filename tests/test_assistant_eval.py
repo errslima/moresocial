@@ -20,7 +20,7 @@ from app import assistant, db, event_identity, events, proactive, suggestions
 from app.models import Event, Suggestion, SuggestionReview
 from app.repo import Scoped
 from assistant_fixtures import MICKAEL, NOOR, at, email, item
-from test_social_assistant import (Clock, laser, pinned, prompts, rows, rows_legacy, run_scan, saturday_evening,  # noqa: F401
+from test_social_assistant import (Clock, daytime, laser, pinned, prompts, rows, rows_legacy, run_scan, saturday_evening,  # noqa: F401
                                    sends, settings_form, world)
 from worker.main import drain
 
@@ -48,7 +48,7 @@ def test_synthetic_evaluation_case(case, world, browser, prompts, sends, monkeyp
         for style in (dict(warmth='warm', brevity='brief', emoji='often'),
                       dict(warmth='reserved', directness='direct', emoji='none', brevity='short')):
             with db.session() as s:
-                assistant.save_settings(Scoped(s, wid), settings_form(**style))
+                assistant.save_settings(Scoped(s, wid), settings_form(style_mode='custom', **style))
                 s.get(Suggestion, row.id).draft = ''
             suggestions.draft(wid, row.id)
             with db.session() as s:
@@ -84,7 +84,7 @@ def test_synthetic_evaluation_case(case, world, browser, prompts, sends, monkeyp
     elif case == 'quiet_contact':
         with db.session() as s:
             pinned(Scoped(s, wid), NOOR, 'Noor', days_ago=50, text='The bouldering hall on Friday was great fun.')
-        Clock(monkeypatch, datetime.now(timezone.utc))
+        Clock(monkeypatch, daytime())
         run_scan(wid)
         drain(kinds=['prepare_message'])
         [row] = rows(wid, kind='check_in')
@@ -98,7 +98,7 @@ def test_synthetic_evaluation_case(case, world, browser, prompts, sends, monkeyp
             from app import diary
             diary.save(ws, 'DIARY_ONLY: I am thinking about quitting my job.', token='eval-diary')
             assistant.create_update(ws, {'text': 'SHAREABLE: I ran my first half marathon', 'audience': 'eligible'})
-        Clock(monkeypatch, datetime.now(timezone.utc))
+        Clock(monkeypatch, daytime())
         run_scan(wid)
         drain(kinds=['prepare_message'])
         payload = next(p['prompt'] for p in prompts if p['purpose'] == 'proactive' and 'Noor' in p['prompt'])

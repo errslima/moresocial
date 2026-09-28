@@ -110,7 +110,7 @@ def test_empty_candidates_are_eligible(browser, capsys):
     assert rc == 0 and report['status'] == 'ok'
     assert report['transaction'] == {'read_only': True, 'isolation': 'repeatable read'}
     schema = report['schema']
-    assert schema['revision'] == '0011' and schema['code_head'] == '0015'
+    assert schema['revision'] == '0011' and schema['code_head'] == '0016'
     assert {t: schema[t] for t in ('event_candidates', 'event_people', 'drafts')} == {
         t: {'state': 'present', 'rows': 0} for t in ('event_candidates', 'event_people', 'drafts')}
     answers = schema['answer_sources']

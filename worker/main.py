@@ -16,7 +16,7 @@ import uuid
 
 from sqlalchemy import and_, exists, func, select, text
 
-from app import accounts, ai, config, db, diagnostics, google_sync, jobs, memory, observation_groups, operator_settings, proactive, security, suggestions, events, event_resolver
+from app import accounts, ai, config, db, diagnostics, draft_evidence, google_sync, jobs, memory, observation_groups, operator_settings, proactive, security, suggestions, events, event_resolver
 from app.google import GoogleError
 from app.models import Chunk, Claim, Connection, Embedding, Job, SyncStream, Workspace, PIPELINE_VERSION
 
@@ -67,6 +67,8 @@ def handle(job: Job):
         return proactive.scan(wid, p, beat)
     elif job.kind == 'prepare_message':
         return proactive.prepare(wid, uuid.UUID(p['state_id']), beat)
+    elif job.kind == 'revalidate_draft':
+        return draft_evidence.revalidate(wid, uuid.UUID(p['bundle_id']), beat)
     else:
         raise ValueError('unknown job kind')
 
@@ -194,6 +196,7 @@ def schedule() -> int:
                               max_attempts=3)
         n += suggestions.schedule(s)
         n += proactive.schedule(s)
+        n += draft_evidence.schedule(s)
     return n
 
 
@@ -268,6 +271,8 @@ def reconcile_ai(batch: int = 200) -> int:
                 security.emit('embedding_rebuild_progress', space=pending.embedding_space, covered=covered, total=total)
                 if uncovered is None:
                     operator_settings.promote_pending(s)
+                    # A new vector space can change what retrieval finds: revalidate evidence bundles.
+                    s.execute(text('UPDATE evidence_revisions SET revision = revision + 1, updated_at = now()'))
                     security.emit('embedding_cutover', audit=True, space=pending.embedding_space, total=total,
                                   revision=operator_settings.revision(s))
     security.emit('ai_reconcile', level='debug', enqueued=n, count=len(targets))

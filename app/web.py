@@ -54,6 +54,7 @@ NOTICES = {
     'assistant-preparing': 'Preparation queued. Prepared drafts appear in Suggestions; nothing is sent.',
     'update-saved': 'Update saved. It is only suggested to the people you chose.',
     'update-revoked': 'Update withdrawn. Drafts that used it were cleared.',
+    'draft-proposed': 'Your edited text is unchanged. The rewritten version is shown below for you to compare.',
 }
 
 

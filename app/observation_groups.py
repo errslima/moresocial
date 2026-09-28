@@ -115,6 +115,8 @@ def act(ws: Scoped, claim: Claim, action: str, value: str = ''):
     elif action == 'confirm':
         for c in group:
             c.status = 'confirmed'
+        from . import draft_evidence
+        draft_evidence.mark_changed(ws)
     elif action == 'reject':
         for c in group:
             memory.reject_claim(ws, c)

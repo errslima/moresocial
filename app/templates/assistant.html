@@ -4,7 +4,7 @@
 {% block content %}
 <h1>Assistant</h1>
 <p data-send-rule><strong>Prepares drafts; messages are sent only when you press Send message.</strong></p>
-<p class="muted">Your assistant writes suggestion drafts in your style. If you allow it, it also prepares messages before your events and check-ins with people you chose. Everything appears in <a href="{{ url('/suggestions') }}">Suggestions</a> for you to review, edit, send yourself or dismiss.</p>
+<p class="muted">Your assistant writes suggestion drafts the way you write to each person. If you allow it, it also prepares messages before your events and check-ins with people you chose. Everything appears in <a href="{{ url('/suggestions') }}">Suggestions</a> for you to review, edit, send yourself or dismiss.</p>
 {% if error %}<p class="warn" role="alert">{{ error }}</p>{% endif %}
 {% if not ai_ready %}<p class="warn">AI is not configured, so drafts and preparation wait. Your settings are kept.</p>{% endif %}
 <section class="card" aria-labelledby="status">
@@ -21,20 +21,29 @@
 </section>
 <form class="card stack" method="post" action="{{ url('/assistant') }}">
   {{ csrf_field() }}
-  <h2>Style</h2>
-  <label for="instructions">How I like to write</label>
-  <textarea id="instructions" name="instructions" rows="4" maxlength="4000" placeholder="For example: casual, first names, no exclamation marks.">{{ settings.instructions }}</textarea>
-  <p class="small muted">Shapes wording and initiative only. It cannot change facts, a contact's boundaries, what is shared, or the rule that you send messages yourself.</p>
-  {% for field, options in style.items() %}
-  <label for="style-{{ field }}">{{ {'warmth':'Warmth','directness':'Directness','humour':'Humour','brevity':'Length','emoji':'Emoji'}[field] }}</label>
-  <select id="style-{{ field }}" name="{{ field }}">{% for o in options %}<option value="{{ o }}" {% if settings[field] == o %}selected{% endif %}>{{ o|capitalize }}</option>{% endfor %}</select>
-  {% endfor %}
+  <h2>How drafts sound</h2>
+  <fieldset class="stack" data-style-mode>
+    <legend class="small muted">Style</legend>
+    <label><input type="radio" name="style_mode" value="conversation" {% if settings.style_mode != 'custom' %}checked{% endif %}> Match how I write to this person</label>
+    <p class="small muted">Uses examples of how you write to this person. When there are too few of your messages, drafts stay plain and concise.</p>
+    <label><input type="radio" name="style_mode" value="custom" {% if settings.style_mode == 'custom' %}checked{% endif %}> Use my custom tone settings</label>
+  </fieldset>
+  <label for="instructions">Anything to keep in mind (optional)</label>
+  <textarea id="instructions" name="instructions" rows="4" maxlength="4000" placeholder="For example: first names, no exclamation marks.">{{ settings.instructions }}</textarea>
+  <p class="small muted">Shapes wording only. It cannot change facts, a contact's boundaries, what is shared, or the rule that you send messages yourself.</p>
   <label for="language">Language</label>
   <input id="language" name="language" value="{{ settings.language }}" maxlength="40" placeholder="Empty: match each conversation">
   <details><summary>Examples of wording (optional)</summary>
     <label for="ex-yes">Wording I like</label><textarea id="ex-yes" name="examples_preferred" rows="3" maxlength="2000">{{ settings.examples_preferred }}</textarea>
     <label for="ex-no">Wording to avoid</label><textarea id="ex-no" name="examples_avoid" rows="3" maxlength="2000">{{ settings.examples_avoid }}</textarea>
     <p class="small muted">Up to 2,000 characters in total.</p>
+  </details>
+  <details data-custom-tone {% if settings.style_mode == 'custom' %}open{% endif %}><summary>Custom tone settings</summary>
+    <p class="small muted">Used only with "Use my custom tone settings". Your choices are kept either way.</p>
+    {% for field, options in style.items() %}
+    <label for="style-{{ field }}">{{ {'warmth':'Warmth','directness':'Directness','humour':'Humour','brevity':'Length','emoji':'Emoji'}[field] }}</label>
+    <select id="style-{{ field }}" name="{{ field }}">{% for o in options %}<option value="{{ o }}" {% if settings[field] == o %}selected{% endif %}>{{ o|capitalize }}</option>{% endfor %}</select>
+    {% endfor %}
   </details>
   <h2>Initiative</h2>
   <label for="initiative">How often to prepare messages</label>
@@ -46,8 +55,8 @@
 </form>
 <section class="card" aria-labelledby="preview">
   <h2 id="preview">Preview</h2>
-  <p class="small muted">Writes one example reply to a fictional dinner invitation with your saved style. It uses the AI service and no contact data, and sends nothing.</p>
-  <form method="post" action="{{ url('/assistant/preview') }}" data-busy="Writing…">{{ csrf_field() }}<button>Preview my style</button></form>
+  <p class="small muted">Writes one example reply to a fictional dinner invitation using your saved preferences{% if settings.style_mode == 'custom' %} and custom tone{% endif %}. It has no contact data, so it cannot show how you write to a particular person: real drafts learn that from your messages in each conversation. It uses the AI service and sends nothing.</p>
+  <form method="post" action="{{ url('/assistant/preview') }}" data-busy="Writing…">{{ csrf_field() }}<button>Preview my preferences</button></form>
   {% if preview %}<blockquote class="excerpt" data-preview>{{ preview }}</blockquote>{% endif %}
 </section>
 {% endblock %}

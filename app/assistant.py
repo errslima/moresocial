@@ -58,11 +58,16 @@ def save_settings(ws: Scoped, values: dict) -> bool:
         raise Invalid(f'Keep the wording examples under {EXAMPLES_MAX:,} characters in total.')
     if language and (len(language) > 40 or not LANGUAGE_RE.match(language)):
         raise Invalid('Enter a language name, or leave it empty to match each conversation.')
+    row = ws.s.get(AssistantSettings, ws.wid, with_for_update=True)
+    # A form without the mode (an older page) keeps the current one. Tone values are saved in
+    # both modes, so switching back to custom restores them.
+    mode = values.get('style_mode') or (row.style_mode if row is not None else 'conversation')
+    if mode not in ac.STYLE_MODES:
+        raise Invalid('Choose how drafts should sound.')
     new = dict(instructions=instructions, examples_preferred=preferred, examples_avoid=avoid, language=language,
-               initiative=_choice(values, 'initiative', ac.INITIATIVES),
+               style_mode=mode, initiative=_choice(values, 'initiative', ac.INITIATIVES),
                event_preparation=_flag(values, 'event_preparation'), check_ins=_flag(values, 'check_ins'),
                **{k: _choice(values, k, options) for k, options in ac.STYLE.items()})
-    row = ws.s.get(AssistantSettings, ws.wid, with_for_update=True)
     if row is None:
         row = AssistantSettings(workspace_id=ws.wid, revision=0, paused=False)
         ws.s.add(row)
@@ -219,18 +224,25 @@ def erase(row: Suggestion, reason: str) -> None:
 # ---------------- preview
 
 def preview(wid: uuid.UUID) -> str:
-    """One explicit, accounted model call on a fictional scenario with the saved persona.
-    It uses no contact data and cannot send anything."""
-    from . import db
-    from .suggestions import DRAFT_SCHEMA, DRAFT_SYSTEM
+    """One explicit, accounted model call on a fictional scenario with the saved explicit
+    preferences (and tone settings in custom mode). It has no contact data, so it cannot show
+    the per-person voice real drafts learn from the user's own messages. Sends nothing."""
+    from . import db, draft_evidence
     with db.session() as s:
-        data = {**PREVIEW, 'persona': ac.persona(ac.settings(Scoped(s, wid)))}
-    out = ai.generate(wid, system=DRAFT_SYSTEM, prompt=json.dumps(ac.public(data), ensure_ascii=False),
-                      schema=DRAFT_SCHEMA, max_tokens=600, effort='low', context=data)
-    text = out.data.get('text') if isinstance(out.data, dict) else None
-    if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+        settings = ac.settings(Scoped(s, wid))
+        mode = settings.style_mode
+        data = {**PREVIEW, 'persona': ac.persona(settings), 'style': {'coverage': 'none', 'examples': []},
+                'answers': {'permitted_facts': [], 'unresolved': [
+                    {'question': 'Are you free for dinner on Friday?', 'status': 'missing', 'reason': 'no_evidence'}]}}
+    out = ai.generate(wid, system=draft_evidence.draft_system(mode), prompt=json.dumps(ac.public(data), ensure_ascii=False),
+                      schema=draft_evidence.writer_schema([]), max_tokens=600, effort='low', context=data)
+    try:
+        text, _ = draft_evidence.validate_writer(out.data, [])
+    except ai.InvalidOutput:
+        raise ai.InvalidOutput('assistant_preview') from None
+    if len(text) > 2000:
         raise ai.InvalidOutput('assistant_preview')
-    return text.strip()
+    return text
 
 
 def _changed(ws: Scoped, **scope) -> None:

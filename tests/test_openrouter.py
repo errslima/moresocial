@@ -122,8 +122,16 @@ def test_active_generation_schemas_are_valid_strict_json_schemas():
                 check(sub, f'{path}.{name}')
         elif schema.get('type') == 'array':
             check(schema['items'], path + '[]')
+    from app import draft_evidence
+    passages = [draft_evidence.Passage('F1', 'x', 'v', 'whatsapp', 'c', 'a', None, False, 'Iris', 'chat', 'hit', 't', False)]
+    needs = [{'id': 'Q1', 'text': 'Where?', 'query': 'Where?', 'kind': 'fact'}]
     for name, schema in [('extract', memory.EXTRACT_SCHEMA), ('answer', retrieval.ANSWER_SCHEMA),
-                         ('suggestions', suggestions.SCHEMA), ('suggestion_draft', suggestions.DRAFT_SCHEMA),
+                         ('suggestions', suggestions.SCHEMA),
+                         ('suggestion_draft', draft_evidence.writer_schema([{'label': 'P1'}])),
+                         ('suggestion_draft_no_facts', draft_evidence.writer_schema([])),
+                         ('draft_resolve', draft_evidence.resolve_schema(needs, passages, [{'label': 'C1'}])),
+                         ('draft_resolve_no_evidence', draft_evidence.resolve_schema(needs, [], [])),
+                         ('draft_verify', draft_evidence.VERIFY_SCHEMA),
                          ('events', automatic_events.SCHEMA), ('event_resolver', event_resolver.SCHEMA),
                          ('observation_groups', observation_groups.SCHEMA)]:
         check(schema, name)

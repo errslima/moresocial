@@ -73,6 +73,17 @@ class Clock:
         self.value = value
 
 
+def daytime():
+    """Now, moved into 09:00–21:00 local time when the suite runs at night, so tests of the
+    08:00–23:00 preparation window do not depend on the hour they run (an extra hour stays inside)."""
+    local = datetime.now(timezone.utc).astimezone(TZ)
+    if local.hour >= 22:
+        local = local.replace(hour=21, minute=0, second=0, microsecond=0)
+    elif local.hour < 8:
+        local = local.replace(hour=9, minute=0, second=0, microsecond=0)
+    return local.astimezone(timezone.utc)
+
+
 @pytest.fixture
 def world(browser):
     browser.login('alex')
@@ -173,7 +184,7 @@ def test_styles_change_prompt_input_and_synthetic_drafts(world, browser, prompts
     csrf = browser.csrf('/assistant')
     drafts = []
     for style in (dict(warmth='warm', emoji='often', brevity='short'), dict(warmth='reserved', emoji='none', directness='direct')):
-        browser.post('/assistant', {'csrf': csrf, **settings_form(**style)})
+        browser.post('/assistant', {'csrf': csrf, **settings_form(style_mode='custom', **style)})
         with db.session() as s:
             s.get(Suggestion, row.id).draft = ''
         suggestions.draft(wid, row.id)
@@ -223,7 +234,9 @@ def test_imported_text_cannot_become_persona_settings(world, prompts):
     with db.session() as s:
         assert s.get(AssistantSettings, wid) is None
     persona = json.loads([p for p in prompts if p['purpose'] == 'suggestion_draft'][-1]['prompt'])['persona']
-    assert persona['style']['emoji'] == 'sparing' and persona['language'] == 'match the conversation'
+    # Conversation mode (the default): no tone controls in the prompt, the user's own messages guide style.
+    assert 'style' not in persona and persona['mode'] == 'match how I write to this person'
+    assert persona['language'] == 'match the conversation'
 
 
 def test_settings_and_preferences_are_workspace_scoped(world, make_browser):
@@ -259,7 +272,7 @@ def test_person_preferences_form_and_bounds(world, browser):
 
 def test_preview_uses_the_adapter_with_accounting_and_sends_nothing(browser, prompts, sends):
     browser.login('alex')
-    browser.post('/assistant', {'csrf': browser.csrf('/assistant'), **settings_form(warmth='warm', emoji='often')})
+    browser.post('/assistant', {'csrf': browser.csrf('/assistant'), **settings_form(warmth='warm', emoji='often', style_mode='custom')})
     r = browser.post('/assistant/preview', {'csrf': browser.csrf('/assistant')})
     assert r.status_code == 200 and 'data-preview' in r.text and 'Hey Robin' in r.text
     assert [p['purpose'] for p in prompts] == ['assistant_preview']
@@ -289,7 +302,7 @@ def test_update_audience_expiry_and_privacy_in_model_payload(world, browser, pro
         revoked = assistant.create_update(ws, {'text': 'REVOKED_UPDATE', 'audience': 'eligible'})
         assistant.revoke_update(ws, revoked)
         approved_id = approved.id
-    Clock(monkeypatch, datetime.now(timezone.utc))
+    Clock(monkeypatch, daytime())
     run_scan(wid)
     drain(kinds=['prepare_message'])
     payloads = [p['prompt'] for p in prompts if p['purpose'] == 'proactive' and 'Noor' in p['prompt']]
@@ -313,7 +326,7 @@ def test_revocation_clears_dependent_drafts_even_when_edited(world, browser, mon
         update = assistant.create_update(ws, {'text': 'I am moving to Lisbon in May', 'audience': 'selected'},
                                          [person(ws, NOOR)])
         uid = update.id
-    Clock(monkeypatch, datetime.now(timezone.utc))
+    Clock(monkeypatch, daytime())
     run_scan(wid)
     drain(kinds=['prepare_message'])
     row = next(r for r in rows(wid) if r.update_id == uid)
@@ -628,7 +641,7 @@ def test_due_chosen_contact_gets_a_check_in_with_older_context(world, browser, s
     with db.session() as s:
         noor, src = pinned(Scoped(s, wid), NOOR, 'Noor', days_ago=41)
         noor_id = noor.id
-    Clock(monkeypatch, datetime.now(timezone.utc))
+    Clock(monkeypatch, daytime())
     run_scan(wid)
     drain(kinds=['prepare_message'])
     [row] = rows(wid, kind='check_in')
@@ -664,7 +677,7 @@ def test_check_in_suppressed(world, browser, monkeypatch, case):
         with db.session() as s:
             rid = s.scalar(select(SuggestionReview.id).where(SuggestionReview.conversation_id == NOOR))
         suggestions.review_conversation(wid, rid)
-    Clock(monkeypatch, datetime.now(timezone.utc))
+    Clock(monkeypatch, daytime())
     run_scan(wid)
     drain(kinds=['prepare_message'])
     assert rows(wid, kind='check_in') == []
@@ -676,7 +689,7 @@ def test_group_traffic_does_not_reset_the_contact_rhythm(world, monkeypatch):
         ws = Scoped(s, wid)
         pinned(ws, NOOR, 'Noor', days_ago=41)
         wa(ws, 'friends@g.us', 'Noor here, hi all!', datetime.now(timezone.utc) - timedelta(days=1), NOOR, group=True)
-    Clock(monkeypatch, datetime.now(timezone.utc))
+    Clock(monkeypatch, daytime())
     run_scan(wid)
     drain(kinds=['prepare_message'])
     assert len(rows(wid, kind='check_in')) == 1
@@ -686,7 +699,7 @@ def test_fresh_reply_cancels_obsolete_check_in_and_new_message_during_generation
     wid, ids = world
     with db.session() as s:
         pinned(Scoped(s, wid), NOOR, 'Noor', days_ago=41)
-    Clock(monkeypatch, datetime.now(timezone.utc))
+    Clock(monkeypatch, daytime())
     run_scan(wid)
     [job] = jobs_of(wid)
     original = ai.generate
@@ -717,17 +730,17 @@ def test_dispositions_prevent_reworded_duplicates_until_the_next_cycle(world, br
     wid, ids = world
     with db.session() as s:
         pinned(Scoped(s, wid), NOOR, 'Noor', days_ago=41)
-    clock = Clock(monkeypatch, datetime.now(timezone.utc))
+    clock = Clock(monkeypatch, daytime())
     run_scan(wid)
     drain(kinds=['prepare_message'])
     [row] = rows(wid, kind='check_in')
     browser.post(f'/suggestions/{row.id}/state', {'csrf': browser.csrf('/suggestions'), 'action': 'dismiss'})
     for days in (0, 1, 29):
-        clock.set(datetime.now(timezone.utc) + timedelta(days=days, hours=1))
+        clock.set(daytime() + timedelta(days=days, hours=1))
         run_scan(wid)
         drain(kinds=['prepare_message'])
         assert len(rows(wid, kind='check_in')) == 1, days
-    clock.set(datetime.now(timezone.utc) + timedelta(days=31))
+    clock.set(daytime() + timedelta(days=31))
     run_scan(wid)
     drain(kinds=['prepare_message'])
     check_ins = rows(wid, kind='check_in')
@@ -742,7 +755,7 @@ def test_selected_update_reaches_only_its_audience_once(world, browser, sends, m
         update = assistant.create_update(ws, {'text': 'I adopted a cat named Pixel', 'audience': 'selected'},
                                          [person(ws, NOOR)])
         uid = update.id
-    Clock(monkeypatch, datetime.now(timezone.utc))
+    Clock(monkeypatch, daytime())
     run_scan(wid)
     drain(kinds=['prepare_message'])
     shared = rows(wid, kind='share_update')
@@ -765,7 +778,7 @@ def test_only_a_confirmed_send_records_update_delivery(world, browser, monkeypat
         pinned(ws, NOOR, 'Noor', days_ago=3)
         uid = assistant.create_update(ws, {'text': 'I adopted a cat named Pixel', 'audience': 'selected'},
                                       [person(ws, NOOR)]).id
-    Clock(monkeypatch, datetime.now(timezone.utc))
+    Clock(monkeypatch, daytime())
     run_scan(wid)
     drain(kinds=['prepare_message'])
     row = rows(wid, kind='share_update')[0]
@@ -776,7 +789,7 @@ def test_only_a_confirmed_send_records_update_delivery(world, browser, monkeypat
     with db.session() as s:
         assert s.scalar(select(UpdateProposal).where(UpdateProposal.update_id == uid)).delivered_at is None
     monkeypatch.undo()
-    Clock(monkeypatch, datetime.now(timezone.utc))
+    Clock(monkeypatch, daytime())
     r = browser.post('/whatsapp/send', {'csrf': csrf, 'account': ME_WA, 'chat': NOOR, 'text': row.draft,
                                         'request_id': str(uuid.uuid4()), 'suggestion': str(row.id)})
     assert r.status_code == 303
@@ -791,7 +804,7 @@ def test_daily_limit_and_manual_batch(world, monkeypatch):
         ws = Scoped(s, wid)
         for n in range(8):
             pinned(ws, f'3161222000{n}@c.us', f'Friend {n}', days_ago=40 + n)
-    Clock(monkeypatch, datetime.now(timezone.utc))
+    Clock(monkeypatch, daytime())
     run_scan(wid)
     assert len(jobs_of(wid)) == 5
     drain(kinds=['prepare_message'])
@@ -882,7 +895,7 @@ def test_prepared_message_marked_not_about_an_event_stays_open(world, browser, m
     assert browser.post(f'/suggestions/{row.id}/event', {'csrf': browser.csrf(f'/suggestions/{row.id}'),
                                                           'event': 'none'}).status_code == 303
     with db.session() as s:
-        assistant.save_settings(Scoped(s, wid), settings_form(warmth='warm'))
+        assistant.save_settings(Scoped(s, wid), settings_form(warmth='warm', style_mode='custom'))
     run_scan(wid)
     drain(kinds=['prepare_message'])
     with db.session() as s:

@@ -1,0 +1,36 @@
+"""The draft evaluation harness runs end to end with synthetic providers. This proves its
+structure and scoring, not live answer quality (that needs a live run and human review)."""
+import json
+
+from sqlalchemy import func, select
+
+from app import db, draft_eval
+from app.models import Account
+
+
+def test_harness_compares_three_systems_on_fictional_cases(database, tmp_path):
+    cases = 'housing_cross_chat,gmail_only,user_correction,confidential_news,prompt_injection'
+    assert draft_eval.main(['--generations', '1', '--cases', cases, '--out', str(tmp_path)]) == 0
+    result = json.loads((tmp_path / 'draft-eval.json').read_text())
+    by = {(run['case'], r['system']): r for run in result['runs'] for r in run['results']}
+    assert all('error' not in r for r in by.values())
+    # The previous system cannot see the other chat or the email; the evidence pipeline can.
+    for case in ('housing_cross_chat', 'gmail_only'):
+        assert by[(case, 'evidence')]['score']['facts'] and not by[(case, 'previous')]['score']['facts']
+        assert by[(case, 'voice')]['score']['facts'] is False
+    assert by[('user_correction', 'evidence')]['score']['facts'] and not by[('user_correction', 'evidence')]['score']['leaks']
+    assert not by[('confidential_news', 'evidence')]['score']['leaks']
+    assert not by[('prompt_injection', 'evidence')]['score']['leaks']
+    assert by[('housing_cross_chat', 'evidence')]['score']['greeting'] is True  # voice examples reach the writer
+    assert by[('housing_cross_chat', 'previous')]['score']['greeting'] is False
+    summary = result['summary']
+    assert set(summary) == {'previous', 'voice', 'evidence'} and summary['evidence']['calls_per_draft'] >= 2
+    report = (tmp_path / 'draft-eval.md').read_text()
+    assert '| evidence |' in report and 'human review' in report
+    with db.session() as s:  # one throwaway workspace per case
+        assert s.scalar(select(func.count()).select_from(Account).where(Account.email.like('eval+%'))) == 5
+
+
+def test_live_runs_refuse_the_configured_database(database, monkeypatch):
+    assert draft_eval.main(['--database', 'moresocial', '--cases', 'gmail_only']) == 2
+    assert draft_eval.main(['--database', 'moresocial_eval_ok; DROP', '--cases', 'gmail_only']) == 2

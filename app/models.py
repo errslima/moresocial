@@ -296,6 +296,50 @@ class Suggestion(Base):
     updated_at: Mapped[datetime] = now_col(onupdate=func.now())
 
 
+class EvidenceRevision(Base):
+    """Per-workspace counter of material evidence changes: sources, exclusions, claims and their
+    corrections, identity links and new embeddings. Bumped at most once per committing
+    transaction (see app/draft_evidence.py); never by usage accounting or bundle publication."""
+    __tablename__ = 'evidence_revisions'
+    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('workspaces.id', ondelete='CASCADE'),
+                                                    primary_key=True)
+    revision: Mapped[int] = mapped_column(BigInteger, default=0, server_default='0', nullable=False)
+    updated_at: Mapped[datetime] = now_col()
+
+
+class DraftEvidenceBundle(Base):
+    """What one suggestion's current draft (or its pending rewrite) was prepared from: the
+    questions, evidence considered (source/passage references, never copied passages), claim
+    lifecycle fingerprints, resolved answers, the minimal facts allowed in the reply and those
+    used, style examples, coverage and freshness. The only derived text is short questions,
+    answers and a rewrite held beside an edited draft; the source-erasure contract applies to
+    it exactly as to drafts (a database trigger removes the bundle whenever its draft is erased)."""
+    __tablename__ = 'draft_evidence_bundles'
+    __table_args__ = (UniqueConstraint('workspace_id', 'id'), UniqueConstraint('workspace_id', 'suggestion_id'),
+                      owned('suggestions', 'suggestion_id', ondelete='CASCADE'),
+                      CheckConstraint("policy IN ('evidence', 'limited')", name='ck_draft_bundles_policy'),
+                      CheckConstraint("freshness IN ('current', 'outdated')", name='ck_draft_bundles_freshness'),
+                      Index('ix_draft_bundles_sources', 'source_ids', postgresql_using='gin'))
+    id: Mapped[uuid.UUID] = pk()
+    workspace_id: Mapped[uuid.UUID] = ws_fk()
+    suggestion_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    # evidence: bounded cross-source retrieval and resolution; limited: this conversation only.
+    policy: Mapped[str] = mapped_column(String(10), nullable=False)
+    version: Mapped[str] = mapped_column(String(40), nullable=False)
+    account: Mapped[str | None] = mapped_column(String(255))
+    chat: Mapped[str | None] = mapped_column(String(400))
+    evidence_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)  # last validated against
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)        # the prepared content
+    dependency_digest: Mapped[str] = mapped_column(String(64), nullable=False)  # evidence, claims, identities
+    source_ids: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
+    query_vectors: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False)
+    freshness: Mapped[str] = mapped_column(String(10), default='current', server_default='current', nullable=False)
+    proposal: Mapped[str] = mapped_column(Text, default='', server_default='', nullable=False)
+    created_at: Mapped[datetime] = now_col()
+    validated_at: Mapped[datetime] = now_col()
+
+
 class SuggestionSource(Base):
     __tablename__ = 'suggestion_sources'
     __table_args__ = (owned('suggestions', 'suggestion_id', ondelete='CASCADE'),
@@ -380,7 +424,8 @@ class Claim(Base):
     __tablename__ = 'claims'
     __table_args__ = (UniqueConstraint('workspace_id', 'id'), UniqueConstraint('workspace_id', 'claim_key'),
                       owned('people', 'person_id', ondelete='CASCADE'),
-                      owned('observation_groups', 'group_id'))
+                      owned('observation_groups', 'group_id'),
+                      owned('claims', 'corrects_id', ondelete='SET NULL (corrects_id)', name='fk_claims_corrects'))
     id: Mapped[uuid.UUID] = pk()
     workspace_id: Mapped[uuid.UUID] = ws_fk()
     group_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
@@ -398,6 +443,9 @@ class Claim(Base):
     valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claim_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The user's correction of an extracted claim points at the claim it replaced (0016+).
+    # Earlier corrections have no link; they are never reconstructed by guessing.
+    corrects_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_at: Mapped[datetime] = now_col()
     updated_at: Mapped[datetime] = now_col(onupdate=func.now())
 
@@ -688,9 +736,13 @@ class AssistantSettings(Base):
         CheckConstraint("emoji IN ('none', 'sparing', 'often')", name='ck_assistant_emoji'),
         CheckConstraint("initiative IN ('low', 'balanced', 'high')", name='ck_assistant_initiative'),
         CheckConstraint('char_length(instructions) <= 4000', name='ck_assistant_instructions'),
-        CheckConstraint('char_length(examples_preferred) + char_length(examples_avoid) <= 2000', name='ck_assistant_examples'))
+        CheckConstraint('char_length(examples_preferred) + char_length(examples_avoid) <= 2000', name='ck_assistant_examples'),
+        CheckConstraint("style_mode IN ('conversation', 'custom')", name='ck_assistant_style_mode'))
     workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('workspaces.id', ondelete='CASCADE'),
                                                     primary_key=True)
+    # conversation: write as the user writes to each person (their own messages as examples);
+    # custom: the tone controls below, which the user chose deliberately. Tone values are kept in both.
+    style_mode: Mapped[str] = mapped_column(String(12), default='conversation', server_default='conversation', nullable=False)
     instructions: Mapped[str] = mapped_column(Text, default='', server_default='', nullable=False)
     warmth: Mapped[str] = mapped_column(String(12), default='friendly', server_default='friendly', nullable=False)
     directness: Mapped[str] = mapped_column(String(12), default='balanced', server_default='balanced', nullable=False)

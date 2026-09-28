@@ -1,6 +1,6 @@
 # Current architecture and feature map
 
-Updated 2026-09-27. This describes the implemented application. For the last recorded
+Updated 2026-09-29. This describes the implemented application. For the last recorded
 release, deployment evidence and outstanding checks, read
 [implementation status](implementation-status.md). The
 [archived development plans](archive/development/README.md) and original
@@ -17,9 +17,9 @@ release, deployment evidence and outstanding checks, read
 | About me | Dated diary entries (searchable sources feeding extraction, always private to the assistant's drafts), evidence-backed observations conservatively grouped when equivalent, and **Updates I can share** with an audience and optional expiry | `app/diary.py`, `app/observation_groups.py`, `app/pages.py`, `app/assistant.py` |
 | Events | Recognized automatically from WhatsApp, Gmail and Calendar: evidence timeline, explicit attendance, dismissal, user corrections and reversible identity grouping. No manual creation; `/gatherings` redirects to `/events` and legacy events stay viewable | `app/events.py`, `app/event_identity.py`, `app/event_resolver.py`, [feature details](events.md) |
 | Admin | `ADMIN_EMAILS` only: encrypted OpenRouter key, pinned reasoning/embedding models, test/save, disable, key removal, rebuild status and known spend | `app/admin.py`, `app/operator_settings.py`, `app/templates/admin.html` |
-| AI assistance | Claim extraction, embeddings, hybrid retrieval, cited answers (Ask), suggestion drafts, event recognition/identity resolution and observation grouping | `app/memory.py`, `app/retrieval.py`, `app/ai.py` |
-| Suggestions | Evidence-backed replies, promises and follow-ups from one-to-one WhatsApp, linked to related Events; prepared event reminders, detail questions, check-ins and shared updates; editable drafts in the user's style, **Open conversation** into the WhatsApp composer, snooze, dismissal, resolution and per-chat pause | `app/suggestions.py`, `app/assistant_context.py`, `app/proactive.py`, `app/suggestion_pages.py`, [feature details](suggestions.md) |
-| Assistant | One persona (instructions, style, language, examples, initiative), event-preparation and check-in switches, pause, status and a style preview. Prepares drafts only; never sends | `app/assistant.py`, `app/assistant_pages.py`, `app/templates/assistant.html` |
+| AI assistance | Claim extraction, embeddings, hybrid retrieval, cited answers (Ask), evidence-grounded suggestion drafts, event recognition/identity resolution and observation grouping | `app/memory.py`, `app/retrieval.py`, `app/draft_evidence.py`, `app/ai.py` |
+| Suggestions | Evidence-backed replies, promises and follow-ups from one-to-one WhatsApp, linked to related Events; prepared event reminders, detail questions, check-ins and shared updates; editable drafts written the way the user writes to each person; evidence-grounded replies that retrieve the answer from other WhatsApp chats and Gmail, resolve decisions, dates and corrections, and show a private "What this draft uses" panel (operator rollout switch); **Open conversation** into the WhatsApp composer, snooze, dismissal, resolution and per-chat pause | `app/suggestions.py`, `app/draft_evidence.py`, `app/voice.py`, `app/assistant_context.py`, `app/proactive.py`, `app/suggestion_pages.py`, [feature details](suggestions.md) |
+| Assistant | One persona: "Match how I write to this person" by default or custom tone settings, instructions, language, wording examples, initiative; event-preparation and check-in switches, pause, status and a preview of explicit preferences. Prepares drafts only; never sends | `app/assistant.py`, `app/assistant_pages.py`, `app/templates/assistant.html` |
 | WhatsApp | Conversation browser over imported WhatsApp history: newest-first list (50 per page), name search, full chat history (100 messages per page with an older-messages cursor), media placeholders and links to each source; a text composer that sends only when the user presses **Send message** | `app/conversations.py`, `app/whatsapp_pages.py`, `app/whatsapp_send.py`, `app/templates/whatsapp.html` |
 
 AI generation and embeddings are **enabled in production**, verified by the live readiness
@@ -79,7 +79,8 @@ client-side routing. Unknown or foreign selections return the generic 404 page.
 4. PostgreSQL jobs (`app/jobs.py`, `worker/main.py`) rebuild conversation chunks,
    generate embeddings, extract claims, group observations, review conversations for
    Suggestions, detect/resolve events, and scan for and prepare proactive drafts
-   (`proactive_scan`, `prepare_message`) when AI is enabled. Leases and idempotency
+   (`proactive_scan`, `prepare_message`) and revalidate evidence-grounded drafts
+   (`revalidate_draft`) when AI is enabled. Leases and idempotency
    keys support retries; provider rate limits and missing AI configuration defer AI jobs.
 5. Retrieval combines structured ownership filters with memory search. Citations
    refer to the actual source segments in the matching chunk, including later
@@ -91,7 +92,9 @@ connections, sources, people, chunks, embeddings, claims and observation groups,
 suggestions, events (with mentions, identity decisions and pair scans), WhatsApp send
 receipts, answers, jobs, operator settings, usage accounting (`usage_budgets`,
 `provider_usage`), and the assistant's `assistant_settings`, `person_preferences`,
-`shareable_updates` (+ audience), `update_proposals` and `proactive_reviews`. Migration `0012` removed the empty manual-planner `drafts`,
+`shareable_updates` (+ audience), `update_proposals` and `proactive_reviews`, plus
+`draft_evidence_bundles` (what each draft was prepared from, as references) and
+`evidence_revisions` (a per-workspace counter of material evidence changes). Migration `0012` removed the empty manual-planner `drafts`,
 `event_people`, `event_candidates` tables and the unused draft-reference column on
 answer citations. Personal-key metadata and encrypted legacy keys remain because the
 production inventory found nonempty records; old `provider_usage` rows retain their
@@ -107,7 +110,9 @@ accounting fields; `0006` resumes jobs deferred by the retired shared token allo
 receipts; `0010` automatic events; `0011` event identity; `0012` retires the empty manual
 gathering tables; `0013` connector heartbeat health; `0014` assistant settings, preferences,
 shareable updates, proactive state and suggestion producers/event links/targets; `0015`
-suggestion context sources (erasing derived text when any contributing source is removed). Pipeline `v2-segments`
+suggestion context sources (erasing derived text when any contributing source is removed); `0016` evidence
+bundles, evidence revisions, the conversation/custom style mode, claim correction links and the triggers that keep
+the source-erasure contract for bundles even under older application code. Pipeline `v2-segments`
 rebuilds legacy chunks, which are excluded from retrieval until rebuilt. Account deletion
 leaves only an opaque cleanup identifier until the host removes connector resources and
 acknowledges it.

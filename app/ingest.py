@@ -127,6 +127,14 @@ class IngestResult:
     changes: list = field(default_factory=list)  # (source id, version) of every change
 
 
+def evidence_changed(ws: Scoped, provider: str | None = None) -> None:
+    """Material evidence changed: evidence-grounded drafts must be revalidated. Diary entries
+    are never retrieved for drafts, so they do not count."""
+    if provider != 'diary':
+        from . import draft_evidence
+        draft_evidence.mark_changed(ws)
+
+
 def upsert(ws: Scoped, rec: SourceRecord, self_ids: set[str], result: IngestResult) -> Source | None:
     if is_excluded(ws, rec.provider, rec.provider_object_id, rec.conversation_id):
         result.skipped += 1
@@ -144,6 +152,7 @@ def upsert(ws: Scoped, rec: SourceRecord, self_ids: set[str], result: IngestResu
             result.deleted += 1
             result.conversations.add((existing.provider, existing.conversation_id))
             result.changes.append((str(existing.id), 'deleted'))
+            evidence_changed(ws, existing.provider)
         else:
             result.unchanged += 1
         return existing
@@ -185,6 +194,7 @@ def upsert(ws: Scoped, rec: SourceRecord, self_ids: set[str], result: IngestResu
                                  identifier=value, role=p.role))
     result.conversations.add((src.provider, src.conversation_id))
     result.changes.append((str(src.id), digest))
+    evidence_changed(ws, src.provider)
     return src
 
 
@@ -213,6 +223,8 @@ def invalidate(ws: Scoped, source_ids: list[uuid.UUID], rebuild: bool = True) ->
     suggestion_actions.erase_dependents(ws, source_ids)
     chunk_ids = list(ws.s.scalars(ws.q(ChunkSource, ChunkSource.chunk_id).where(ChunkSource.source_id.in_(source_ids))))
     convs = set(ws.s.execute(ws.q(Source, Source.provider, Source.conversation_id).where(Source.id.in_(source_ids))).all())
+    if any(provider != 'diary' for provider, _ in convs):
+        evidence_changed(ws)
     from . import suggestions
     for provider, conv in convs:
         if provider == 'whatsapp':
@@ -299,6 +311,7 @@ def link_people(ws: Scoped, keep: Person, other: Person) -> None:
     keep.pinned = keep.pinned or other.pinned
     ws.s.flush()
     ws.s.delete(other)
+    evidence_changed(ws)  # identity mappings are part of every evidence bundle
 
 
 def unlink_identifier(ws: Scoped, ident: PersonIdentifier) -> Person | None:
@@ -321,6 +334,7 @@ def unlink_identifier(ws: Scoped, ident: PersonIdentifier) -> Person | None:
         from .models import Suggestion, SuggestionReview
         reviews = ws.q(SuggestionReview, SuggestionReview.id).where(SuggestionReview.conversation_id == ident.value)
         ws.update(Suggestion, Suggestion.review_id.in_(reviews), person_id=new.id)
+    evidence_changed(ws)
     return new
 
 
@@ -346,6 +360,7 @@ def register_contacts(ws: Scoped, contacts: list[dict], self_ids: set[str]) -> N
             if value not in owners and not ws.first(ws.q(PersonIdentifier).where(PersonIdentifier.kind == 'whatsapp',
                                                                                    PersonIdentifier.value == value)):
                 ws.add(PersonIdentifier(id=uuid.uuid4(), person_id=person.id, kind='whatsapp', value=value, label=label))
+                evidence_changed(ws)
         # Earlier chat titles could be a bare number instead of the full JID.
         # A saved address-book name also upgrades the profile label we imported.
         previous_labels = {i.label for i in ws.all(ws.q(PersonIdentifier).where(

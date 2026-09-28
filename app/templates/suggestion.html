@@ -26,6 +26,9 @@
 <h2>Your message</h2>
 {% if row.draft %}
 {% if row.producer == 'conversation' and row.draft_review_revision != review.revision %}<p class="warn">This draft predates the latest conversation update. Check the context, edit and save before copying.</p>
+{% elif uses and uses.state == 'checking' %}<p class="warn" data-draft-checking>Newer messages arrived since this draft was written. They are being checked against it; copying returns when the check is done. Reload in a moment.</p>
+{% elif uses and uses.state == 'outdated' %}<p class="warn" data-draft-outdated>Newer information changes an answer in this draft. Rewrite it, or correct it yourself and save before copying.</p>
+{% elif uses and uses.state == 'previous' and not draft_is_current %}<p class="warn" data-draft-previous>Written with the previous drafting context: only this conversation and your general style settings. Check it and save, or rewrite it{% if evidence_mode %} using what your other conversations say{% endif %}.</p>
 {% elif not draft_is_current %}<p class="warn" data-draft-stale>The context changed since this draft was written (for example the event details or your assistant style). Check it, edit and save before copying or sending.</p>{% endif %}
 <form method="post" action="{{ url('/suggestions/' ~ row.id ~ '/draft/save') }}">
 {{ csrf_field() }}<input type="hidden" name="revision" value="{{ row.draft_revision }}"><input type="hidden" name="review_revision" value="{{ review.revision }}"><input type="hidden" name="context" value="{{ context_fingerprint or '' }}">
@@ -33,8 +36,28 @@
 <div class="row"><button>Save edits</button>{% if draft_is_current %}<button type="button" data-copy="suggestion-draft">Copy message</button>{% endif %}</div>
 <p data-copy-status="suggestion-draft" role="status" class="small muted">Save your edits, then open the conversation to send. Check any [placeholders] first. Copying does not send anything or mark this suggestion done.</p>
 </form>
+{% if uses and uses.proposal %}<section class="card" data-proposal aria-labelledby="proposal-heading"><h3 id="proposal-heading">Rewritten version</h3>
+<p class="small muted">Your edited text above is unchanged. Use this version to replace it, or keep yours.</p>
+<blockquote class="excerpt">{{ uses.proposal }}</blockquote>
+<form class="row" method="post" action="{{ url('/suggestions/' ~ row.id ~ '/draft/proposal') }}">{{ csrf_field() }}<input type="hidden" name="bundle" value="{{ uses.bundle_id }}"><button name="action" value="use">Use this version</button><button name="action" value="discard">Keep my text</button></form>
+</section>{% endif %}
+{% if row.producer == 'conversation' %}<form class="row" method="post" action="{{ url('/suggestions/' ~ row.id ~ '/draft') }}" data-busy="Rewriting…">{{ csrf_field() }}<input type="hidden" name="rewrite" value="1"><button>{{ 'Rewrite with current information' if evidence_mode else 'Rewrite' }}</button>{% if row.draft_origin == 'user' %}<span class="small muted">Your edited text is kept; the rewrite appears beside it.</span>{% endif %}</form>{% endif %}
 {% elif row.producer == 'proactive' %}<p class="muted">The prepared message was removed because its context changed. It is prepared again if it is still relevant.</p>
-{% else %}<form method="post" action="{{ url('/suggestions/' ~ row.id ~ '/draft') }}" data-busy="Drafting…">{{ csrf_field() }}<button class="primary">Draft a reply</button></form>{% endif %}
+{% else %}<form method="post" action="{{ url('/suggestions/' ~ row.id ~ '/draft') }}" data-busy="Drafting…">{{ csrf_field() }}<button class="primary">Draft a reply</button></form>
+{% if evidence_mode %}<p class="small muted">Drafting checks your other WhatsApp chats and email for the answer and writes the way you usually write to {{ person.display_name }}. You review everything; nothing is sent.</p>{% endif %}{% endif %}
+{% if uses and uses.policy != 'previous' %}<details class="card" data-draft-uses {% if uses.answers or uses.state != 'current' %}open{% endif %}><summary>What this draft uses</summary>
+{% if uses.policy == 'limited' %}<p class="small muted">This conversation, its related events and how you write to {{ person.display_name }}. Your other conversations were not searched.</p>{% endif %}
+{% for a in uses.answers %}<div data-answer-status="{{ a.status }}"><p class="small"><strong>{{ a.question }}</strong></p>
+<p class="small">{{ a.status_text }}{% if a.answer %}: {{ a.answer }}{% endif %}{% if a.until %} (until {{ a.until }}){% elif a.deadline %} (by {{ a.deadline }}){% endif %}{% if a.reason %}: {{ a.reason }}{% endif %}</p>
+{% if a.note %}<p class="small muted">{{ a.note }}</p>{% endif %}
+{% if a.sources %}<p class="small">{% for src in a.sources %}<a href="{{ url('/sources/' ~ src.id) }}">{{ src.where }}{% if src.at %} · {{ src.at }}{% endif %}</a>{{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}</div>{% endfor %}
+{% if uses.revalidation.get('outcome') == 'changed' %}<p class="small warn">Newer messages change {{ uses.revalidation.get('questions', [])|length }} of these answers.</p>{% endif %}
+{% if uses.style %}<p class="small muted" data-voice>{{ uses.style }}</p>{% endif %}
+{% for note in uses.coverage %}<p class="small muted">{{ note }}</p>{% endfor %}
+{% if uses.verification.get('outcome') == 'revised' %}<p class="small muted">A final check removed details the evidence did not support.</p>{% endif %}
+<p class="small muted">Private to you: this panel is never copied or put in the message.</p>
+</details>{% endif %}
+{% if voice_basis %}<p class="small muted" data-voice>{{ voice_basis }}</p>{% endif %}
 {% endif %}
 {% if row.state in ['active','snoozed','invalidated'] %}
 <h2>Handle this suggestion</h2><form class="row" method="post" action="{{ url('/suggestions/' ~ row.id ~ '/state') }}">{{ csrf_field() }}<button name="action" value="done">Done</button><button name="action" value="already_handled">Already handled</button>{% if row.producer == 'conversation' %}<button name="action" value="no_reply_needed">No reply needed</button>{% endif %}<button name="action" value="dismiss">Don't suggest this again</button></form>
