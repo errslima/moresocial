@@ -10,6 +10,23 @@ ROOT=${MORESOCIAL_ROOT:-/srv/moresocial}
 dest=$ROOT/releases/$sha/src
 [ -d "$dest" ] || { echo "revision $sha is not installed" >&2; exit 2; }
 docker image inspect "moresocial-web:$sha" >/dev/null
+# /ready requires an exact migration head. Check before touching release.env/services;
+# an additive schema alone does not make an older image operationally compatible.
+schema_revision=$(docker exec moresocial-db-1 psql -U moresocial_admin -d moresocial -tAc \
+  'SELECT version_num FROM alembic_version')
+target_revision=$(docker run --rm --entrypoint python "moresocial-web:$sha" -c \
+  'from alembic.config import Config; from alembic.script import ScriptDirectory; print(ScriptDirectory.from_config(Config("alembic.ini")).get_current_head())')
+if [ "$schema_revision" != "$target_revision" ]; then
+  echo "Schema $schema_revision differs from image head $target_revision; coordinated downgrade or forward fix required." >&2
+  exit 2
+fi
+if [ "$schema_revision" = 0016 ]; then
+  versions=$(docker exec moresocial-db-1 psql -U moresocial_admin -d moresocial -tAc \
+    "SELECT DISTINCT version FROM draft_evidence_bundles ORDER BY version")
+  docker run --rm --env "MORESOCIAL_BUNDLE_VERSIONS=$versions" --entrypoint python "moresocial-web:$sha" -c \
+    'import os, sys; from app.draft_evidence import VERSION, LIMITED_VERSION; sys.exit(not set(os.environ["MORESOCIAL_BUNDLE_VERSIONS"].split()).issubset({VERSION, LIMITED_VERSION}))' \
+    || { echo "Image cannot validate stored draft policies; keep evidence mode off and fix forward." >&2; exit 2; }
+fi
 # 0012 removes tables read by older images. Refuse before changing release.env or services.
 # Inspect the actual schema so this also protects later revisions that retain the removal.
 gatherings_removed=$(docker exec moresocial-db-1 psql -U moresocial_admin -d moresocial -tAc \

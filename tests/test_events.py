@@ -10,7 +10,8 @@ from conftest import workspace_of
 
 
 def sample(ws, provider='whatsapp', text='Dinner tomorrow at 19:00', conv='chat', from_me=False):
-    at = datetime.now(timezone.utc)
+    # Keep +45 minute same-day merge fixtures away from a midnight boundary.
+    at = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
     rec = ingest.SourceRecord(provider=provider, provider_account='alex@example.test', provider_object_id=str(uuid.uuid4()),
         conversation_id=conv, kind='event' if provider == 'calendar' else 'message', title='Dinner', body=text,
         occurred_at=at if provider != 'calendar' else at + timedelta(days=1),

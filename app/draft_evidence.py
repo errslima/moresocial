@@ -47,10 +47,10 @@ from .models import (Chunk, ChunkSource, Claim, ClaimSource, DraftEvidenceBundle
                      OperatorSetting, Person, PersonIdentifier, SourceParticipant, Source, Suggestion, SuggestionReview)
 from .repo import Scoped
 
-VERSION = 'draft-evidence-v1'
+VERSION = 'draft-evidence-v2'
 LIMITED_VERSION = 'draft-limited-v1'
-RETRIEVAL_VERSION = 'retrieval-v1'
-DISCLOSURE_VERSION = 'disclosure-v1'
+RETRIEVAL_VERSION = 'retrieval-v2'
+DISCLOSURE_VERSION = 'disclosure-v2'
 PROVIDERS = ('whatsapp', 'gmail')      # Calendar facts come from Event projections; diary is never retrieved
 MAX_QUESTIONS = 4
 MAX_CANDIDATES = 12
@@ -308,9 +308,17 @@ def _chat(ws: Scoped, src: Source) -> tuple[str, str | None, str | None]:
     return 'WhatsApp chat with', src.conversation_title or 'someone', src.conversation_id
 
 
-def _passage_text(src: Source) -> tuple[str, bool]:
-    body = ((src.title + '\n') if src.provider == 'gmail' and src.title else '') + (src.body or '')
-    return (body, False) if len(body) <= PASSAGE_CHARS else (body[:PASSAGE_CHARS].rstrip() + '…', True)
+def _passage_text(src: Source, segment: str | None = None, terms=frozenset()) -> tuple[str, bool]:
+    """Keep the retrieved segment, not the beginning of its possibly much longer source.
+    For a long segment choose the bounded window with most query-term matches."""
+    body = segment if segment is not None else (src.body or '')
+    if len(body) <= PASSAGE_CHARS:
+        return body, False
+    matches = list(CONTENT.finditer(body))
+    positions = [m.start() for m in matches if content_words(m.group()) & terms]
+    starts = {0, max(0, len(body) - PASSAGE_CHARS)} | {max(0, p - 200) for p in positions}
+    start = max(sorted(starts), key=lambda x: sum(x <= p < x + PASSAGE_CHARS for p in positions))
+    return ('…' if start else '') + body[start:start + PASSAGE_CHARS].strip() + '…', True
 
 
 def _valid(src: Source | None, version: str | None = None) -> bool:
@@ -448,12 +456,14 @@ def gather(ws: Scoped, needs: list[dict], ents: list[dict], vectors: dict, snaps
     buckets = {'hit': [], 'context': [], 'later': []}
     taken: set = set()
 
-    def offer(role, src):
-        key = str(src.id)
-        if key in skip or key in taken or not _valid(src):
+    def offer(role, src, segment=None, terms=frozenset()):
+        key = (str(src.id), segment)
+        if str(src.id) in skip or key in taken or not _valid(src):
+            return
+        if role != 'hit' and any(k[0] == str(src.id) for k in taken):
             return
         taken.add(key)
-        buckets[role].append(src)
+        buckets[role].append((src, segment, terms))
 
     hits_by_conversation = {}
     for need, cid in chosen:
@@ -465,31 +475,33 @@ def gather(ws: Scoped, needs: list[dict], ents: list[dict], vectors: dict, snaps
         members.sort(key=lambda r: (-len(content_words(r[0].segment_text) & terms), -(len(r[0].segment_text)),
                                     int(r[0].label[1:])))
         for cs, src in members[:3]:
-            offer('hit', src)
+            offer('hit', src, cs.segment_text, terms)
             hits_by_conversation.setdefault((src.provider, src.provider_account, src.conversation_id), (src, terms))
-    for src in list(buckets['hit']):
+    for src, _, _ in list(buckets['hit']):
         for n in neighbours(ws, src):
             offer('context', n)
     for key, (src, terms) in list(hits_by_conversation.items())[:6]:
-        same = [h for h in buckets['hit'] if (h.provider, h.provider_account, h.conversation_id) == key] or [src]
+        same = [h for h, _, _ in buckets['hit'] if (h.provider, h.provider_account, h.conversation_id) == key] or [src]
         latest_hit = max(same, key=lambda h: (h.occurred_at or datetime.min.replace(tzinfo=timezone.utc), str(h.id)))
         for n in later_messages(ws, latest_hit, terms):
             offer('later', n)
     passages, chars, truncated, budget_limited = [], 0, False, False
-    for role in ('hit', 'context', 'later'):
-        kept = 0
-        for src in buckets[role]:
-            if kept >= CAPS[role] or len(passages) >= MAX_PASSAGES:
-                budget_limited = True
-                break
-            body, cut = _passage_text(src)
-            if chars + len(body) > MAX_CHARS:
-                budget_limited = True
-                continue
-            chars += len(body)
-            truncated |= cut
-            kept += 1
-            passages.append((role, src, body))
+    # A shared round-robin character budget reserves opportunity for later changes and
+    # surrounding assent even when the original hits are long.
+    for role in buckets:
+        if len(buckets[role]) > CAPS[role]:
+            budget_limited = True
+        buckets[role] = buckets[role][:CAPS[role]]
+    turns = [(role, item) for n in range(max((len(v) for v in buckets.values()), default=0))
+             for role in ('hit', 'later', 'context') for item in buckets[role][n:n + 1]]
+    for role, (src, segment, terms) in turns:
+        body, cut = _passage_text(src, segment, terms)
+        if chars + len(body) > MAX_CHARS or len(passages) >= MAX_PASSAGES:
+            budget_limited = True
+            continue
+        chars += len(body)
+        truncated |= cut
+        passages.append((role, src, body))
     order = {}
     for role, src, _ in passages:  # conversations in best-hit order, chronological inside
         order.setdefault((src.provider, src.provider_account, src.conversation_id), len(order))
@@ -531,7 +543,7 @@ def gather(ws: Scoped, needs: list[dict], ents: list[dict], vectors: dict, snaps
                 'embedded': len(vectors), 'candidates': len(chosen), 'passages': len(out), 'chars': chars,
                 'truncated': truncated, 'budget_limited': budget_limited, 'unindexed': unindexed, 'failure': failure,
                 'claims': len(claims), 'history': {k: v.date().isoformat() for k, v in history.items() if v}}
-    considered = sorted([p.id, p.version] for p in out)
+    considered = sorted([p.id, p.version, ac.digest(p.text)] for p in out)
     dependency = ac.digest([RETRIEVAL_VERSION, considered, sorted([str(c.id), claim_fingerprint(c)] for c in claims), identities])
     return {'passages': out, 'claims': claims, 'coverage': coverage, 'identities': identities,
             'dependency_digest': dependency}
@@ -596,10 +608,14 @@ def resolve_schema(needs, passages, claims) -> dict:
 
 def claim_lines(ws: Scoped, claims: list[Claim], passages: list[Passage]) -> list[dict]:
     by_source = {}
+    confidential = set()
     if claims:
-        for cid, sid in ws.s.execute(ws.q(ClaimSource, ClaimSource.claim_id, ClaimSource.source_id).where(
-                ClaimSource.claim_id.in_([c.id for c in claims]))).all():
-            by_source.setdefault(cid, set()).add(str(sid))
+        for cid, src in ws.s.execute(ws.q(ClaimSource, ClaimSource.claim_id, Source).join(
+                Source, (Source.workspace_id == ClaimSource.workspace_id) & (Source.id == ClaimSource.source_id))
+                .where(ClaimSource.claim_id.in_([c.id for c in claims]))).all():
+            by_source.setdefault(cid, set()).add(str(src.id))
+            if CONFIDENTIAL.search(src.body or ''):
+                confidential.add(cid)
     labels = {str(c.id): f'C{n + 1}' for n, c in enumerate(claims)}
     names = {}
     out = []
@@ -617,6 +633,7 @@ def claim_lines(ws: Scoped, claims: list[Claim], passages: list[Passage]) -> lis
                     'from': c.valid_from.date().isoformat() if c.valid_from else None,
                     'to': c.valid_to.date().isoformat() if c.valid_to else None,
                     'corrects': labels.get(str(c.corrects_id)) if c.corrects_id else None,
+                    'confidential': c.id in confidential,
                     'supported_by': [p.label for p in passages if p.id in by_source.get(c.id, set())],
                     'fingerprint': claim_fingerprint(c)})
     return out
@@ -658,6 +675,16 @@ def validate_resolution(out, needs, passages: list[Passage], claims: list[dict])
         raise ai.InvalidOutput('resolution_shape')
     by_label = {p.label: p for p in passages}
     by_claim = {c['label']: c for c in claims}
+    def confidential_support(label, seen=None):
+        seen = set() if seen is None else seen
+        if label in seen:
+            return False
+        seen.add(label)
+        if label in by_label:
+            return by_label[label].confidential
+        claim = by_claim.get(label, {})
+        return bool(claim.get('confidential')) or any(confidential_support(ref, seen) for ref in
+            [*claim.get('supported_by', []), *([claim['corrects']] if claim.get('corrects') else [])])
     kinds = {n['id']: n['kind'] for n in needs}
     answers = {}
     for a in out['answers']:
@@ -688,7 +715,7 @@ def validate_resolution(out, needs, passages: list[Passage], claims: list[dict])
             item.update(status='uncertain', reason='no_evidence')
         if any(by_claim.get(x, {}).get('status') == 'rejected' for x in item['support']):
             item.update(status='uncertain', reason='rejected')
-        if any(by_label[x].confidential for x in item['support'] if x in by_label):
+        if any(confidential_support(x) for x in item['support']):
             item.update(disclosure='withhold', reason='confidential',
                         status='withheld' if item['status'] == 'supported' else item['status'])
         if item['status'] != 'supported':
@@ -858,11 +885,12 @@ def state(ws: Scoped, row, bundle: DraftEvidenceBundle | None = None) -> str:
         return 'previous' if row.draft else 'none'
     if not dependencies_valid(ws, bundle):
         return 'invalid'
-    if bundle.freshness == 'outdated':
-        acknowledged = (bundle.payload or {}).get('acknowledged')
-        return 'acknowledged' if acknowledged is not None and acknowledged == row.draft_revision else 'outdated'
     if bundle.policy == 'evidence' and bundle.evidence_revision != revision(ws):
         return 'checking'
+    if bundle.freshness == 'outdated':
+        acknowledged = (bundle.payload or {}).get('acknowledged')
+        return 'acknowledged' if acknowledged == {'draft': row.draft_revision,
+            'evidence': bundle.evidence_revision} else 'outdated'
     return 'current'
 
 
@@ -871,7 +899,10 @@ def acknowledge(ws: Scoped, row) -> None:
     be copied again. The panel keeps saying which answer changed."""
     bundle = bundle_for(ws, row)
     if bundle is not None and bundle.freshness == 'outdated':
-        bundle.payload = {**(bundle.payload or {}), 'acknowledged': row.draft_revision}
+        # Never acknowledge unseen changes that arrived after revalidation.
+        if bundle.evidence_revision == revision(ws):
+            bundle.payload = {**(bundle.payload or {}), 'acknowledged': {
+                'draft': row.draft_revision, 'evidence': bundle.evidence_revision}}
 
 
 STATUS_TEXT = {'supported': 'Answered', 'uncertain': 'Not settled', 'conflicting': 'Conflicting information',
@@ -900,7 +931,7 @@ def view(ws: Scoped, row, person_name: str) -> dict | None:
     payload = bundle.payload or {}
     questions = {q['id']: q['text'] for q in payload.get('questions', [])}
     answers = []
-    for a in payload.get('answers', []):
+    for a in payload.get('latest_answers', payload.get('answers', [])):
         answers.append({'question': questions.get(a['question'], ''), 'status': a['status'],
                         'status_text': STATUS_TEXT[a['status']], 'answer': a['answer'], 'deadline': a.get('deadline'),
                         'until': a.get('effective_to'), 'reason': REASON_TEXT.get(a['reason'], '') if a['reason'] != 'ok' else '',
@@ -979,6 +1010,11 @@ def _usage(*outs) -> dict:
 
 
 def run(wid: uuid.UUID, sid, *, rewrite: bool = False) -> str:
+    with ai.capture_usage() as usage:
+        return _run(wid, sid, rewrite=rewrite, usage=usage)
+
+
+def _run(wid: uuid.UUID, sid, *, rewrite: bool, usage) -> str:
     """Prepare a draft for one conversation suggestion. Returns kept (a draft exists and no
     rewrite was asked), drafted, or proposed (a rewrite held beside the user's edited text)."""
     from . import suggestions
@@ -1074,7 +1110,7 @@ def run(wid: uuid.UUID, sid, *, rewrite: bool = False) -> str:
                    'versions': {'policy': VERSION if policy == 'evidence' else LIMITED_VERSION, 'retrieval': RETRIEVAL_VERSION,
                                 'disclosure': DISCLOSURE_VERSION, 'voice': voice.VERSION, 'model': out.model},
                    'metrics': {**timings, 'total_ms': int((time.monotonic() - started) * 1000),
-                               **_usage(resolution_out, out, verify_out)}}
+                               **usage.summary()}}
         content = ac.digest([payload['versions'], payload['questions'], payload['answers'], permitted, used,
                              payload['style'], verification, text_])
         ws.delete(DraftEvidenceBundle, DraftEvidenceBundle.suggestion_id == row.id)
@@ -1147,24 +1183,18 @@ def discard_proposal(ws: Scoped, row, bundle_id: str) -> None:
 # ---------------- revalidation (background, deduplicated)
 
 def _same_answers(a: list[dict], b: list[dict]) -> bool:
-    """Same status, decision, dates and disclosure per question, and answer texts that say the
-    same thing (a re-resolution may paraphrase; a different name, place or number is a change)."""
+    """Conservative equivalence: no lexical overlap heuristic may approve changed facts.
+    A paraphrase requires review too; only casing/whitespace/final punctuation are ignored."""
     if len(a) != len(b):
         return False
     for x, y in zip(a, b):
-        if [x['question'], x['status'], x['decision'], x.get('deadline'), x.get('effective_to'), x['disclosure']] != \
-                [y['question'], y['status'], y['decision'], y.get('deadline'), y.get('effective_to'), y['disclosure']]:
+        fields = ('question', 'status', 'decision', 'statement_date', 'effective_from', 'effective_to',
+                  'deadline', 'disclosure', 'reason')
+        if [x.get(k) for k in fields] != [y.get(k) for k in fields]:
             return False
-        tx, ty = content_words(x['answer']), content_words(y['answer'])
-        if _keys(x['answer']) != _keys(y['answer']) or (tx | ty and len(tx & ty) / len(tx | ty) < 0.5):
+        if ' '.join(x['answer'].casefold().split()).rstrip('.') != ' '.join(y['answer'].casefold().split()).rstrip('.'):
             return False
     return True
-
-
-def _keys(answer: str) -> set[str]:
-    """Numbers and names in an answer (not the sentence start or the user's own "I")."""
-    found = re.findall(r"\d+|\b[A-ZÀ-Ý][\w’'-]+", answer[1:])
-    return {re.sub(r"['’]s$", '', t).lower() for t in found if not re.match(r"I['’]", t)}
 
 
 def revalidate(wid: uuid.UUID, bundle_id, heartbeat=lambda: None) -> str:
@@ -1174,7 +1204,7 @@ def revalidate(wid: uuid.UUID, bundle_id, heartbeat=lambda: None) -> str:
     with db.session() as s:
         ws = Scoped(s, wid)
         bundle = ws.get(DraftEvidenceBundle, bundle_id)
-        if bundle is None or bundle.policy != 'evidence' or bundle.freshness != 'current':
+        if bundle is None or bundle.policy != 'evidence':
             return 'skipped'
         row = ws.get(Suggestion, bundle.suggestion_id)
         if row is None or row.state not in OPEN or not (row.draft or bundle.proposal):
@@ -1186,6 +1216,7 @@ def revalidate(wid: uuid.UUID, bundle_id, heartbeat=lambda: None) -> str:
             return 'invalid'  # erased or changed: the read path already refuses it
         payload = bundle.payload or {}
         stamp, dependency, suggestion_id = bundle.evidence_revision, bundle.dependency_digest, bundle.suggestion_id
+        original_freshness = bundle.freshness
         needs = [{'id': q['id'], 'text': q['text'], 'kind': q['kind'],
                   'query': next((x['query'] for x in payload.get('queries', []) if x['id'] == q['id']), q['text'])}
                  for q in payload.get('questions', [])]
@@ -1225,9 +1256,18 @@ def revalidate(wid: uuid.UUID, bundle_id, heartbeat=lambda: None) -> str:
         # Lock order everywhere: review, then suggestion, then bundle.
         row = ws.first(ws.q(Suggestion).where(Suggestion.id == suggestion_id).with_for_update())
         bundle = ws.first(ws.q(DraftEvidenceBundle).where(DraftEvidenceBundle.id == bundle_id).with_for_update())
-        if bundle is None or bundle.evidence_revision != stamp or bundle.freshness != 'current':
+        if bundle is None or bundle.evidence_revision != stamp or bundle.freshness != original_freshness:
             return 'superseded'
+        if row is None or row.state not in OPEN or revision(ws) != target or not _dependency_ok(
+                ws, gathered, {'examples': (bundle.payload.get('style') or {}).get('examples', [])}):
+            return 'superseded'
+        def extend_acknowledgment(payload):
+            if payload.get('acknowledged') == {'draft': row.draft_revision, 'evidence': stamp}:
+                payload['acknowledged'] = {'draft': row.draft_revision, 'evidence': target}
         if answers is None:
+            payload = dict(bundle.payload or {})
+            extend_acknowledgment(payload)
+            bundle.payload = payload
             bundle.evidence_revision, bundle.validated_at = target, utcnow()
             return 'unchanged'
         payload = dict(bundle.payload or {})
@@ -1236,7 +1276,14 @@ def revalidate(wid: uuid.UUID, bundle_id, heartbeat=lambda: None) -> str:
         if row is not None:
             row.context_sources = sorted(set(row.context_sources or []) | set(bundle.source_ids))
         bundle.evidence_revision, bundle.validated_at = target, utcnow()
-        if _same_answers(answers, payload.get('answers', [])):
+        baseline = payload.get('latest_answers', payload.get('answers', []))
+        same = _same_answers(answers, baseline)
+        # Retain the latest assessment as the next baseline, even after the user reviewed
+        # an outdated draft. Original draft answers stay separately available for provenance.
+        payload['latest_answers'] = answers
+        bundle.dependency_digest = gathered['dependency_digest']
+        if same:
+            extend_acknowledgment(payload)
             payload.update(considered=[{'id': p.id, 'version': p.version, 'provider': p.provider, 'role': p.role,
                                         'from_me': p.from_me, 'at': p.at.isoformat() if p.at else None}
                                        for p in gathered['passages']],
@@ -1245,7 +1292,8 @@ def revalidate(wid: uuid.UUID, bundle_id, heartbeat=lambda: None) -> str:
                            coverage=gathered['coverage'], revalidation={'outcome': 'unchanged', 'at': utcnow().isoformat()})
             bundle.payload, bundle.dependency_digest = payload, gathered['dependency_digest']
             return 'refreshed'
-        changed = [a['question'] for a, b in zip(answers, payload.get('answers', [])) if not _same_answers([a], [b])]
+        changed = [a['question'] for a, b in zip(answers, baseline) if not _same_answers([a], [b])]
+        payload.pop('acknowledged', None)
         payload['revalidation'] = {'outcome': 'changed', 'at': utcnow().isoformat(), 'questions': changed}
         bundle.payload, bundle.freshness = payload, 'outdated'
         return 'outdated'
@@ -1258,7 +1306,7 @@ def schedule(s) -> int:
         .join(EvidenceRevision, EvidenceRevision.workspace_id == DraftEvidenceBundle.workspace_id)
         .join(Suggestion, (Suggestion.workspace_id == DraftEvidenceBundle.workspace_id) &
               (Suggestion.id == DraftEvidenceBundle.suggestion_id))
-        .where(DraftEvidenceBundle.policy == 'evidence', DraftEvidenceBundle.freshness == 'current',
+        .where(DraftEvidenceBundle.policy == 'evidence',
                DraftEvidenceBundle.evidence_revision < EvidenceRevision.revision, Suggestion.state.in_(OPEN))
         .limit(50)).all()
     n = 0

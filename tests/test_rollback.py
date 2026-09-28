@@ -7,6 +7,35 @@ import sys
 import pytest
 
 
+@pytest.mark.parametrize('head,policy_ok', [('0015', True), ('0016', False)])
+def test_rollback_rejects_head_or_policy_mismatch_before_mutation(tmp_path, head, policy_ok):
+    root = tmp_path / 'root'
+    (root / 'releases' / 'bbbbbbb' / 'src').mkdir(parents=True)
+    release = root / 'release.env'
+    release.write_text('MORESOCIAL_REVISION=aaaaaaa\n')
+    bins = tmp_path / 'bin'
+    bins.mkdir()
+    docker = bins / 'docker'
+    docker.write_text('''#!/bin/sh
+printf '%s\\n' "$*" >> "$ROLLBACK_CALLS"
+case "$*" in
+  *alembic_version*) echo 0016 ;;
+  *get_current_head*) echo "$TARGET_HEAD" ;;
+  *'SELECT DISTINCT version'*) echo draft-evidence-v2 ;;
+  *MORESOCIAL_BUNDLE_VERSIONS*) exit "$POLICY_STATUS" ;;
+esac
+''')
+    docker.chmod(0o755)
+    calls = tmp_path / 'calls'
+    result = subprocess.run(['bash', str(Path(__file__).resolve().parents[1] / 'deploy/rollback.sh'), 'bbbbbbb'],
+        env={**os.environ, 'PATH': str(bins) + ':' + os.environ['PATH'], 'MORESOCIAL_ROOT': str(root),
+             'ROLLBACK_CALLS': str(calls), 'TARGET_HEAD': head, 'POLICY_STATUS': '0' if policy_ok else '1'},
+        capture_output=True, text=True)
+    assert result.returncode == 2
+    assert release.read_text() == 'MORESOCIAL_REVISION=aaaaaaa\n'
+    assert 'compose ' not in calls.read_text()
+
+
 @pytest.mark.parametrize('removed,compatible,success,assistant,assistant_image', [
     ('t', False, False, 'f', True), ('t', True, True, 'f', True), ('f', False, True, 'f', True),
     # Schema 0014 present: an image without the assistant migration is refused.
@@ -26,8 +55,8 @@ def test_rollback_checks_schema_before_changing_release(tmp_path, removed, compa
     docker.write_text('''#!/bin/sh
 printf '%s\\n' "$*" >> "$ROLLBACK_CALLS"
 case "$1" in
-  exec) case "$*" in *producer*) printf '%s\\n' "$ASSISTANT_SCHEMA" ;; *) printf '%s\\n' "$SCHEMA_REMOVED" ;; esac ;;
-  run) case "$*" in *0014_assistant*) exit "$ASSISTANT_IMAGE_STATUS" ;; *) exit "$IMAGE_STATUS" ;; esac ;;
+  exec) case "$*" in *alembic_version*) echo 0015 ;; *producer*) printf '%s\\n' "$ASSISTANT_SCHEMA" ;; *) printf '%s\\n' "$SCHEMA_REMOVED" ;; esac ;;
+  run) case "$*" in *get_current_head*) echo 0015 ;; *0014_assistant*) exit "$ASSISTANT_IMAGE_STATUS" ;; *) exit "$IMAGE_STATUS" ;; esac ;;
 esac
 ''')
     docker.chmod(0o755)

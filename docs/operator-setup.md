@@ -414,13 +414,14 @@ An older copy of the script does not contain that protection.
   `python -m app.proactive mode off` (above) and a forward fix. The `0014` downgrade refuses
   while any proactive suggestion or assistant data exists; never delete that user data or
   restore an old database over newer messages to roll back.
-- Migration `0016` (evidence-grounded drafts) is additive and rollback-compatible with the
-  `0015` image `3fcf2b4`: older code ignores bundles and the style mode, cannot copy drafts
-  written by the new pipeline without a fresh save (their fingerprints differ), and still
-  erases derived text because two triggers remove a bundle whenever its draft is erased and
-  keep the bundle's sources in `suggestions.context_sources` while the draft exists. Prefer
-  `python -m app.draft_evidence mode off` and a forward fix. The `0016` downgrade refuses
-  while any claim correction link exists.
+- Migration `0016` is additive but **does not support an operational rollback to `3fcf2b4`**:
+  that image expects head `0015` and returns 503 on `/ready`. The rollback preflight now
+  checks the image's exact migration head before changing services or `release.env`.
+  It also rejects images that cannot validate the versions of stored draft bundles.
+  The source-erasure triggers protect dependencies; they do not make an older drafting
+  policy safe. Prefer `python -m app.draft_evidence mode off` and a forward fix. A rollback
+  target must pass both preflights; never downgrade the schema or discard user data just
+  to make an old image start. The `0016` downgrade refuses while correction links exist.
 - Application: `sudo /srv/moresocial/src/deploy/rollback.sh <previous-sha>` switches images and
   source back, keeping all data (first-release migrations are additive).
 - If a future migration is not backward compatible, the previous release cannot run on the new

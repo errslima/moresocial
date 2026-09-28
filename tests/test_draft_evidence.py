@@ -669,11 +669,11 @@ def test_unrelated_evidence_revalidates_without_rewriting_or_a_model_call(world,
     assert (row_of(sid).draft, row_of(sid).draft_fingerprint) == (text_before, fp_before)
 
 
-def test_revalidation_tolerates_paraphrase_but_not_changed_facts():
+def test_revalidation_conservatively_requires_review_for_paraphrases():
     base = {'question': 'Q1', 'status': 'supported', 'decision': 'accepted', 'deadline': '2026-10-15',
             'effective_to': '2026-10-15', 'disclosure': 'share'}
     old = [{**base, 'answer': "I'm staying at Iris's place until 15 October"}]
-    assert draft_evidence._same_answers(old, [{**base, 'answer': "I'm staying with Iris until 15 October"}])
+    assert not draft_evidence._same_answers(old, [{**base, 'answer': "I'm staying with Iris until 15 October"}])
     assert not draft_evidence._same_answers(old, [{**base, 'answer': "I'm staying at Tom's place until 15 October"}])
     assert not draft_evidence._same_answers(old, [{**base, 'answer': "I'm staying at Iris's place until 1 October"}])
     assert not draft_evidence._same_answers(old, [{**old[0], 'decision': 'cancelled'}])
@@ -868,4 +868,5 @@ def test_usage_is_accounted_for_every_call(world):
         rows = s.scalars(select(ProviderUsage).order_by(ProviderUsage.created_at)).all()[before:]
     assert [(u.operation, u.status) for u in rows] == [('embed', 'reconciled')] + [('generate', 'reconciled')] * 3
     metrics = bundle_of(wid, sid).payload['metrics']
-    assert metrics['calls'] == 3 and metrics['input_tokens'] > 0 and metrics['total_ms'] >= 0
+    assert metrics['calls'] == 4 and metrics['embedding_calls'] == 1 and metrics['input_tokens'] > 0
+    assert metrics['total_ms'] >= 0

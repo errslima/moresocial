@@ -10,6 +10,8 @@ tools are ever offered to the model.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
@@ -21,7 +23,7 @@ import time
 import uuid
 
 import httpx
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from . import config, db, security
 from .models import ProviderUsage
@@ -94,6 +96,37 @@ def estimate_tokens(text_: str) -> int:
 
 # ---------------- usage accounting ----------------
 
+_usage_captures: ContextVar[tuple] = ContextVar('usage_captures', default=())
+
+
+class UsageCapture:
+    """Exact ledger rows for one operation, including embeddings and failed/retried calls.
+    Context-local collection keeps concurrent workspaces and requests out of the totals."""
+    def __init__(self):
+        self.ids = []
+
+    def summary(self):
+        with db.session() as s:
+            rows = s.scalars(select(ProviderUsage).where(ProviderUsage.id.in_(self.ids))).all() if self.ids else []
+            return {'calls': len(rows), 'embedding_calls': sum(r.operation == 'embed' for r in rows),
+                    'generation_calls': sum(r.operation == 'generate' for r in rows),
+                    'failed_calls': sum(r.status == 'failed' for r in rows),
+                    'input_tokens': sum(r.input_tokens or 0 for r in rows),
+                    'output_tokens': sum(r.output_tokens or 0 for r in rows),
+                    'tokens_known': all(r.input_tokens is not None and r.output_tokens is not None for r in rows),
+                    'cost_usd': float(sum((r.cost or Decimal(0)) for r in rows)),
+                    'cost_known': all(r.cost is not None for r in rows)}
+
+
+@contextmanager
+def capture_usage():
+    capture = UsageCapture()
+    token = _usage_captures.set((*_usage_captures.get(), capture))
+    try:
+        yield capture
+    finally:
+        _usage_captures.reset(token)
+
 def today() -> date:
     return datetime.now(timezone.utc).date()
 
@@ -128,7 +161,9 @@ def reserve(workspace_id: uuid.UUID, operation: str, model: str, tokens: int, jo
                               model=model, provider=provider_name, billing='operator', reserved_tokens=tokens,
                               status='reserved')
         s.add(usage)
-        return usage.id
+    for capture in _usage_captures.get():
+        capture.ids.append(usage.id)
+    return usage.id
 
 
 def reconcile(usage_id: uuid.UUID, input_tokens: int | None, output_tokens: int | None, failed: bool = False,
